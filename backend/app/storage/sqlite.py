@@ -128,4 +128,47 @@ CREATE TABLE IF NOT EXISTS llm_accounts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_accounts_name
     ON llm_accounts(name);
+
+CREATE TABLE IF NOT EXISTS chat_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    provider_id TEXT,
+    model TEXT,
+    status TEXT NOT NULL,
+    event_message_id TEXT,
+    max_tool_rounds INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    final_message_id TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_runs_session_started
+    ON chat_runs(session_id, started_at);
+
+CREATE TABLE IF NOT EXISTS chat_tool_calls (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    message_id TEXT,
+    provider_call_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    arguments_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_tool_calls_run
+    ON chat_tool_calls(run_id);
+
+CREATE TABLE IF NOT EXISTS chat_tool_results (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    tool_call_id TEXT NOT NULL REFERENCES chat_tool_calls(id) ON DELETE CASCADE,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """

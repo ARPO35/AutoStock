@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_store
@@ -53,6 +53,25 @@ class MessageRead(BaseModel):
     trigger_id: str | None
     parent_message_id: str | None
     created_at: str
+
+
+class RunCreate(BaseModel):
+    message: str | None = Field(default=None, min_length=1)
+    max_tool_rounds: int = Field(default=5, ge=1, le=20)
+
+
+class RunRead(BaseModel):
+    id: str
+    session_id: str
+    provider_id: str | None
+    model: str | None
+    status: str
+    event_message_id: str | None
+    max_tool_rounds: int
+    started_at: str
+    finished_at: str | None
+    final_message_id: str | None
+    error: str | None
 
 
 @router.get("", response_model=list[SessionRead])
@@ -160,6 +179,43 @@ async def create_message(
         (now, session_id),
     )
     return _get_message_or_404(store, message_id)
+
+
+@router.get("/{session_id}/runs", response_model=list[RunRead])
+async def list_runs(
+    session_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> list[dict[str, object]]:
+    _get_session_or_404(store, session_id)
+    return store.fetch_all(
+        """
+        SELECT *
+        FROM chat_runs
+        WHERE session_id = ?
+        ORDER BY started_at DESC
+        """,
+        (session_id,),
+    )
+
+
+@router.post("/{session_id}/run")
+async def run_session(
+    session_id: str,
+    payload: RunCreate,
+    request: Request,
+) -> dict[str, object]:
+    try:
+        return await request.app.state.run_manager.run_once(
+            session_id=session_id,
+            message=payload.message,
+            max_tool_rounds=payload.max_tool_rounds,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def _get_session_or_404(store: SQLiteStore, session_id: str) -> dict[str, object]:
