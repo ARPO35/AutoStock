@@ -13,6 +13,7 @@ frontend_dist/
 !.env.example
 
 data/
+backend/data/
 *.db
 *.duckdb
 

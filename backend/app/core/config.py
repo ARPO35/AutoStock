@@ -1,25 +1,30 @@
 from functools import lru_cache
+import os
+from dataclasses import dataclass, field
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class Settings(BaseSettings):
+@dataclass(frozen=True)
+class Settings:
     app_name: str = "AutoStock"
     app_version: str = "0.1.0"
-    data_dir: str = Field(default="/app/data")
-    sqlite_path: str = Field(default="/app/data/app.db")
-    frontend_dist_path: str = Field(default="/app/frontend_dist")
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
-
-    model_config = SettingsConfigDict(
-        env_prefix="AUTOSTOCK_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    data_dir: str = "data"
+    sqlite_path: str = "data/app.db"
+    frontend_dist_path: str = "frontend_dist"
+    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:5173"])
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    cors_origins = os.getenv("AUTOSTOCK_CORS_ORIGINS")
+    return Settings(
+        app_name=os.getenv("AUTOSTOCK_APP_NAME", "AutoStock"),
+        app_version=os.getenv("AUTOSTOCK_APP_VERSION", "0.1.0"),
+        data_dir=os.getenv("AUTOSTOCK_DATA_DIR", "data"),
+        sqlite_path=os.getenv("AUTOSTOCK_SQLITE_PATH", "data/app.db"),
+        frontend_dist_path=os.getenv("AUTOSTOCK_FRONTEND_DIST_PATH", "frontend_dist"),
+        cors_origins=(
+            [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+            if cors_origins
+            else ["http://localhost:5173"]
+        ),
+    )
