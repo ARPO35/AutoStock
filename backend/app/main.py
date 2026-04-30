@@ -6,8 +6,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
+from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.storage.sqlite import SQLiteStore
+from app.tools.registry import create_default_registry
 
 
 def create_app() -> FastAPI:
@@ -16,6 +18,7 @@ def create_app() -> FastAPI:
     store = SQLiteStore(settings.sqlite_path)
     store.initialize()
     app.state.store = store
+    app.state.tool_registry = create_default_registry()
 
     app.add_middleware(
         CORSMiddleware,
@@ -31,6 +34,7 @@ def create_app() -> FastAPI:
 
     app.include_router(providers_router)
     app.include_router(sessions_router)
+    app.include_router(tools_router)
 
     frontend_dist = Path(settings.frontend_dist_path)
     if frontend_dist.exists():
