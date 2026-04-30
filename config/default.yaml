@@ -1,0 +1,6 @@
+app_name: AutoStock
+data_dir: /app/data
+sqlite_path: /app/data/app.db
+frontend_dist_path: /app/frontend_dist
+cors_origins:
+  - http://localhost:5173
