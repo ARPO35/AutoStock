@@ -94,4 +94,38 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
     ON chat_messages(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS llm_providers (
+    id TEXT PRIMARY KEY,
+    provider_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    model TEXT NOT NULL,
+    temperature REAL NOT NULL DEFAULT 0.7,
+    max_tokens INTEGER,
+    timeout_seconds REAL NOT NULL DEFAULT 60,
+    supports_tools INTEGER NOT NULL DEFAULT 1,
+    supports_parallel_tool_calls INTEGER NOT NULL DEFAULT 0,
+    supports_strict_schema INTEGER NOT NULL DEFAULT 0,
+    thinking_mode TEXT,
+    strict_tool_schema INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_providers_name
+    ON llm_providers(name);
+
+CREATE TABLE IF NOT EXISTS llm_accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    provider_id TEXT NOT NULL REFERENCES llm_providers(id) ON DELETE RESTRICT,
+    initial_cash REAL NOT NULL DEFAULT 1000000,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_accounts_name
+    ON llm_accounts(name);
 """

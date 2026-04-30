@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
 from app.core.config import get_settings
 from app.storage.sqlite import SQLiteStore
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.app_version}
 
+    app.include_router(providers_router)
     app.include_router(sessions_router)
 
     frontend_dist = Path(settings.frontend_dist_path)
