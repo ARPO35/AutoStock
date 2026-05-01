@@ -129,13 +129,38 @@ export interface MarketHistoryResponse {
   bars: Record<string, unknown>[];
 }
 
-export interface CacheStatusRow {
+export interface FetchHistoryResponse {
   symbol: string;
   interval: string;
   adjust: string;
-  start_date: string;
-  end_date: string;
-  rows: number;
+  fetched: number;
+  inserted: number;
+  skipped: number;
+  conflicted: number;
+}
+
+export interface CacheStatusRow {
+  symbol: string;
+  name?: string | null;
+  interval: string;
+  adjust: string;
+  start_datetime: string;
+  end_datetime: string;
+  bar_count: number;
+  updated_at: string;
+}
+
+export interface DataConflict {
+  id: string;
+  symbol: string;
+  interval: string;
+  datetime: string;
+  adjust: string;
+  existing_value_json: string;
+  new_value_json: string;
+  source: string;
+  fetch_time: string;
+  status: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -189,14 +214,37 @@ export const api = {
       body: JSON.stringify({ arguments: args })
     }),
   quote: (symbol: string) => request<MarketQuote>(`/api/market/quote?symbol=${encodeURIComponent(symbol)}`),
-  history: (params: { symbol: string; start?: string; end?: string; interval?: string; adjust?: string }) => {
+  history: (params: { symbol: string; start?: string; end?: string; interval?: string; adjust?: string; allowFetchMissing?: boolean }) => {
     const query = new URLSearchParams();
     query.set("symbol", params.symbol);
     if (params.start) query.set("start", params.start);
     if (params.end) query.set("end", params.end);
     if (params.interval) query.set("interval", params.interval);
     if (params.adjust) query.set("adjust", params.adjust);
+    if (params.allowFetchMissing) query.set("allow_fetch_missing", "true");
     return request<MarketHistoryResponse>(`/api/market/history?${query.toString()}`);
   },
-  cacheStatus: () => request<CacheStatusRow[]>("/api/data/cache-status")
+  fetchHistory: (payload: { symbol: string; start: string; end: string; interval?: string; adjust?: string }) =>
+    request<FetchHistoryResponse>("/api/data/fetch-history", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  cacheStatus: (params?: { symbol?: string; interval?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.symbol) query.set("symbol", params.symbol);
+    if (params?.interval) query.set("interval", params.interval);
+    const suffix = query.toString();
+    return request<CacheStatusRow[]>(`/api/data/cache-status${suffix ? `?${suffix}` : ""}`);
+  },
+  dataConflicts: (statusFilter?: string) => {
+    const query = new URLSearchParams();
+    if (statusFilter) query.set("status_filter", statusFilter);
+    const suffix = query.toString();
+    return request<DataConflict[]>(`/api/data/conflicts${suffix ? `?${suffix}` : ""}`);
+  },
+  resolveConflict: (conflictId: string, status: "resolved" | "ignored") =>
+    request<DataConflict>(`/api/data/conflicts/${conflictId}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ status })
+    })
 };
