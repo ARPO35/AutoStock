@@ -140,6 +140,9 @@ h3 { margin: 0; font-size: 14px; }
 .holding-row summary { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(120px, 1fr) auto; gap: 8px; align-items: center; cursor: pointer; list-style: none; }
 .holding-row p { margin: 8px 0; color: #b8c9d8; font-size: 13px; }
 .event-line { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+.empty-state { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 120px; padding: 18px; border: 1px dashed rgba(117, 161, 204, 0.24); border-radius: 10px; background: rgba(4, 16, 26, .26); color: var(--muted); text-align: center; }
+.empty-state strong { color: #d7e6f7; }
+.empty-state span { max-width: 420px; line-height: 1.5; }
 @keyframes reveal { to { opacity: 1; transform: translateY(0); } }
 .module-page { min-height: 0; overflow: auto; padding: 16px 18px 22px; }
 .page-header { margin-bottom: 12px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: rgba(9, 26, 41, .78); }

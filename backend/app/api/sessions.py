@@ -74,6 +74,25 @@ class RunRead(BaseModel):
     error: str | None
 
 
+class TimelineItemRead(BaseModel):
+    type: Literal["message", "tool_call", "tool_result"]
+    id: str
+    session_id: str | None = None
+    role: str | None = None
+    message_type: str | None = None
+    content: str | None = None
+    created_at: str | None = None
+    run_id: str | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    arguments_json: str | None = None
+    result_json: str | None = None
+    status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+
+
 @router.get("", response_model=list[SessionRead])
 async def list_sessions(store: SQLiteStore = Depends(get_store)) -> list[dict[str, object]]:
     return store.fetch_all(
@@ -136,6 +155,89 @@ async def list_messages(
         """,
         (session_id,),
     )
+
+
+@router.get("/{session_id}/timeline", response_model=list[TimelineItemRead])
+async def session_timeline(
+    session_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> list[dict[str, object]]:
+    _get_session_or_404(store, session_id)
+    items: list[dict[str, object]] = []
+
+    for row in store.fetch_all(
+        """
+        SELECT *
+        FROM chat_messages
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ):
+        items.append(
+            {
+                "type": "message",
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+                "content": row["content"],
+                "message_type": row["message_type"],
+                "trigger_id": row.get("trigger_id"),
+                "parent_message_id": row.get("parent_message_id"),
+                "created_at": row["created_at"],
+                "_sort_time": row["created_at"],
+            }
+        )
+
+    for row in store.fetch_all(
+        """
+        SELECT *
+        FROM chat_tool_calls
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ):
+        items.append(
+            {
+                "type": "tool_call",
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "run_id": row["run_id"],
+                "tool_call_id": row["id"],
+                "tool_name": row["tool_name"],
+                "arguments_json": row["arguments_json"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "error": row["error"],
+                "_sort_time": row["started_at"],
+            }
+        )
+
+    for row in store.fetch_all(
+        """
+        SELECT *
+        FROM chat_tool_results
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ):
+        items.append(
+            {
+                "type": "tool_result",
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "run_id": row["run_id"],
+                "tool_call_id": row["tool_call_id"],
+                "result_json": row["result_json"],
+                "created_at": row["created_at"],
+                "_sort_time": row["created_at"],
+            }
+        )
+
+    items.sort(key=lambda item: str(item["_sort_time"]))
+    for item in items:
+        item.pop("_sort_time", None)
+    return items
 
 
 @router.post(

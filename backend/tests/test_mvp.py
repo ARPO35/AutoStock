@@ -42,6 +42,24 @@ def test_session_crud(monkeypatch) -> None:
     assert [item["content"] for item in messages.json()] == ["hello"]
 
 
+def test_session_timeline_empty_and_messages(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+
+    created = client.post("/api/sessions", json={"name": "Timeline Session"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    empty = client.get(f"/api/sessions/{session_id}/timeline")
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+    client.post(f"/api/sessions/{session_id}/messages", json={"content": "hello timeline"})
+    timeline = client.get(f"/api/sessions/{session_id}/timeline")
+    assert timeline.status_code == 200
+    assert timeline.json()[0]["type"] == "message"
+    assert timeline.json()[0]["content"] == "hello timeline"
+
+
 def test_provider_account_and_key_mask(monkeypatch) -> None:
     client = make_client(monkeypatch)
 
@@ -145,3 +163,68 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
         "tool_call_request",
         "assistant",
     ]
+
+
+def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class FakeProvider:
+        async def chat(self, config, messages, tools):
+            if messages and messages[-1].role == "tool":
+                return ChatResponse(content="done")
+            return ChatResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="system_echo",
+                        arguments='{"message":"ping"}',
+                    )
+                ],
+            )
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: FakeProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Timeline DeepSeek",
+            "api_key": "sk-test",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post(
+        "/api/accounts",
+        json={"name": "Timeline Paper", "provider_id": provider["id"]},
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={"name": "Timeline Trading Session", "llm_account_id": account["id"]},
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+    assert run.status_code == 200
+
+    timeline = client.get(f"/api/sessions/{session['id']}/timeline")
+    assert timeline.status_code == 200
+    body = timeline.json()
+    assert [item["type"] for item in body] == [
+        "message",
+        "message",
+        "tool_call",
+        "tool_result",
+        "message",
+    ]
+    tool_call = next(item for item in body if item["type"] == "tool_call")
+    tool_result = next(item for item in body if item["type"] == "tool_result")
+    assert tool_call["tool_name"] == "system_echo"
+    assert tool_call["arguments_json"] == '{"message":"ping"}'
+    assert tool_result["tool_call_id"] == tool_call["id"]
+    assert '"echo": "ping"' in tool_result["result_json"]

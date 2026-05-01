@@ -88,6 +88,25 @@ export interface RuntimeEvent {
   message?: Message;
 }
 
+export interface SessionTimelineItem {
+  type: "message" | "tool_call" | "tool_result";
+  id: string;
+  session_id?: string | null;
+  role?: "system" | "user" | "assistant" | "tool" | string | null;
+  message_type?: string | null;
+  content?: string | null;
+  created_at?: string | null;
+  run_id?: string | null;
+  tool_call_id?: string | null;
+  tool_name?: string | null;
+  arguments_json?: string | null;
+  result_json?: string | null;
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
 export interface MarketQuote {
   symbol: string;
   name?: string;
@@ -156,6 +175,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  sessionTimeline: (sessionId: string) => request<SessionTimelineItem[]>(`/api/sessions/${sessionId}/timeline`),
   runs: (sessionId: string) => request<Run[]>(`/api/sessions/${sessionId}/runs`),
   runSession: (sessionId: string, payload: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/api/sessions/${sessionId}/run`, {
