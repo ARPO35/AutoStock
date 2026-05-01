@@ -52,7 +52,7 @@ h3 { margin: 0; font-size: 14px; }
 .fall { color: var(--green) !important; }
 .flat { color: #a8b5c1 !important; }
 .ghost-button, .send-button, .danger-button, .link-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(14, 32, 49, .72); color: #bcd0e2; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
-.ghost-button:hover, .link-button:hover { border-color: var(--line-strong); background: rgba(25, 53, 78, .92); transform: translateY(-1px); }
+.ghost-button:not(:disabled):hover, .link-button:not(:disabled):hover { border-color: var(--line-strong); background: rgba(25, 53, 78, .92); transform: translateY(-1px); }
 .send-button { border-color: rgba(76, 139, 255, .68); background: linear-gradient(135deg, #2e6eea, #4c8bff); color: #fff; font-weight: 800; }
 .danger-button { border-color: rgba(239, 68, 68, .48); background: rgba(77, 24, 31, .75); color: #ffb5b5; }
 .square { width: 34px; padding: 0; }
@@ -65,7 +65,7 @@ h3 { margin: 0; font-size: 14px; }
 .search-field { position: relative; display: block; }
 .search-field svg { position: absolute; left: 10px; top: 9px; color: var(--muted); }
 .search-field input { padding-left: 32px; }
-.create-session { display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 8px; }
+.create-session { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 8px; }
 .create-session button { border-radius: 8px; background: rgba(76, 139, 255, .22); border: 1px solid rgba(76,139,255,.36); }
 .account-tree { min-height: 0; overflow: auto; padding-right: 3px; }
 .account-node { border-top: 1px solid rgba(255,255,255,.05); padding: 10px 0; }
@@ -153,6 +153,7 @@ h3 { margin: 0; font-size: 14px; }
 .filter-bar input { width: 134px; border: 0; background: transparent; padding: 0; height: auto; color: #d7e6f7; }
 .auto-refresh { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: #a8bacb; font-size: 13px; }
 .auto-refresh span { width: 28px; height: 15px; border-radius: 999px; background: linear-gradient(90deg, #4c8bff 50%, rgba(255,255,255,.16) 50%); box-shadow: 0 0 14px rgba(76,139,255,.4); }
+.auto-refresh.disabled span { background: rgba(255,255,255,.16); box-shadow: none; }
 .account-card-row { display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .account-summary-card { padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(180deg, rgba(19, 43, 64, .9), rgba(9, 27, 42, .82)); }
 .account-summary-card header { display: grid; grid-template-columns: minmax(0, 1fr) 86px; align-items: center; gap: 8px; }
