@@ -70,7 +70,7 @@ LLM Account
 | DeepSeek | 默认支持 DeepSeek V4 API |
 | Tool Call | 所有功能通过 tool call 实现 |
 | Skill | 支持加载、上传、编辑、启用、禁用 |
-| WebUI | 单一统一管理页面 |
+| WebUI | 四入口统一工作台（交易 / 查看 / 修改 / 管理） |
 | 部署 | 只能一个 Docker 容器 |
 | 存储 | 本地持久化保存配置、行情、订单、日志、会话 |
 | 事件循环 | 可人工触发，也可配置带 prompt 的定时触发 |
@@ -195,270 +195,175 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ---
 
-## 6. WebUI 页面设计
+## 6. WebUI 页面设计（与 frontend.md 对齐）
 
-### 6.1 Dashboard
+本节与 `frontend.md` 保持一致；如后续有冲突，以 `frontend.md` 为准。
 
-用途：总览系统运行状态。
+### 6.1 顶部一级导航
 
-内容：
-
-- 当前交易日。
-- 当前市场状态。
-- 活跃 Chat Session。
-- 活跃 LLM Account。
-- 今日模拟收益。
-- 最近订单。
-- 最近 tool call。
-- 最近 LLM 决策。
-- 数据源状态。
-- Tavily 状态。
-- 调度器状态。
-
-### 6.2 API 配置
-
-用途：配置外部 API。
-
-内容：
-
-- AKShare 配置。
-- Tavily API Key。
-- Tavily search depth 默认值。
-- Tavily max results 默认值。
-- 行情缓存策略。
-- 接口失败重试次数。
-- 接口超时时间。
-- 是否允许缺失数据时自动补拉。
-
-### 6.3 LLM Provider 配置
-
-用途：配置模型来源。
-
-默认支持：
+顶部一级导航固定为四个入口：
 
 ```text
-openai_compatible
-deepseek
+交易（LLM） | 查看 | 修改 | 管理
 ```
 
-OpenAI-Compatible 配置项：
+推荐一级路由：
 
 ```text
-name
-base_url
-api_key
-model
-temperature
-max_tokens
-timeout
-supports_tools
-supports_parallel_tool_calls
-supports_strict_schema
+/trade
+/view
+/edit
+/manage
 ```
 
-DeepSeek 配置项：
+复杂功能不放在顶部，而是在各一级页面内通过二级导航组织。
+
+### 6.2 全局布局原则
 
 ```text
-api_key
-base_url = https://api.deepseek.com
-model = deepseek-v4-pro / deepseek-v4-flash
-thinking_mode = thinking / non_thinking
-strict_tool_schema = true / false
-temperature
-max_tokens
-timeout
+交易页：WebChat 式 LLM 交互主入口。
+查看页：全局观察、跨账号对比、行情浏览、时间线控制。
+修改页：人工修改账户与绑定关系，必须审计。
+管理页：模型、API、Skill、Tool、触发器、数据和系统配置。
 ```
 
-### 6.4 Prompt 配置
+通用约束：
 
-用途：编辑不同层级的 prompt。
+- 顶部导航保持简洁。
+- Tool Result 必须优先人类可读展示，不可仅回显 JSON。
+- 同一账户允许多 Session 并行，但交易归属必须可追溯到 Session / 模型 / run。
 
-Prompt 分层：
+### 6.3 交易页（/trade）三栏布局
+
+交易页采用三栏结构：
 
 ```text
-全局系统提示词
-+ Provider 适配提示词
-+ Skill 提示词
-+ Session 提示词
-+ Trigger 事件提示词
-+ 用户手动消息
+左侧：账户文件夹与 Session 列表
+中间：LLM 线性流程（消息、推理、工具、结果、下单、回复）
+右侧：账户观察（资产、持仓、交易、指标）
 ```
 
-页面功能：
+宽度规则：
 
-- 编辑全局 system prompt。
-- 编辑交易员人格 prompt。
-- 编辑复盘 prompt。
-- 编辑异常处理 prompt。
-- 查看 prompt 版本历史。
-- 回滚 prompt 版本。
-- 查看某次运行实际拼接后的完整 prompt。
+- 左侧栏默认 `260px ~ 320px`，支持折叠。
+- 中间区最小宽度 `520px`。
+- 右侧栏最小宽度 `420px`，支持拖拽调整，宽度建议持久化到 `localStorage`。
 
-### 6.5 Tool 配置
+### 6.4 交易页左侧：账户与 Session
 
-用途：管理 LLM 可调用工具。
-
-工具分组：
+结构关系：
 
 ```text
-market.*
-portfolio.*
-order.*
-simulator.*
-tavily.*
-journal.*
-report.*
-data.*
+Account = 资金和持仓归属
+Session = 一条独立 LLM 运行线程
+Model = Session 级配置（不强制与账户一一绑定）
 ```
 
-功能：
+同一账户下可并行多个 Session；左侧需展示账户概览和 Session 状态（idle/running/queued/error/has trigger）。
 
-- 启用 / 禁用工具。
-- 查看 tool schema。
-- 测试工具调用。
-- 设置工具超时。
-- 设置工具是否允许被定时触发调用。
-- 设置工具是否写入审计日志。
-- 设置 skill 级工具白名单。
+### 6.5 交易页中间：LLM 线性流程
 
-### 6.6 Skill 管理
-
-用途：上传、编辑、启用、禁用 skill。
-
-功能：
-
-- 上传 skill zip。
-- 在线编辑 `skill.yaml`。
-- 在线编辑 `system.md`。
-- 在线编辑 tool 白名单。
-- 启用 / 禁用 skill。
-- 热重载 skill。
-- 查看 skill 版本。
-- 回滚 skill。
-- 绑定 skill 到 Chat Session。
-- 绑定 skill 到 LLM Account。
-
-### 6.7 LLM 账户管理
-
-用途：管理虚拟交易账户和模型配置。
-
-一个 LLM Account 包含：
+线性流程包含：
 
 ```text
-账户名称
-Provider
-模型
-API Key 引用
-初始资金
-当前现金
-持仓
-绑定股票池
-默认 skill
-默认 trigger 模板
-成本统计
+用户消息
+定时事件消息
+可见推理
+tool call
+tool result
+下单结果
+最终回复
+错误
 ```
 
-### 6.8 WebChat Session
-
-用途：核心交互界面。
-
-每个 Session 显示：
-
-- 用户消息。
-- 定时事件消息。
-- LLM 回复。
-- thinking / reasoning 记录。
-- tool call。
-- tool result。
-- 下单结果。
-- 持仓变化。
-- 行情快照。
-- 成本记录。
-- 复盘总结。
-
-### 6.9 事件触发器
-
-用途：为某个 Chat Session 配置自动消息。
-
-触发器类型：
-
-| 类型 | 用途 |
-|---|---|
-| manual | 手动点击运行一次 |
-| cron | 开盘前、尾盘、收盘等固定时间 |
-| interval | 盘中每 5 / 15 / 30 分钟 |
-| once | 指定时间单次实验 |
-| market_event | 后续计划：行情异动触发 |
-
-触发器绑定对象：
+展示边界：
 
 ```text
-trigger -> chat_session_id
+不展示完整 CoT；
+仅展示 Provider 可见推理内容或推理摘要；
+若 Provider 不返回可见推理，则明确显示“无可见推理”。
 ```
 
-不是直接绑定后台账户任务。
+### 6.6 Tool Result 渲染规则
 
-### 6.10 数据仓库
+必须按工具类型结构化渲染：
 
-用途：手动拉取、保存、合并行情数据。
+- `tavily.search`：标题、域名、摘要、发布时间（若有）、原始链接。
+- `market.quote`：价格、涨跌幅、成交量、时间。
+- `market.history`：K 线/历史图表 + 时间范围 + 数据条数。
+- `order.*` / `simulator.*`：下单结果、成交结果、账户变动摘要。
+- `portfolio.*`：现金、持仓市值、总资产、当日收益等。
 
-功能：
+`tool call` 默认折叠，详情按需展开；长 JSON 默认懒加载。
 
-- 输入股票代码。
-- 选择时间段。
-- 选择周期：日线、分钟线等。
-- 选择复权方式。
-- 手动拉取。
-- 永久保存。
-- 查看缓存覆盖范围。
-- 查看缺失数据。
-- 查看数据冲突。
-- 手动重新拉取。
-- 导出 CSV / Parquet。
+### 6.7 交易页右侧：账户观察栏
 
-### 6.11 模拟盘
+右侧固定展示当前账户观察信息：
 
-用途：查看模拟交易状态。
+- 当前账户基本信息。
+- 资产变化折线图。
+- 数字指标面板（现金、总资产、浮盈亏、仓位等）。
+- 持仓列表。
+- 交易记录折叠栏。
 
-内容：
+该区域需随 WebSocket 事件实时刷新。
 
-- 现金。
-- 可用资金。
-- 持仓。
-- 冻结资金。
-- 当前市值。
-- 总资产。
-- 订单。
-- 成交。
-- 收益曲线。
-- 换手率。
-- 最大回撤。
-- 持仓成本。
-- 每笔交易来源 Session。
+### 6.8 交易页底部输入区
 
-### 6.12 决策日志
+输入区包含多种运行动作：
 
-用途：审计和研究 LLM 炒股可行性。
+```text
+发送
+作为事件运行
+只写入
+停止
+```
 
-记录：
+可提供常用快捷事件模板（开盘前观察、盘中检查、尾盘决策、收盘复盘）。
 
-- Session ID。
-- Trigger ID。
-- Provider。
-- Model。
-- Prompt 版本。
-- Skill 版本。
-- 输入消息。
-- thinking / reasoning。
-- tool call。
-- tool result。
-- 最终回复。
-- 订单。
-- 成交。
-- 行情快照。
-- token 消耗。
-- 耗时。
-- 费用估算。
+### 6.9 查看页（/view）
+
+查看页用于全局观察与分析，建议子路由：
+
+```text
+/view/overview
+/view/account-detail
+/view/trades
+/view/assets
+/view/stock
+/view/logs
+/view/timeline
+```
+
+支持全局总览、账号详情、交易历史、资产曲线、股票信息、决策日志和时间线控制。
+
+### 6.10 修改页（/edit）
+
+修改页用于人工修正账户状态和绑定关系，建议子路由：
+
+```text
+/edit/accounts
+/edit/balance
+/edit/positions
+/edit/orders
+/edit/session-binding
+```
+
+所有人工修改必须记录审计字段（修改人、时间、修改前后、原因、影响账号/Session），并在资产曲线中可标记人工干预点。
+
+### 6.11 管理页（/manage）
+
+管理页承载系统配置能力，采用分组管理：
+
+```text
+模型与 API：OpenAI-Compatible / DeepSeek / Tavily / AKShare
+Agent 能力：Skills / Tools / Prompts
+自动化：触发器
+数据：缓存、冲突、批量拉取、导出清理
+系统：日志、备份、全局设置
+```
+
+管理页中的数据管理偏系统级；单只股票的临时查看与拉取保存放在 `/view/stock`。
 
 ---
 
@@ -1644,7 +1549,7 @@ POST   /api/simulator/accounts/{id}/reset
 React + TypeScript + Vite
 ```
 
-单容器部署时，前端 build 后放入：
+单容器部署时，前端 build 输出到：
 
 ```text
 frontend_dist/
@@ -1652,36 +1557,77 @@ frontend_dist/
 
 由 FastAPI 静态托管。
 
-### 23.2 关键组件
+### 23.2 路由与页面结构
+
+一级路由固定四入口：
 
 ```text
-ChatWindow
-ToolCallTimeline
-ThinkingBlock
-PortfolioPanel
-MarketPanel
-TriggerEditor
-SkillEditor
-ProviderEditor
-DataFetchPanel
-OrderTable
-TradeTable
-CostPanel
+/trade
+/view
+/edit
+/manage
 ```
 
-### 23.3 WebChat 展示要求
-
-每次 LLM Run 应按时间线展示：
+`/view` 下建议包含：
 
 ```text
-事件消息
-→ LLM thinking
-→ tool call
-→ tool result
-→ LLM 继续 thinking
-→ 下单 tool call
-→ 成交结果
-→ 最终回复
+overview
+account-detail
+trades
+assets
+stock
+logs
+timeline
+```
+
+### 23.3 组件结构与展示约束
+
+组件组织建议与 `frontend.md` 一致，核心包括：
+
+```text
+layouts/AppShell + TopNavigation
+pages/TradePage + ViewPage + EditPage + ManagePage
+features/trade/AccountSessionSidebar
+features/trade/LLMLinearTimeline
+features/trade/AccountInspectorPanel
+features/trade/ChatInputBox
+features/trade/tool-renderers/*
+features/view/*
+```
+
+交易页展示规则：
+
+```text
+按时间线展示消息、可见推理、tool call、tool result、下单结果和最终回复；
+不展示完整 CoT，只展示可见推理或摘要；
+tool call 默认折叠，tool result 必须人类可读。
+```
+
+### 23.4 实时与性能要求
+
+WebSocket 事件至少覆盖：
+
+```text
+llm.delta
+reasoning.delta
+tool.started
+tool.finished
+order.created
+trade.created
+portfolio.updated
+run.finished
+error
+```
+
+性能策略：
+
+```text
+Timeline 虚拟列表
+按 run 分组折叠
+默认加载最近 N 条
+历史按需加载
+图表懒渲染
+长 JSON 懒加载
 ```
 
 ---
