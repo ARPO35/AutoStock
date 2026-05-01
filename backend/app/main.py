@@ -10,6 +10,7 @@ from app.api.tools import router as tools_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.websocket_manager import WebSocketManager
+from app.market.akshare_provider import AKShareMarketProvider
 from app.sessions.runtime import SessionRunManager
 from app.storage.duckdb import MarketDuckDBStore
 from app.storage.sqlite import SQLiteStore
@@ -25,6 +26,7 @@ def create_app() -> FastAPI:
     market_store.initialize()
     app.state.store = store
     app.state.market_store = market_store
+    app.state.market_provider = AKShareMarketProvider()
     app.state.tool_registry = create_default_registry()
     app.state.websocket_manager = WebSocketManager()
     app.state.run_manager = SessionRunManager(
