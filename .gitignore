@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp/
+pytest-tmp/
+pytemp/
+.pycache-check/
+.pip-cache/
 .ruff_cache/
 .uv-cache/
 

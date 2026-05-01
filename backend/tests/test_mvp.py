@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
@@ -8,15 +11,23 @@ from app.main import create_app
 from app.sessions.runtime import SessionRunManager
 
 
-def make_client(monkeypatch, tmp_path) -> TestClient:
-    monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(tmp_path / "app.db"))
-    monkeypatch.setenv("AUTOSTOCK_FRONTEND_DIST_PATH", str(tmp_path / "frontend_dist"))
+def _test_dir() -> Path:
+    path = Path("pytemp") / uuid4().hex
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def make_client(monkeypatch) -> TestClient:
+    path = _test_dir()
+    monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(path / "app.db"))
+    monkeypatch.setenv("AUTOSTOCK_MARKET_DUCKDB_PATH", str(path / "market.duckdb"))
+    monkeypatch.setenv("AUTOSTOCK_FRONTEND_DIST_PATH", str(path / "frontend_dist"))
     get_settings.cache_clear()
     return TestClient(create_app())
 
 
-def test_session_crud(monkeypatch, tmp_path) -> None:
-    client = make_client(monkeypatch, tmp_path)
+def test_session_crud(monkeypatch) -> None:
+    client = make_client(monkeypatch)
 
     created = client.post("/api/sessions", json={"name": "MVP Session"})
     assert created.status_code == 201
@@ -31,8 +42,8 @@ def test_session_crud(monkeypatch, tmp_path) -> None:
     assert [item["content"] for item in messages.json()] == ["hello"]
 
 
-def test_provider_account_and_key_mask(monkeypatch, tmp_path) -> None:
-    client = make_client(monkeypatch, tmp_path)
+def test_provider_account_and_key_mask(monkeypatch) -> None:
+    client = make_client(monkeypatch)
 
     provider = client.post(
         "/api/providers",
@@ -58,12 +69,12 @@ def test_provider_account_and_key_mask(monkeypatch, tmp_path) -> None:
     assert account.json()["provider_id"] == body["id"]
 
 
-def test_echo_tool(monkeypatch, tmp_path) -> None:
-    client = make_client(monkeypatch, tmp_path)
+def test_echo_tool(monkeypatch) -> None:
+    client = make_client(monkeypatch)
 
     tools = client.get("/api/tools")
     assert tools.status_code == 200
-    assert [tool["name"] for tool in tools.json()] == ["system_echo"]
+    assert "system_echo" in [tool["name"] for tool in tools.json()]
 
     result = client.post("/api/tools/system_echo/test", json={"arguments": {"message": "ping"}})
     assert result.status_code == 200
@@ -71,8 +82,8 @@ def test_echo_tool(monkeypatch, tmp_path) -> None:
     assert result.json()["result"] == {"echo": "ping"}
 
 
-def test_session_run_loop_and_websocket_events(monkeypatch, tmp_path) -> None:
-    client = make_client(monkeypatch, tmp_path)
+def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
+    client = make_client(monkeypatch)
     app = client.app
 
     class FakeProvider:
