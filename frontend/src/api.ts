@@ -52,6 +52,20 @@ export interface Message {
   created_at: string;
 }
 
+export interface Run {
+  id: string;
+  session_id: string;
+  provider_id: string | null;
+  model: string | null;
+  status: string;
+  event_message_id: string | null;
+  max_tool_rounds: number;
+  started_at: string;
+  finished_at: string | null;
+  final_message_id: string | null;
+  error: string | null;
+}
+
 export interface ToolSchema {
   name: string;
   display_name: string;
@@ -72,6 +86,37 @@ export interface RuntimeEvent {
   error?: string | null;
   status?: string;
   message?: Message;
+}
+
+export interface MarketQuote {
+  symbol: string;
+  name?: string;
+  price?: number;
+  change?: number;
+  pct_change?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  amount?: number;
+  [key: string]: unknown;
+}
+
+export interface MarketHistoryResponse {
+  symbol: string;
+  interval: string;
+  adjust: string;
+  cache_hit: boolean;
+  fetch_stats: Record<string, number> | null;
+  bars: Record<string, unknown>[];
+}
+
+export interface CacheStatusRow {
+  symbol: string;
+  interval: string;
+  adjust: string;
+  start_date: string;
+  end_date: string;
+  rows: number;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -106,10 +151,32 @@ export const api = {
   createSession: (payload: Record<string, unknown>) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(payload) }),
   messages: (sessionId: string) => request<Message[]>(`/api/sessions/${sessionId}/messages`),
+  createMessage: (sessionId: string, payload: Record<string, unknown>) =>
+    request<Message>(`/api/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  runs: (sessionId: string) => request<Run[]>(`/api/sessions/${sessionId}/runs`),
   runSession: (sessionId: string, payload: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/api/sessions/${sessionId}/run`, {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  tools: () => request<ToolSchema[]>("/api/tools")
+  tools: () => request<ToolSchema[]>("/api/tools"),
+  testTool: (toolName: string, args: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/tools/${toolName}/test`, {
+      method: "POST",
+      body: JSON.stringify({ arguments: args })
+    }),
+  quote: (symbol: string) => request<MarketQuote>(`/api/market/quote?symbol=${encodeURIComponent(symbol)}`),
+  history: (params: { symbol: string; start?: string; end?: string; interval?: string; adjust?: string }) => {
+    const query = new URLSearchParams();
+    query.set("symbol", params.symbol);
+    if (params.start) query.set("start", params.start);
+    if (params.end) query.set("end", params.end);
+    if (params.interval) query.set("interval", params.interval);
+    if (params.adjust) query.set("adjust", params.adjust);
+    return request<MarketHistoryResponse>(`/api/market/history?${query.toString()}`);
+  },
+  cacheStatus: () => request<CacheStatusRow[]>("/api/data/cache-status")
 };
