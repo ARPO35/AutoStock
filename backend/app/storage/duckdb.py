@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+import json
+import threading
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+
+class MarketDuckDBStore:
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self._lock = threading.RLock()
+        self._connection: Any | None = None
+
+    def connect(self) -> None:
+        try:
+            import duckdb
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("The duckdb package is required for market cache storage.") from exc
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = duckdb.connect(str(self.path))
+
+    @property
+    def connection(self) -> Any:
+        if self._connection is None:
+            self.connect()
+        return self._connection
+
+    def initialize(self) -> None:
+        with self._lock:
+            self.connection.execute(SCHEMA_SQL)
+
+    def insert_bars(self, bars: list[dict[str, Any]]) -> dict[str, int]:
+        stats = {"inserted": 0, "skipped": 0, "conflicted": 0}
+        if not bars:
+            return stats
+
+        with self._lock:
+            self.connection.execute("BEGIN TRANSACTION")
+            try:
+                for bar in bars:
+                    existing = self._fetch_bar_key(bar)
+                    if existing is None:
+                        self._insert_bar(bar)
+                        stats["inserted"] += 1
+                    elif existing["raw_hash"] == bar["raw_hash"]:
+                        stats["skipped"] += 1
+                    else:
+                        self._insert_conflict(existing=existing, new_value=bar)
+                        stats["conflicted"] += 1
+                self._refresh_cache_status()
+                self.connection.execute("COMMIT")
+            except Exception:
+                self.connection.execute("ROLLBACK")
+                raise
+        return stats
+
+    def insert_quote(self, quote: dict[str, Any]) -> None:
+        with self._lock:
+            self.connection.execute(
+                """
+                INSERT INTO market_quotes (
+                    id, symbol, name, price, open, high, low, previous_close,
+                    volume, amount, source, fetch_time, raw_hash, snapshot_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    uuid4().hex,
+                    quote.get("symbol"),
+                    quote.get("name"),
+                    quote.get("price"),
+                    quote.get("open"),
+                    quote.get("high"),
+                    quote.get("low"),
+                    quote.get("previous_close"),
+                    quote.get("volume"),
+                    quote.get("amount"),
+                    quote.get("source"),
+                    quote.get("fetch_time"),
+                    quote.get("raw_hash"),
+                    json.dumps(quote, ensure_ascii=False, sort_keys=True),
+                ],
+            )
+
+    def query_history(
+        self,
+        symbol: str,
+        start: str | None = None,
+        end: str | None = None,
+        interval: str = "daily",
+        adjust: str = "",
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT *
+            FROM market_bars
+            WHERE symbol = ?
+              AND interval = ?
+              AND adjust = ?
+        """
+        params: list[Any] = [symbol, interval, adjust]
+        if start:
+            sql += " AND datetime >= ?"
+            params.append(start)
+        if end:
+            sql += " AND datetime <= ?"
+            params.append(end)
+        sql += " ORDER BY datetime ASC"
+        return self._rows(sql, params)
+
+    def cache_status(
+        self,
+        symbol: str | None = None,
+        interval: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM market_cache_status WHERE 1 = 1"
+        params: list[Any] = []
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        if interval:
+            sql += " AND interval = ?"
+            params.append(interval)
+        sql += " ORDER BY symbol, interval, adjust"
+        return self._rows(sql, params)
+
+    def list_conflicts(self, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM data_conflicts"
+        params: list[Any] = []
+        if status:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY fetch_time DESC"
+        return self._rows(sql, params)
+
+    def resolve_conflict(self, conflict_id: str, status: str) -> dict[str, Any] | None:
+        with self._lock:
+            self.connection.execute(
+                """
+                UPDATE data_conflicts
+                SET status = ?
+                WHERE id = ?
+                """,
+                [status, conflict_id],
+            )
+            return self._row("SELECT * FROM data_conflicts WHERE id = ?", [conflict_id])
+
+    def close(self) -> None:
+        with self._lock:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+
+    def _fetch_bar_key(self, bar: dict[str, Any]) -> dict[str, Any] | None:
+        return self._row(
+            """
+            SELECT *
+            FROM market_bars
+            WHERE symbol = ?
+              AND interval = ?
+              AND datetime = ?
+              AND adjust = ?
+            """,
+            [bar["symbol"], bar["interval"], bar["datetime"], bar["adjust"]],
+        )
+
+    def _insert_bar(self, bar: dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO market_bars (
+                symbol, name, interval, datetime, open, high, low, close,
+                volume, amount, adjust, source, fetch_time, raw_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                bar.get("symbol"),
+                bar.get("name"),
+                bar.get("interval"),
+                bar.get("datetime"),
+                bar.get("open"),
+                bar.get("high"),
+                bar.get("low"),
+                bar.get("close"),
+                bar.get("volume"),
+                bar.get("amount"),
+                bar.get("adjust"),
+                bar.get("source"),
+                bar.get("fetch_time"),
+                bar.get("raw_hash"),
+            ],
+        )
+
+    def _insert_conflict(self, existing: dict[str, Any], new_value: dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO data_conflicts (
+                id, symbol, interval, datetime, adjust, existing_value_json,
+                new_value_json, source, fetch_time, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+            """,
+            [
+                uuid4().hex,
+                new_value.get("symbol"),
+                new_value.get("interval"),
+                new_value.get("datetime"),
+                new_value.get("adjust"),
+                json.dumps(existing, ensure_ascii=False, sort_keys=True, default=str),
+                json.dumps(new_value, ensure_ascii=False, sort_keys=True, default=str),
+                new_value.get("source"),
+                new_value.get("fetch_time"),
+            ],
+        )
+
+    def _refresh_cache_status(self) -> None:
+        self.connection.execute("DELETE FROM market_cache_status")
+        self.connection.execute(
+            """
+            INSERT INTO market_cache_status (
+                symbol, name, interval, adjust, start_datetime,
+                end_datetime, bar_count, updated_at
+            )
+            SELECT
+                symbol,
+                any_value(name),
+                interval,
+                adjust,
+                min(datetime),
+                max(datetime),
+                count(*),
+                max(fetch_time)
+            FROM market_bars
+            GROUP BY symbol, interval, adjust
+            """
+        )
+
+    def _row(self, sql: str, params: Iterable[Any]) -> dict[str, Any] | None:
+        cursor = self.connection.execute(sql, list(params))
+        columns = [column[0] for column in cursor.description]
+        row = cursor.fetchone()
+        return dict(zip(columns, row, strict=False)) if row else None
+
+    def _rows(self, sql: str, params: Iterable[Any]) -> list[dict[str, Any]]:
+        cursor = self.connection.execute(sql, list(params))
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS market_bars (
+    symbol VARCHAR NOT NULL,
+    name VARCHAR,
+    interval VARCHAR NOT NULL,
+    datetime VARCHAR NOT NULL,
+    open DOUBLE,
+    high DOUBLE,
+    low DOUBLE,
+    close DOUBLE,
+    volume DOUBLE,
+    amount DOUBLE,
+    adjust VARCHAR NOT NULL DEFAULT '',
+    source VARCHAR NOT NULL,
+    fetch_time VARCHAR NOT NULL,
+    raw_hash VARCHAR NOT NULL,
+    PRIMARY KEY (symbol, interval, datetime, adjust)
+);
+
+CREATE TABLE IF NOT EXISTS market_quotes (
+    id VARCHAR PRIMARY KEY,
+    symbol VARCHAR NOT NULL,
+    name VARCHAR,
+    price DOUBLE,
+    open DOUBLE,
+    high DOUBLE,
+    low DOUBLE,
+    previous_close DOUBLE,
+    volume DOUBLE,
+    amount DOUBLE,
+    source VARCHAR NOT NULL,
+    fetch_time VARCHAR NOT NULL,
+    raw_hash VARCHAR NOT NULL,
+    snapshot_json VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS data_conflicts (
+    id VARCHAR PRIMARY KEY,
+    symbol VARCHAR NOT NULL,
+    interval VARCHAR NOT NULL,
+    datetime VARCHAR NOT NULL,
+    adjust VARCHAR NOT NULL DEFAULT '',
+    existing_value_json VARCHAR NOT NULL,
+    new_value_json VARCHAR NOT NULL,
+    source VARCHAR NOT NULL,
+    fetch_time VARCHAR NOT NULL,
+    status VARCHAR NOT NULL DEFAULT 'open'
+);
+
+CREATE TABLE IF NOT EXISTS market_cache_status (
+    symbol VARCHAR NOT NULL,
+    name VARCHAR,
+    interval VARCHAR NOT NULL,
+    adjust VARCHAR NOT NULL DEFAULT '',
+    start_datetime VARCHAR NOT NULL,
+    end_datetime VARCHAR NOT NULL,
+    bar_count BIGINT NOT NULL,
+    updated_at VARCHAR NOT NULL,
+    PRIMARY KEY (symbol, interval, adjust)
+);
+"""

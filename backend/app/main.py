@@ -11,6 +11,7 @@ from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.websocket_manager import WebSocketManager
 from app.sessions.runtime import SessionRunManager
+from app.storage.duckdb import MarketDuckDBStore
 from app.storage.sqlite import SQLiteStore
 from app.tools.registry import create_default_registry
 
@@ -20,7 +21,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, version=settings.app_version)
     store = SQLiteStore(settings.sqlite_path)
     store.initialize()
+    market_store = MarketDuckDBStore(settings.market_duckdb_path)
+    market_store.initialize()
     app.state.store = store
+    app.state.market_store = market_store
     app.state.tool_registry = create_default_registry()
     app.state.websocket_manager = WebSocketManager()
     app.state.run_manager = SessionRunManager(

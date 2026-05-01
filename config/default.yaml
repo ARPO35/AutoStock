@@ -1,6 +1,7 @@
 app_name: AutoStock
 data_dir: data
 sqlite_path: data/app.db
+market_duckdb_path: data/market.duckdb
 frontend_dist_path: frontend_dist
 cors_origins:
   - http://localhost:5173
