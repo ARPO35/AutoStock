@@ -52,3 +52,21 @@ cd frontend
 npm install
 npm run build
 ```
+
+## Phase 2 Backend Market Data
+
+Backend-only market data endpoints:
+
+- `POST /api/data/fetch-history` fetches daily A-share history through AKShare and writes it to DuckDB.
+- `GET /api/market/history` reads from the local cache first; pass `allow_fetch_missing=true` with `start` and `end` to fetch missing rows.
+- `GET /api/market/quote` reads the latest AKShare quote and stores a quote snapshot.
+- `GET /api/data/cache-status` shows cached symbol/date coverage.
+- `GET /api/data/conflicts` and `POST /api/data/conflicts/{id}/resolve` expose data conflicts.
+
+LLM tool names use OpenAI-compatible identifiers:
+
+- `market_quote`
+- `market_history`
+- `data_fetch_history`
+
+The displayed names remain `market.quote`, `market.history`, and `data.fetch_history`.
