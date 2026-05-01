@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.data import router as data_router
+from app.api.market import router as market_router
 from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
 from app.api.tools import router as tools_router
@@ -50,6 +52,8 @@ def create_app() -> FastAPI:
     app.include_router(providers_router)
     app.include_router(sessions_router)
     app.include_router(tools_router)
+    app.include_router(data_router)
+    app.include_router(market_router)
     app.include_router(ws_router)
 
     frontend_dist = Path(settings.frontend_dist_path)
