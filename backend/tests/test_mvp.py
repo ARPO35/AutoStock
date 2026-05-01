@@ -29,7 +29,7 @@ def make_client(monkeypatch) -> TestClient:
 def test_session_crud(monkeypatch) -> None:
     client = make_client(monkeypatch)
 
-    created = client.post("/api/sessions", json={"name": "MVP Session"})
+    created = client.post("/api/sessions", json={"name": "Session Under Test"})
     assert created.status_code == 201
     session_id = created.json()["id"]
 
@@ -45,7 +45,7 @@ def test_session_crud(monkeypatch) -> None:
 def test_session_timeline_empty_and_messages(monkeypatch) -> None:
     client = make_client(monkeypatch)
 
-    created = client.post("/api/sessions", json={"name": "Timeline Session"})
+    created = client.post("/api/sessions", json={"name": "Session Under Test"})
     assert created.status_code == 201
     session_id = created.json()["id"]
 
@@ -53,11 +53,11 @@ def test_session_timeline_empty_and_messages(monkeypatch) -> None:
     assert empty.status_code == 200
     assert empty.json() == []
 
-    client.post(f"/api/sessions/{session_id}/messages", json={"content": "hello timeline"})
+    client.post(f"/api/sessions/{session_id}/messages", json={"content": "timeline entry"})
     timeline = client.get(f"/api/sessions/{session_id}/timeline")
     assert timeline.status_code == 200
     assert timeline.json()[0]["type"] == "message"
-    assert timeline.json()[0]["content"] == "hello timeline"
+    assert timeline.json()[0]["content"] == "timeline entry"
 
 
 def test_provider_account_and_key_mask(monkeypatch) -> None:
@@ -67,7 +67,7 @@ def test_provider_account_and_key_mask(monkeypatch) -> None:
         "/api/providers",
         json={
             "provider_type": "deepseek",
-            "name": "DeepSeek",
+            "name": "Provider Under Test",
             "api_key": "sk-test-123456",
             "model": "deepseek-v4-flash",
         },
@@ -81,7 +81,7 @@ def test_provider_account_and_key_mask(monkeypatch) -> None:
 
     account = client.post(
         "/api/accounts",
-        json={"name": "Paper", "provider_id": body["id"], "initial_cash": 1000000},
+        json={"name": "Account Under Test", "provider_id": body["id"], "initial_cash": 1000000},
     )
     assert account.status_code == 201
     assert account.json()["provider_id"] == body["id"]
@@ -104,7 +104,7 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app
 
-    class FakeProvider:
+    class StubChatProvider:
         async def chat(self, config, messages, tools):
             if messages and messages[-1].role == "tool":
                 return ChatResponse(content="done")
@@ -112,7 +112,7 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
                 content=None,
                 tool_calls=[
                     ToolCall(
-                        id="call_1",
+                        id="tool-call-under-test",
                         name="system_echo",
                         arguments='{"message":"ping"}',
                     )
@@ -123,25 +123,25 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
         store=app.state.store,
         tool_registry=app.state.tool_registry,
         websocket_manager=app.state.websocket_manager,
-        provider_factory=lambda config: FakeProvider(),
+        provider_factory=lambda config: StubChatProvider(),
     )
 
     provider = client.post(
         "/api/providers",
         json={
             "provider_type": "deepseek",
-            "name": "DeepSeek",
+            "name": "Provider Under Test",
             "api_key": "sk-test",
             "model": "deepseek-v4-flash",
         },
     ).json()
     account = client.post(
         "/api/accounts",
-        json={"name": "Paper", "provider_id": provider["id"]},
+        json={"name": "Account Under Test", "provider_id": provider["id"]},
     ).json()
     session = client.post(
         "/api/sessions",
-        json={"name": "Trading Session", "llm_account_id": account["id"]},
+        json={"name": "Session Under Test", "llm_account_id": account["id"]},
     ).json()
 
     with client.websocket_connect(f"/ws/sessions/{session['id']}") as websocket:
@@ -169,7 +169,7 @@ def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app
 
-    class FakeProvider:
+    class StubChatProvider:
         async def chat(self, config, messages, tools):
             if messages and messages[-1].role == "tool":
                 return ChatResponse(content="done")
@@ -177,7 +177,7 @@ def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
                 content=None,
                 tool_calls=[
                     ToolCall(
-                        id="call_1",
+                        id="tool-call-under-test",
                         name="system_echo",
                         arguments='{"message":"ping"}',
                     )
@@ -188,25 +188,25 @@ def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
         store=app.state.store,
         tool_registry=app.state.tool_registry,
         websocket_manager=app.state.websocket_manager,
-        provider_factory=lambda config: FakeProvider(),
+        provider_factory=lambda config: StubChatProvider(),
     )
 
     provider = client.post(
         "/api/providers",
         json={
             "provider_type": "deepseek",
-            "name": "Timeline DeepSeek",
+            "name": "Provider Under Test",
             "api_key": "sk-test",
             "model": "deepseek-v4-flash",
         },
     ).json()
     account = client.post(
         "/api/accounts",
-        json={"name": "Timeline Paper", "provider_id": provider["id"]},
+        json={"name": "Account Under Test", "provider_id": provider["id"]},
     ).json()
     session = client.post(
         "/api/sessions",
-        json={"name": "Timeline Trading Session", "llm_account_id": account["id"]},
+        json={"name": "Session Under Test", "llm_account_id": account["id"]},
     ).json()
 
     run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})

@@ -33,7 +33,7 @@ import {
   Zap
 } from "lucide-react";
 import { CSSProperties, FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Account, Message, Provider, ProviderType, RuntimeEvent, Session, SessionTimelineItem, ToolSchema, api } from "./api";
+import { Account, Provider, ProviderType, RuntimeEvent, Session, SessionTimelineItem, ToolSchema, api } from "./api";
 import type { AccountView, ProviderCard, RouteKey, SessionStatus, SessionView, TimelineItem, ToolResultPayload } from "./types";
 
 const navItems: Array<{ key: RouteKey; label: string; sub: string }> = [
@@ -297,7 +297,7 @@ export default function App() {
   const shellStyle = { "--inspector-width": `${inspectorWidth}px` } as CSSProperties;
   return (
     <main className="app-shell" style={shellStyle}>
-      <TopNavigation route={route} onNavigate={navigate} />
+      <TopNavigation route={route} onNavigate={navigate} providerCount={providers.length} hasSelectedSession={Boolean(selectedSession)} />
       {error && <div className="global-error"><AlertTriangle size={16} />{error}</div>}
       {route === "trade" && <TradePage accounts={accountViews} sessions={sessionViews} selectedAccount={selectedAccount} selectedSession={selectedSession} selectedSessionId={selectedSessionId} onSelectSession={setSelectedSessionId} onCreateSession={createSession} sessionName={sessionName} setSessionName={setSessionName} timeline={timeline} events={events} draft={draft} setDraft={setDraft} sendMessage={sendMessage} runSelectedOnce={runSelectedOnce} stopCurrentRun={stopCurrentRun} busy={busy} leftCollapsed={leftCollapsed} setLeftCollapsed={setLeftCollapsed} onStartResize={startResize} />}
       {route === "view" && <ViewPage tab={viewTab} setTab={setViewTab} accounts={accountViews} sessions={sessionViews} providers={providers} />}
@@ -348,21 +348,20 @@ function messageTimelineItem(item: SessionTimelineItem): TimelineItem {
     id: item.id,
     kind,
     time: humanTime(item.created_at),
-    title: role === "assistant" ? (item.message_type === "tool_call_request" ? "工具调用请求" : "助手") : item.message_type === "event" ? "事件" : role === "tool" ? "工具消息" : "用户",
-    body: item.content || (item.message_type === "tool_call_request" ? "模型请求调用工具。" : ""),
+    title: role === "assistant" ? "助手" : item.message_type === "event" ? "事件" : role === "tool" ? "工具消息" : "用户",
+    body: item.content || "",
     raw: { role: item.role, message_type: item.message_type }
   };
 }
 function classifyToolResult(toolName: string | null | undefined, envelope: Record<string, unknown>): ToolResultPayload {
   const result = envelope.result && typeof envelope.result === "object" && !Array.isArray(envelope.result) ? envelope.result as Record<string, unknown> : envelope;
-  if (toolName === "system_echo" && "echo" in result) return { kind: "echo", echo: result.echo };
   if (toolName === "market_quote") return { kind: "quote", quote: result };
   if (toolName === "market_history") return { kind: "history", history: result, bars: Array.isArray(result.bars) ? result.bars as Record<string, unknown>[] : [] };
   if (toolName === "data_fetch_history") return { kind: "fetch-history", stats: result };
   return { kind: "json", title: toolName ? `${toolName} 结果` : "工具结果", data: envelope };
 }
 
-function TopNavigation({ route, onNavigate }: { route: RouteKey; onNavigate: (route: RouteKey) => void }) {
+function TopNavigation({ route, onNavigate, providerCount, hasSelectedSession }: { route: RouteKey; onNavigate: (route: RouteKey) => void; providerCount: number; hasSelectedSession: boolean }) {
   return (
     <header className="top-navigation">
       <button className="brand-lockup" type="button" onClick={() => onNavigate("trade")}>
@@ -372,7 +371,7 @@ function TopNavigation({ route, onNavigate }: { route: RouteKey; onNavigate: (ro
       <nav className="primary-tabs" aria-label="一级导航">
         {navItems.map((item) => <button className={route === item.key ? "primary-tab active" : "primary-tab"} key={item.key} onClick={() => onNavigate(item.key)} type="button"><span>{item.label}</span><small>{item.sub}</small></button>)}
       </nav>
-      <div className="top-meta"><span>真实数据</span><span className="avatar-dot"><UserRound size={14} /></span></div>
+      <div className="top-meta"><span>{providerCount > 0 ? `${providerCount} Provider` : "未配置 Provider"}</span><span>{hasSelectedSession ? "已选择 Session" : "暂无会话"}</span><span className="avatar-dot"><UserRound size={14} /></span></div>
     </header>
   );
 }
@@ -412,14 +411,13 @@ function ToolCallCard({ item }: { item: TimelineItem }) {
 }
 
 function ToolResultRenderer({ payload, raw }: { payload: ToolResultPayload; raw?: Record<string, unknown> }) {
-  if (payload.kind === "echo") return <div className="tool-result"><div className="result-title">Echo</div><p>{String(payload.echo ?? "")}</p>{raw && <RawJson data={raw} />}</div>;
   if (payload.kind === "quote") return <div className="compact-quote"><strong>{String(payload.quote.name ?? payload.quote.symbol ?? "行情结果")}</strong>{objectEntries(payload.quote).slice(0, 8).map(([key, value]) => <span key={key}>{key}: {value}</span>)}{raw && <RawJson data={raw} />}</div>;
   if (payload.kind === "history") { const values = payload.bars.map((bar) => Number(bar.close ?? bar.Close ?? bar.price)).filter(Number.isFinite); return <div className="history-result"><div className="result-title">历史行情 · {String(payload.history.symbol ?? "--")}</div><InfoGrid items={[["周期", String(payload.history.interval ?? "--")], ["复权", String(payload.history.adjust ?? "--")], ["缓存命中", String(payload.history.cache_hit ?? "--")], ["记录数", String(payload.bars.length)]]} />{values.length > 1 && <MiniLineChart values={values} />}{raw && <RawJson data={raw} />}</div>; }
   if (payload.kind === "fetch-history") return <div className="tool-result"><div className="result-title">数据拉取结果</div><InfoGrid items={objectEntries(payload.stats)} />{raw && <RawJson data={raw} />}</div>;
   return <div className="tool-result"><div className="result-title">{payload.title}</div><InfoGrid items={objectEntries(payload.data).slice(0, 8)} />{raw && <RawJson data={raw} />}</div>;
 }
 function ChatInputBox(props: { draft: string; setDraft: (value: string) => void; sendMessage: (mode: "run" | "event" | "write") => void; stopCurrentRun: () => void; busy: boolean; disabled: boolean }) {
-  return <footer className="chat-composer"><div className="quick-events">{["开盘前观察", "盘中检查", "尾盘决策", "收盘复盘"].map((event) => <button key={event} type="button" disabled={props.disabled} onClick={() => props.setDraft(event)}>{event}</button>)}</div><div className="composer-row"><textarea value={props.draft} disabled={props.disabled} onChange={(event) => props.setDraft(event.target.value)} placeholder={props.disabled ? "请先创建并选择 Session。" : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void props.sendMessage("run"); } }} /><div className="send-stack"><button className="send-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("run")}><Send size={17} />发送</button><button className="ghost-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("event")}>作为事件运行</button><button className="ghost-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("write")}>只写入</button><button className="danger-button" type="button" disabled={props.disabled} onClick={props.stopCurrentRun}><StopCircle size={15} />停止</button></div></div><div className="composer-foot">工具列表来自后端 `/api/tools`；工具结果来自 Session timeline。</div></footer>;
+  return <footer className="chat-composer"><div className="composer-row"><textarea value={props.draft} disabled={props.disabled} onChange={(event) => props.setDraft(event.target.value)} placeholder={props.disabled ? "请先创建并选择 Session。" : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void props.sendMessage("run"); } }} /><div className="send-stack"><button className="send-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("run")}><Send size={17} />发送</button><button className="ghost-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("event")}>作为事件运行</button><button className="ghost-button" type="button" disabled={props.busy || props.disabled || !props.draft.trim()} onClick={() => props.sendMessage("write")}>只写入</button><button className="danger-button" type="button" disabled={props.disabled} onClick={props.stopCurrentRun}><StopCircle size={15} />停止</button></div></div><div className="composer-foot">工具列表来自后端 `/api/tools`；工具结果来自 Session timeline。</div></footer>;
 }
 function AccountInspectorPanel(props: { account: AccountView | null; session: SessionView | null; events: RuntimeEvent[] }) {
   const account = props.account;

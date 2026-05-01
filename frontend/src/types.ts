@@ -47,7 +47,6 @@ export type ToolResultPayload =
   | { kind: "quote"; quote: Record<string, unknown> }
   | { kind: "history"; history: Record<string, unknown>; bars: Record<string, unknown>[] }
   | { kind: "fetch-history"; stats: Record<string, unknown> }
-  | { kind: "echo"; echo: unknown }
   | { kind: "json"; title: string; data: Record<string, unknown> };
 
 export interface ProviderCard {

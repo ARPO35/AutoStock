@@ -125,8 +125,6 @@ h3 { margin: 0; font-size: 14px; }
 .candle-chart.large { height: 190px; }
 .large-chart-toggle summary { cursor: pointer; color: #8db7ff; margin-top: 8px; }
 .chat-composer { border-top: 1px solid var(--line); padding: 10px 12px 12px; background: rgba(3, 13, 22, .38); }
-.quick-events { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.quick-events button { min-height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: rgba(14, 32, 49, .66); color: #9fb6ca; }
 .composer-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 10px; }
 .send-stack { display: grid; gap: 6px; }
 .composer-foot { margin-top: 8px; color: #738a9e; font-size: 12px; }
