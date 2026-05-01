@@ -62,7 +62,7 @@ async def echo_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"echo": arguments["message"]}
 
 
-def create_default_registry() -> ToolRegistry:
+def create_default_registry(market_store: Any | None = None, market_provider: Any | None = None) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -84,4 +84,9 @@ def create_default_registry() -> ToolRegistry:
             strict=True,
         )
     )
+    if market_store is not None and market_provider is not None:
+        from app.tools.market_tools import create_market_tool_specs
+
+        for spec in create_market_tool_specs(market_store, market_provider):
+            registry.register(spec)
     return registry

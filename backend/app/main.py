@@ -29,8 +29,11 @@ def create_app() -> FastAPI:
     app.state.store = store
     app.state.market_store = market_store
     app.state.market_provider = AKShareMarketProvider()
-    app.state.tool_registry = create_default_registry()
     app.state.websocket_manager = WebSocketManager()
+    app.state.tool_registry = create_default_registry(
+        market_store=app.state.market_store,
+        market_provider=app.state.market_provider,
+    )
     app.state.run_manager = SessionRunManager(
         store=app.state.store,
         tool_registry=app.state.tool_registry,
