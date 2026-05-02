@@ -41,9 +41,12 @@ interface TradeState {
   _disconnectWs: () => void;
 }
 
+let _optId = 0;
+
 function syntheticUserMessage(content: string): TimelineItem {
+  _optId += 1;
   return {
-    id: `opt-${Date.now()}`,
+    id: `opt-${_optId}`,
     kind: "user",
     role: "user",
     time: humanTime(new Date().toISOString()),
@@ -313,14 +316,11 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
 
     if (streamingContent) {
-      const reasoningDuration = reasoningStart
-        ? Date.now() - reasoningStart
-        : null;
       items.push(syntheticAssistantMessage(
         streamingContent,
         lastModel,
         streamingReasoning,
-        reasoningDuration,
+        null,  // 流式时由组件侧计算耗时，避免 Date.now() 导致无限渲染
       ));
     }
 
