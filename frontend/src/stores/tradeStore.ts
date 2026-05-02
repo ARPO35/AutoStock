@@ -16,6 +16,8 @@ interface TradeState {
 
   optimisticUserMessage: string | null;
   streamingContent: string | null;
+  streamingReasoning: string | null;
+  reasoningStart: number | null;
   lastModel: string | null;
   lastRunLatencyMs: number | null;
 
@@ -49,7 +51,12 @@ function syntheticUserMessage(content: string): TimelineItem {
   };
 }
 
-function syntheticAssistantMessage(content: string, model: string | null): TimelineItem {
+function syntheticAssistantMessage(
+  content: string,
+  model: string | null,
+  reasoning?: string | null,
+  reasoningDurationMs?: number | null,
+): TimelineItem {
   return {
     id: "streaming",
     kind: "assistant",
@@ -58,7 +65,9 @@ function syntheticAssistantMessage(content: string, model: string | null): Timel
     title: "助手",
     body: content,
     model,
-    streaming: true
+    streaming: true,
+    reasoning: reasoning ?? null,
+    reasoningDurationMs: reasoningDurationMs ?? null,
   };
 }
 
@@ -72,6 +81,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   optimisticUserMessage: null,
   streamingContent: null,
+  streamingReasoning: null,
+  reasoningStart: null,
   lastModel: null,
   lastRunLatencyMs: null,
 
@@ -82,7 +93,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     set({
       selectedSessionId: id,
       optimisticUserMessage: null,
-      streamingContent: null
+      streamingContent: null,
+      streamingReasoning: null,
+      reasoningStart: null,
     }),
   setDraft: (value) => set({ draft: value }),
   setBusy: (value) => set({ busy: value }),
@@ -99,6 +112,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         timelineSource: source,
         optimisticUserMessage: null,
         streamingContent: null,
+        streamingReasoning: null,
+        reasoningStart: null,
         loadingTimeline: false
       });
     } catch {
@@ -132,6 +147,13 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       if (event.type === "assistant_token") {
         set((s) => ({
           streamingContent: (s.streamingContent ?? "") + (event.token ?? ""),
+        }));
+      }
+
+      if (event.type === "assistant_reasoning") {
+        set((s) => ({
+          streamingReasoning: (s.streamingReasoning ?? "") + (event.token ?? ""),
+          reasoningStart: s.reasoningStart ?? Date.now(),
         }));
       }
 
@@ -187,6 +209,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       busy: true,
       optimisticUserMessage: content,
       streamingContent: null,
+      streamingReasoning: null,
+      reasoningStart: null,
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -227,6 +251,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       busy: true,
       optimisticUserMessage: null,
       streamingContent: null,
+      streamingReasoning: null,
+      reasoningStart: null,
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -254,6 +280,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       timelineSource,
       optimisticUserMessage,
       streamingContent,
+      streamingReasoning,
+      reasoningStart,
       lastModel,
       lastRunLatencyMs
     } = get();
@@ -269,7 +297,15 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
 
     if (streamingContent) {
-      items.push(syntheticAssistantMessage(streamingContent, lastModel));
+      const reasoningDuration = reasoningStart
+        ? Date.now() - reasoningStart
+        : null;
+      items.push(syntheticAssistantMessage(
+        streamingContent,
+        lastModel,
+        streamingReasoning,
+        reasoningDuration,
+      ));
     }
 
     if (optimisticUserMessage) {

@@ -47,6 +47,8 @@ export interface TimelineItem {
   tps?: number | null;
   tokenCount?: number | null;
   streaming?: boolean;
+  reasoning?: string | null;
+  reasoningDurationMs?: number | null;
 }
 
 export type ToolResultPayload =

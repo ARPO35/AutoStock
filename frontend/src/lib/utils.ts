@@ -240,7 +240,8 @@ function messageTimelineItem(item: SessionTimelineItem, model?: string | null): 
           : "用户",
     body: item.content || "",
     raw: { role: item.role, message_type: item.message_type },
-    model: model ?? null
+    model: model ?? null,
+    reasoning: item.reasoning_content ?? null
   };
 }
 

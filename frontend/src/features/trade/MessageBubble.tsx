@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ChevronRight } from "lucide-react";
 import type { TimelineItem } from "@/types";
 import { ToolCallCard } from "@/features/trade/ToolCallCard";
 
@@ -36,6 +37,26 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[75%] bg-surface-card rounded-2xl rounded-bl-md px-4 py-3">
+        {item.reasoning && (
+          <details className="group/think mb-2">
+            <summary className="flex items-center gap-1.5 cursor-pointer text-text-muted text-xs hover:text-text-muted-strong list-none select-none">
+              <ChevronRight size={13} className="transition-transform group-open/think:rotate-90" />
+              <span className="text-text-muted-strong">
+                {item.streaming && item.reasoningDurationMs == null
+                  ? "思考中……"
+                  : "思考完成"}
+                {item.reasoningDurationMs != null
+                  ? ` ${formatLatency(item.reasoningDurationMs)}`
+                  : ""}
+              </span>
+            </summary>
+            <div className="ml-3 pl-3 border-l border-hairline mt-1 py-1">
+              <p className="text-text-muted text-xs leading-relaxed whitespace-pre-wrap break-words">
+                {item.reasoning}
+              </p>
+            </div>
+          </details>
+        )}
         <div className="text-text-body text-sm leading-relaxed break-words
           [&_p]:my-1
           [&_code]:bg-surface-canvas [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_code]:text-accent-turquoise

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useTradeStore } from "@/stores/tradeStore";
-import { EmptyState, Spinner } from "@/components/ui/Shared";
+import { EmptyState, LoadingDots, Spinner } from "@/components/ui/Shared";
 import { MessageBubble } from "@/features/trade/MessageBubble";
 
 export function LLMLinearTimeline() {
@@ -60,20 +60,7 @@ export function LLMLinearTimeline() {
         {timeline.map((item) => (
           <MessageBubble key={item.id} item={item} />
         ))}
-        {busy && !loadingTimeline && (
-          <div className="flex justify-start items-center gap-1.5 px-4 py-3">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="w-2 h-2 rounded-full bg-text-muted"
-                style={{
-                  animation: "bounce-dot 1.2s ease infinite",
-                  animationDelay: `${i * 150}ms`
-                }}
-              />
-            ))}
-          </div>
-        )}
+        {busy && !loadingTimeline && <LoadingDots />}
         <div ref={bottomRef} />
       </div>
     </div>

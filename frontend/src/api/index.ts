@@ -97,6 +97,7 @@ export interface SessionTimelineItem {
   role?: "system" | "user" | "assistant" | "tool" | string | null;
   message_type?: string | null;
   content?: string | null;
+  reasoning_content?: string | null;
   created_at?: string | null;
   run_id?: string | null;
   tool_call_id?: string | null;
