@@ -49,8 +49,12 @@ class SessionRunManager:
                 self._create_message(session_id=session_id, role="user", content=message)
 
             session = self._get_session(session_id)
-            account = self._get_account(str(session["llm_account_id"]))
-            provider_row = self._get_provider(str(account["provider_id"]))
+            account = self._get_account(str(session["llm_account_id"]))  # 校验账号存在
+            provider_id = session.get("provider_id")
+            if not provider_id:
+                raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
+            provider_row = self._get_provider(str(provider_id))
+            model = session.get("model") or provider_row["model"]
             config = self._provider_config(provider_row)
             provider = self.provider_factory(config)
 
@@ -64,7 +68,7 @@ class SessionRunManager:
                 )
                 VALUES (?, ?, ?, ?, 'running', ?, ?)
                 """,
-                (run_id, session_id, provider_row["id"], provider_row["model"], max_tool_rounds, started_at),
+                (run_id, session_id, provider_id, model, max_tool_rounds, started_at),
             )
             await self._send(session_id, "run_started", {"run_id": run_id})
 

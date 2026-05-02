@@ -22,6 +22,8 @@ class SessionCreate(BaseModel):
     llm_account_id: str | None = None
     skill_id: str | None = None
     simulator_account_id: str | None = None
+    provider_id: str | None = None
+    model: str | None = None
 
 
 class SessionRead(BaseModel):
@@ -30,6 +32,8 @@ class SessionRead(BaseModel):
     llm_account_id: str | None
     skill_id: str | None
     simulator_account_id: str | None
+    provider_id: str | None = None
+    model: str | None = None
     status: str
     created_at: str
     updated_at: str
@@ -115,9 +119,9 @@ async def create_session(
         """
         INSERT INTO chat_sessions (
             id, name, llm_account_id, skill_id, simulator_account_id,
-            status, created_at, updated_at
+            provider_id, model, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
         """,
         (
             session_id,
@@ -125,10 +129,53 @@ async def create_session(
             payload.llm_account_id,
             payload.skill_id,
             payload.simulator_account_id,
+            payload.provider_id,
+            payload.model,
             now,
             now,
         ),
     )
+    return _get_session_or_404(store, session_id)
+
+
+class SessionUpdate(BaseModel):
+    """可更新字段均为可选，留空不修改。"""
+    name: str | None = None
+    provider_id: str | None = None
+    model: str | None = None
+
+
+@router.put("/{session_id}", response_model=SessionRead)
+async def update_session(
+    session_id: str,
+    payload: SessionUpdate,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    """更新 Session 的 provider_id／model 等字段。"""
+    _get_session_or_404(store, session_id)
+    now = utc_now()
+    setters: list[str] = []
+    params: list[object] = []
+
+    if payload.name is not None:
+        setters.append("name = ?")
+        params.append(payload.name)
+    if payload.provider_id is not None:
+        setters.append("provider_id = ?")
+        params.append(payload.provider_id)
+    if payload.model is not None:
+        setters.append("model = ?")
+        params.append(payload.model)
+
+    if setters:
+        setters.append("updated_at = ?")
+        params.append(now)
+        params.append(session_id)
+        store.execute(
+            f"UPDATE chat_sessions SET {', '.join(setters)} WHERE id = ?",
+            params,
+        )
+
     return _get_session_or_404(store, session_id)
 
 
@@ -318,6 +365,17 @@ async def run_session(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> None:
+    """删除 Session，级联清理关联的 messages / runs / tool_calls / tool_results。"""
+    _get_session_or_404(store, session_id)
+    store.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    return None
 
 
 def _get_session_or_404(store: SQLiteStore, session_id: str) -> dict[str, object]:

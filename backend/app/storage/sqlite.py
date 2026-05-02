@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     llm_account_id TEXT,
     skill_id TEXT,
     simulator_account_id TEXT,
+    provider_id TEXT,
+    model TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -120,7 +122,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_providers_name
 CREATE TABLE IF NOT EXISTS llm_accounts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    provider_id TEXT NOT NULL REFERENCES llm_providers(id) ON DELETE RESTRICT,
     initial_cash REAL NOT NULL DEFAULT 1000000,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

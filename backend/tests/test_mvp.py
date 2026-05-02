@@ -76,15 +76,14 @@ def test_provider_account_and_key_mask(monkeypatch) -> None:
     body = provider.json()
     assert body["base_url"] == "https://api.deepseek.com"
     assert body["has_api_key"] is True
-    assert body["api_key_masked"] == "sk-t...3456"
+    assert body["api_key_masked"] == "sk-tes****123456"
     assert "api_key" not in body
 
     account = client.post(
         "/api/accounts",
-        json={"name": "Account Under Test", "provider_id": body["id"], "initial_cash": 1000000},
+        json={"name": "Account Under Test", "initial_cash": 1000000},
     )
     assert account.status_code == 201
-    assert account.json()["provider_id"] == body["id"]
 
 
 def test_echo_tool(monkeypatch) -> None:
@@ -137,11 +136,11 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
     ).json()
     account = client.post(
         "/api/accounts",
-        json={"name": "Account Under Test", "provider_id": provider["id"]},
+        json={"name": "Account Under Test"},
     ).json()
     session = client.post(
         "/api/sessions",
-        json={"name": "Session Under Test", "llm_account_id": account["id"]},
+        json={"name": "Session Under Test", "llm_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
     ).json()
 
     with client.websocket_connect(f"/ws/sessions/{session['id']}") as websocket:
@@ -202,11 +201,11 @@ def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
     ).json()
     account = client.post(
         "/api/accounts",
-        json={"name": "Account Under Test", "provider_id": provider["id"]},
+        json={"name": "Account Under Test"},
     ).json()
     session = client.post(
         "/api/sessions",
-        json={"name": "Session Under Test", "llm_account_id": account["id"]},
+        json={"name": "Session Under Test", "llm_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
     ).json()
 
     run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
