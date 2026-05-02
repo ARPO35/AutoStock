@@ -227,6 +227,7 @@ async def session_timeline(
                 "session_id": row["session_id"],
                 "role": row["role"],
                 "content": row["content"],
+                "reasoning_content": row.get("reasoning_content"),
                 "message_type": row["message_type"],
                 "trigger_id": row.get("trigger_id"),
                 "parent_message_id": row.get("parent_message_id"),

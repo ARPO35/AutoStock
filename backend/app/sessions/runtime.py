@@ -121,6 +121,11 @@ class SessionRunManager:
 
                 if delta.get("reasoning_content"):
                     reasoning_parts.append(delta["reasoning_content"])
+                    await self._send(
+                        session_id,
+                        "assistant_reasoning",
+                        {"run_id": run_id, "token": delta["reasoning_content"]},
+                    )
 
                 for tc_delta in delta.get("tool_calls") or []:
                     idx = tc_delta.get("index", 0)
