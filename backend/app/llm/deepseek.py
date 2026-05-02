@@ -15,6 +15,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         tools: list[ToolDefinition],
     ) -> dict[str, Any]:
         request = super()._build_chat_request(config, messages, tools)
+        request.pop("temperature", None)  # thinking mode 不支持 temperature
         request["reasoning_effort"] = "high"
         request["extra_body"] = {"thinking": {"type": "enabled"}}
         return request

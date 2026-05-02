@@ -79,7 +79,6 @@ class OpenAICompatibleProvider:
 
         request = self._build_chat_request(config, messages, tools)
         request["stream"] = True
-        request["stream_options"] = {"include_usage": True}
 
         stream = await client.chat.completions.create(**request)
         async for chunk in stream:
