@@ -80,6 +80,41 @@ export function summarizeArgs(value: string | null | undefined): string {
   return entries.map(([key, item]) => `${key}: ${formatValue(item)}`).join(" / ");
 }
 
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  "system.echo": "系统回显",
+  "market.quote": "行情报价",
+  "market.history": "历史行情",
+  "data.fetch_history": "数据拉取",
+};
+
+export function toolDisplayName(name: string | null | undefined): string {
+  if (!name) return "未知工具";
+  return TOOL_DISPLAY_NAMES[name] ?? name;
+}
+
+const ARG_NAME_CN: Record<string, string> = {
+  symbol: "代码",
+  location: "地点",
+  date: "日期",
+  start: "起始",
+  end: "截止",
+  interval: "周期",
+  adjust: "复权",
+  query: "查询",
+  message: "消息",
+};
+
+function argNameCN(key: string): string {
+  return ARG_NAME_CN[key] ?? key;
+}
+
+export function summarizeArgsChinese(value: string | null | undefined): string {
+  const parsed = parseJsonObject(value);
+  const entries = Object.entries(parsed).slice(0, 4);
+  if (entries.length === 0) return "无参数";
+  return entries.map(([k, v]) => `${argNameCN(k)}=${formatValue(v)}`).join(", ");
+}
+
 export function objectEntries(data: Record<string, unknown>): Array<[string, string]> {
   return Object.entries(data).map(([key, value]) => [key, formatValue(value)]);
 }
@@ -122,7 +157,7 @@ export function buildTimeline(source: SessionTimelineItem[], model?: string | nu
     source.filter((item) => item.type === "tool_call").map((item) => [item.id, item])
   );
 
-  return source.map((item): TimelineItem => {
+  const flatItems = source.map((item): TimelineItem => {
     if (item.type === "message") return messageTimelineItem(item, model);
 
     if (item.type === "tool_call") {
@@ -137,7 +172,7 @@ export function buildTimeline(source: SessionTimelineItem[], model?: string | nu
         toolName: item.tool_name,
         status: item.status,
         argsSummary: summarizeArgs(item.arguments_json),
-        raw: { ...item, arguments: parseJsonObject(item.arguments_json) },
+        raw: { ...item, arguments: parseJsonObject(item.arguments_json), arguments_json: item.arguments_json },
         model: model ?? null
       };
     }
@@ -160,6 +195,25 @@ export function buildTimeline(source: SessionTimelineItem[], model?: string | nu
       model: model ?? null
     };
   });
+
+  const resultByCallId = new Map<string, TimelineItem>();
+  for (const item of flatItems) {
+    if (item.role === "tool-result" && item.toolCallId) {
+      resultByCallId.set(item.toolCallId, item);
+    }
+  }
+
+  return flatItems
+    .filter((item) => item.role !== "tool-result")
+    .map((item) => {
+      if (item.role === "tool-call" && item.toolCallId) {
+        const result = resultByCallId.get(item.toolCallId);
+        if (result) {
+          return { ...item, result: result.result, status: item.status };
+        }
+      }
+      return item;
+    });
 }
 
 function messageTimelineItem(item: SessionTimelineItem, model?: string | null): TimelineItem {

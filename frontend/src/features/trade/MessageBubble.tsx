@@ -1,13 +1,14 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { TimelineItem } from "@/types";
 import { ToolCallCard } from "@/features/trade/ToolCallCard";
-import { ToolResultRenderer } from "@/features/trade/ToolResultRenderer";
 
 export function MessageBubble({ item }: { item: TimelineItem }) {
   if (item.role === "user") return <UserBubble item={item} />;
   if (item.role === "assistant") return <AssistantBubble item={item} />;
   if (item.role === "tool-call") return <ToolCallBubble item={item} />;
-  if (item.role === "tool-result") return <ToolResultBubble item={item} />;
   if (item.role === "event") return <EventBubble item={item} />;
+  if (item.role === "tool-result") return null;
   return <ErrorBubble item={item} />;
 }
 
@@ -35,9 +36,26 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[75%] bg-surface-card rounded-2xl rounded-bl-md px-4 py-3">
-        <p className="text-text-body text-sm leading-relaxed whitespace-pre-wrap break-words">
-          {item.body || (item.streaming ? "..." : "")}
-        </p>
+        <div className="text-text-body text-sm leading-relaxed break-words
+          [&_p]:my-1
+          [&_code]:bg-surface-canvas [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_code]:text-accent-turquoise
+          [&_pre]:bg-surface-canvas [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_pre]:text-xs
+          [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-1 [&_ul]:space-y-0.5
+          [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-1 [&_ol]:space-y-0.5
+          [&_th]:border [&_th]:border-hairline [&_th]:px-2 [&_th]:py-1
+          [&_td]:border [&_td]:border-hairline [&_td]:px-2 [&_td]:py-1
+          [&_strong]:text-text-on-dark [&_em]:text-text-muted-strong
+          [&_a]:text-accent-turquoise [&_a]:underline
+          [&_blockquote]:border-l-2 [&_blockquote]:border-hairline [&_blockquote]:pl-3 [&_blockquote]:text-text-muted [&_blockquote]:my-1
+          [&_hr]:border-hairline [&_hr]:my-2
+          [&_h1]:text-title-sm [&_h1]:font-semibold [&_h1]:my-2
+          [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:my-1.5
+          [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:my-1
+        ">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {item.body || (item.streaming ? "..." : "")}
+          </ReactMarkdown>
+        </div>
         <div className="flex items-center gap-1 mt-1.5 text-text-muted text-[11px] select-none">
           <span>{item.time || "--"}</span>
           {item.time && <span className="text-hairline">·</span>}
@@ -56,23 +74,9 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
 
 function ToolCallBubble({ item }: { item: TimelineItem }) {
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-bl-md">
+    <div className="flex justify-start ml-4">
+      <div className="max-w-[90%]">
         <ToolCallCard item={item} />
-      </div>
-    </div>
-  );
-}
-
-function ToolResultBubble({ item }: { item: TimelineItem }) {
-  if (!item.result) return null;
-  return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-bl-md">
-        <ToolResultRenderer
-          payload={item.result}
-          toolName={item.toolName}
-        />
       </div>
     </div>
   );

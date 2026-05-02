@@ -29,7 +29,7 @@ export function ToolResultRenderer({
 
   if (payload.kind === "fetch-history") {
     return (
-      <div className="mt-2 p-2.5 border border-hairline rounded-lg bg-surface-canvas/40">
+      <div className="p-2.5 border border-hairline rounded-lg bg-surface-canvas/40">
         <strong className="block text-text-on-dark text-sm mb-2">
           数据拉取结果
         </strong>
