@@ -31,6 +31,12 @@ class SQLiteStore:
     def initialize(self) -> None:
         with self._lock:
             self.connection.executescript(SCHEMA_SQL)
+            try:
+                self.connection.execute(
+                    "ALTER TABLE chat_messages ADD COLUMN reasoning_content TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
             self.connection.commit()
 
     def execute(

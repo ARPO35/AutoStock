@@ -109,6 +109,7 @@ class SessionRunManager:
                     role="assistant",
                     content=content,
                     message_type="assistant",
+                    reasoning_content=response.reasoning_content,
                 )
                 self._finish_run(run_id, status="finished", final_message_id=str(final_message["id"]))
                 await self._send(
@@ -124,11 +125,13 @@ class SessionRunManager:
                 role="assistant",
                 content=response.content or "",
                 message_type="tool_call_request",
+                reasoning_content=response.reasoning_content,
             )
             messages.append(
                 ChatMessage(
                     role="assistant",
                     content=response.content,
+                    reasoning_content=response.reasoning_content,
                     tool_calls=[self._tool_call_payload(call) for call in response.tool_calls],
                 )
             )
@@ -210,7 +213,7 @@ class SessionRunManager:
     def _load_context(self, session_id: str) -> list[ChatMessage]:
         rows = self.store.fetch_all(
             """
-            SELECT role, content
+            SELECT role, content, reasoning_content
             FROM chat_messages
             WHERE session_id = ?
               AND role IN ('system', 'user', 'assistant')
@@ -219,7 +222,14 @@ class SessionRunManager:
             """,
             (session_id,),
         )
-        return [ChatMessage(role=str(row["role"]), content=str(row["content"])) for row in rows]
+        return [
+            ChatMessage(
+                role=str(row["role"]),
+                content=str(row["content"]),
+                reasoning_content=str(row["reasoning_content"]) if row["reasoning_content"] else None,
+            )
+            for row in rows
+        ]
 
     def _create_message(
         self,
@@ -227,16 +237,17 @@ class SessionRunManager:
         role: str,
         content: str,
         message_type: str = "user",
+        reasoning_content: str | None = None,
     ) -> dict[str, Any]:
         self._get_session(session_id)
         message_id = uuid4().hex
         now = utc_now()
         self.store.execute(
             """
-            INSERT INTO chat_messages (id, session_id, role, content, message_type, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO chat_messages (id, session_id, role, content, message_type, created_at, reasoning_content)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (message_id, session_id, role, content, message_type, now),
+            (message_id, session_id, role, content, message_type, now, reasoning_content),
         )
         self.store.execute(
             """

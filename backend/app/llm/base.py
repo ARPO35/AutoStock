@@ -25,6 +25,7 @@ class LLMProviderConfig:
 class ChatMessage:
     role: str
     content: str | None = None
+    reasoning_content: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
 
@@ -47,6 +48,7 @@ class ToolCall:
 @dataclass(frozen=True)
 class ChatResponse:
     content: str | None
+    reasoning_content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     usage: dict[str, Any] = field(default_factory=dict)
