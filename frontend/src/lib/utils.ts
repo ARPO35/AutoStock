@@ -284,3 +284,30 @@ export function linePoints(
     })
     .join(" ");
 }
+
+export interface StreamingToolCallLike {
+  toolCallId: string;
+  toolName: string;
+  arguments_json: string;
+  status: string;
+  error?: string | null;
+  result?: ToolResultPayload | null;
+}
+
+export function syntheticToolCallItem(tc: StreamingToolCallLike): TimelineItem {
+  const hasError = tc.status === "error";
+  return {
+    id: `ws-tc-${tc.toolCallId}`,
+    kind: "tool-call",
+    role: "tool-call",
+    time: "",
+    title: "Tool Call",
+    toolCallId: tc.toolCallId,
+    toolName: tc.toolName,
+    status: tc.status,
+    argsSummary: summarizeArgsChinese(tc.arguments_json),
+    result: tc.result ?? undefined,
+    raw: { arguments_json: tc.arguments_json },
+    body: hasError ? (tc.error || "工具执行失败") : undefined,
+  };
+}

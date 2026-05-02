@@ -2,9 +2,18 @@ import { create } from "zustand";
 import type { SessionTimelineItem, RuntimeEvent } from "@/api";
 import type { TimelineItem } from "@/types";
 import { api } from "@/api";
-import { buildTimeline, humanTime } from "@/lib/utils";
+import { buildTimeline, humanTime, syntheticToolCallItem } from "@/lib/utils";
 
 const RUN_TIMEOUT_MS = 120_000;
+
+export interface StreamingToolCall {
+  toolCallId: string;
+  toolName: string;
+  arguments_json: string;
+  status: "running" | "finished" | "error";
+  error?: string | null;
+  result?: import("@/types").ToolResultPayload | null;
+}
 
 interface TradeState {
   selectedSessionId: string;
@@ -20,6 +29,7 @@ interface TradeState {
   reasoningStart: number | null;
   lastModel: string | null;
   lastRunLatencyMs: number | null;
+  streamingToolCalls: StreamingToolCall[];
 
   _ws: WebSocket | null;
   _runTimer: ReturnType<typeof setTimeout> | null;
@@ -89,6 +99,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   reasoningStart: null,
   lastModel: null,
   lastRunLatencyMs: null,
+  streamingToolCalls: [],
 
   _ws: null,
   _runTimer: null,
@@ -101,6 +112,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       streamingContent: null,
       streamingReasoning: null,
       reasoningStart: null,
+      streamingToolCalls: [],
       runError: null,
     }),
   setDraft: (value) => set({ draft: value }),
@@ -120,6 +132,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         streamingContent: null,
         streamingReasoning: null,
         reasoningStart: null,
+        streamingToolCalls: [],
         loadingTimeline: false
       });
     } catch {
@@ -132,6 +145,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     if (existing) {
       existing.close();
     }
+
+    set({ streamingToolCalls: [] });
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
@@ -163,13 +178,38 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         }));
       }
 
+      if (event.type === "tool_call_started") {
+        set((s) => ({
+          streamingToolCalls: [
+            ...s.streamingToolCalls,
+            {
+              toolCallId: event.tool_call_id ?? "",
+              toolName: event.tool_name ?? "",
+              arguments_json: event.arguments_json ?? "{}",
+              status: "running",
+            } satisfies StreamingToolCall as StreamingToolCall,
+          ],
+        }));
+      }
+
+      if (event.type === "tool_call_finished") {
+        set((s) => ({
+          streamingToolCalls: s.streamingToolCalls.map((tc) =>
+            tc.toolCallId === event.tool_call_id
+              ? {
+                  ...tc,
+                  status: (event.ok ? "finished" : "error") as StreamingToolCall["status"],
+                  error: event.error ?? tc.error,
+                  result: event.result as StreamingToolCall["result"] ?? tc.result,
+                }
+              : tc
+          ),
+        }));
+      }
+
       if (event.type === "run_finished") {
         get()._disconnectWs();
         get().loadTimeline(sessionId);
-        const t0 = get().lastRunLatencyMs;
-        if (t0 != null) {
-          set({ lastRunLatencyMs: Date.now() - (Date.now() - t0) });
-        }
         set({ busy: false });
       }
 
@@ -217,6 +257,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       streamingContent: null,
       streamingReasoning: null,
       reasoningStart: null,
+      streamingToolCalls: [],
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -243,7 +284,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         get().loadTimeline(sessionId);
       }
     }, RUN_TIMEOUT_MS);
-    set({ _runTimer: timer, lastRunLatencyMs: Date.now() - t0 });
+    set({ _runTimer: timer });
 
     api.runSession(sessionId, {
       message: mode === "event" ? `[手动事件]\n${content}` : content,
@@ -266,6 +307,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       streamingContent: null,
       streamingReasoning: null,
       reasoningStart: null,
+      streamingToolCalls: [],
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -300,7 +342,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       optimisticUserMessage,
       streamingContent,
       streamingReasoning,
-      reasoningStart,
+      streamingToolCalls,
       lastModel,
       lastRunLatencyMs
     } = get();
@@ -315,17 +357,24 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       }
     }
 
-    if (streamingContent) {
-      items.push(syntheticAssistantMessage(
-        streamingContent,
-        lastModel,
-        streamingReasoning,
-        null,  // 流式时由组件侧计算耗时，避免 Date.now() 导致无限渲染
-      ));
-    }
-
+    // 1. 乐观用户消息（紧接历史之后）
     if (optimisticUserMessage) {
       items.push(syntheticUserMessage(optimisticUserMessage));
+    }
+
+    // 2. 流式工具调用（WS 事件实时构建）
+    for (const tc of streamingToolCalls) {
+      items.push(syntheticToolCallItem(tc));
+    }
+
+    // 3. 助手回复（推理 + 内容）放在最后
+    if (streamingReasoning || streamingContent) {
+      items.push(syntheticAssistantMessage(
+        streamingContent || "",
+        lastModel,
+        streamingReasoning,
+        null,
+      ));
     }
 
     return items;

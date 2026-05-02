@@ -16,11 +16,12 @@ export function LLMLinearTimeline() {
   const optimisticUserMessage = useTradeStore((s) => s.optimisticUserMessage);
   const lastModel = useTradeStore((s) => s.lastModel);
   const lastRunLatencyMs = useTradeStore((s) => s.lastRunLatencyMs);
+  const streamingToolCalls = useTradeStore((s) => s.streamingToolCalls);
 
   const timeline = useMemo(
     () => useTradeStore.getState().getTimeline(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timelineSource, streamingContent, streamingReasoning, optimisticUserMessage, lastModel, lastRunLatencyMs]
+    [timelineSource, streamingContent, streamingReasoning, optimisticUserMessage, lastModel, lastRunLatencyMs, streamingToolCalls]
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,7 +73,7 @@ export function LLMLinearTimeline() {
         {timeline.map((item) => (
           <MessageBubble key={item.id} item={item} />
         ))}
-        {busy && !loadingTimeline && <LoadingDots />}
+        {busy && !loadingTimeline && !streamingContent && !streamingReasoning && <LoadingDots />}
         <div ref={bottomRef} />
       </div>
     </div>
