@@ -23,6 +23,7 @@ interface TradeState {
 
   _ws: WebSocket | null;
   _runTimer: ReturnType<typeof setTimeout> | null;
+  runError: string | null;
 
   setSelectedSessionId: (id: string) => void;
   setDraft: (value: string) => void;
@@ -88,6 +89,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   _ws: null,
   _runTimer: null,
+  runError: null,
 
   setSelectedSessionId: (id) =>
     set({
@@ -96,6 +98,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       streamingContent: null,
       streamingReasoning: null,
       reasoningStart: null,
+      runError: null,
     }),
   setDraft: (value) => set({ draft: value }),
   setBusy: (value) => set({ busy: value }),
@@ -214,6 +217,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
+      runError: null,
     });
 
     if (mode === "write") {
@@ -241,8 +245,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     api.runSession(sessionId, {
       message: mode === "event" ? `[手动事件]\n${content}` : content,
       max_tool_rounds: 5,
-    }).catch(() => {
-      // errors are handled via WS events
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ runError: msg });
+      const s = get();
+      if (s.busy) {
+        s._disconnectWs();
+        set({ busy: false });
+      }
     });
   },
 
@@ -270,8 +280,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }, RUN_TIMEOUT_MS);
     set({ _runTimer: timer });
 
-    api.runSession(sessionId, { max_tool_rounds: 5 }).catch(() => {
-      // handled via WS
+    api.runSession(sessionId, { max_tool_rounds: 5 }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ runError: msg });
+      const s = get();
+      if (s.busy) {
+        s._disconnectWs();
+        set({ busy: false });
+      }
     });
   },
 

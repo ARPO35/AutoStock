@@ -9,11 +9,15 @@ export function ChatInputBox() {
   const busy = useTradeStore((s) => s.busy);
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const sendMessage = useTradeStore((s) => s.sendMessage);
+  const runError = useTradeStore((s) => s.runError);
 
   const sessions = useDataStore((s) => s.sessions);
+  const providers = useDataStore((s) => s.providers);
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
+  const hasProvider = selectedSession?.provider_id && providers.some((p) => p.id === selectedSession.provider_id);
 
-  const disabled = !selectedSessionId;
+  const noProvider = !!selectedSessionId && !hasProvider;
+  const disabled = !selectedSessionId || noProvider;
   const canSend = !busy && !disabled && draft.trim().length > 0;
 
   const handleKeyDown = useCallback(
@@ -36,9 +40,11 @@ export function ChatInputBox() {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            disabled
-              ? "请先创建并选择 Session。"
-              : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"
+            noProvider
+              ? "请先在顶部为当前 Session 选择 Provider 和模型。"
+              : disabled
+                ? "请先创建并选择 Session。"
+                : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"
           }
         />
         <div className="flex flex-col gap-1.5">
@@ -78,6 +84,9 @@ export function ChatInputBox() {
           </button>
         </div>
       </div>
+      {runError && (
+        <p className="mt-2 text-trading-rise text-xs">{runError}</p>
+      )}
     </footer>
   );
 }
