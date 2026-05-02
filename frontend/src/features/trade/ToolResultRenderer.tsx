@@ -68,7 +68,7 @@ export function ToolResultRenderer({
       <strong className="block text-text-on-dark text-sm mb-2">
         {payload.title}
       </strong>
-      <InfoGrid items={objectEntries(payload.data).slice(0, 8)} />
+      <InfoGrid items={objectEntries(payload.data ?? {}).slice(0, 8)} />
     </div>
   );
 }

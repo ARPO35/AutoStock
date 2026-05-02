@@ -295,7 +295,6 @@ export interface StreamingToolCallLike {
 }
 
 export function syntheticToolCallItem(tc: StreamingToolCallLike): TimelineItem {
-  const hasError = tc.status === "error";
   return {
     id: `ws-tc-${tc.toolCallId}`,
     kind: "tool-call",
@@ -306,8 +305,7 @@ export function syntheticToolCallItem(tc: StreamingToolCallLike): TimelineItem {
     toolName: tc.toolName,
     status: tc.status,
     argsSummary: summarizeArgsChinese(tc.arguments_json),
-    result: tc.result ?? undefined,
     raw: { arguments_json: tc.arguments_json },
-    body: hasError ? (tc.error || "工具执行失败") : undefined,
+    body: tc.status === "error" ? (tc.error || "工具执行失败") : undefined,
   };
 }
