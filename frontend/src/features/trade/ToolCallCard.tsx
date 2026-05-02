@@ -1,5 +1,5 @@
 import type { TimelineItem } from "@/types";
-import { InfoGrid, RawJson } from "@/components/ui/Shared";
+import { InfoGrid } from "@/components/ui/Shared";
 
 export function ToolCallCard({ item }: { item: TimelineItem }) {
   return (
@@ -21,7 +21,6 @@ export function ToolCallCard({ item }: { item: TimelineItem }) {
             ["参数摘要", item.argsSummary ?? "--"]
           ]}
         />
-        {item.raw && <RawJson data={item.raw} />}
       </div>
     </details>
   );

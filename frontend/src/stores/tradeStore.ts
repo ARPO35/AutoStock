@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { SessionTimelineItem, RuntimeEvent } from "@/api";
 import type { TimelineItem } from "@/types";
 import { api } from "@/api";
-import { buildTimeline } from "@/lib/utils";
+import { buildTimeline, humanTime } from "@/lib/utils";
 
 interface TradeState {
   selectedSessionId: string;
@@ -11,6 +11,11 @@ interface TradeState {
   draft: string;
   busy: boolean;
 
+  optimisticUserMessage: string | null;
+  streamingContent: string | null;
+  lastModel: string | null;
+  lastRunLatencyMs: number | null;
+
   setSelectedSessionId: (id: string) => void;
   setDraft: (value: string) => void;
   setBusy: (value: boolean) => void;
@@ -18,10 +23,34 @@ interface TradeState {
   pushEvent: (event: RuntimeEvent) => void;
 
   loadTimeline: (sessionId: string) => Promise<void>;
-  sendMessage: (sessionId: string, mode: "run" | "event" | "write", content: string) => Promise<void>;
-  runOnce: (sessionId: string) => Promise<void>;
+  sendMessage: (sessionId: string, mode: "run" | "event" | "write", content: string, model?: string | null) => Promise<void>;
+  runOnce: (sessionId: string, model?: string | null) => Promise<void>;
 
   getTimeline: () => TimelineItem[];
+}
+
+function syntheticUserMessage(content: string): TimelineItem {
+  return {
+    id: `opt-${Date.now()}`,
+    kind: "user",
+    role: "user",
+    time: humanTime(new Date().toISOString()),
+    title: "用户",
+    body: content
+  };
+}
+
+function syntheticAssistantMessage(content: string, model: string | null): TimelineItem {
+  return {
+    id: "streaming",
+    kind: "assistant",
+    role: "assistant",
+    time: "",
+    title: "助手",
+    body: content,
+    model,
+    streaming: true
+  };
 }
 
 export const useTradeStore = create<TradeState>((set, get) => ({
@@ -31,7 +60,17 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   draft: "",
   busy: false,
 
-  setSelectedSessionId: (id) => set({ selectedSessionId: id }),
+  optimisticUserMessage: null,
+  streamingContent: null,
+  lastModel: null,
+  lastRunLatencyMs: null,
+
+  setSelectedSessionId: (id) =>
+    set({
+      selectedSessionId: id,
+      optimisticUserMessage: null,
+      streamingContent: null
+    }),
   setDraft: (value) => set({ draft: value }),
   setBusy: (value) => set({ busy: value }),
   setEvents: (events) => set({ events }),
@@ -41,14 +80,27 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   loadTimeline: async (sessionId) => {
     try {
-      set({ timelineSource: await api.sessionTimeline(sessionId) });
+      const source = await api.sessionTimeline(sessionId);
+      set({
+        timelineSource: source,
+        optimisticUserMessage: null,
+        streamingContent: null
+      });
     } catch {
-      // handled by ui store
+      // 由 ui store 处理
     }
   },
 
-  sendMessage: async (sessionId, mode, content) => {
-    set({ draft: "", busy: true });
+  sendMessage: async (sessionId, mode, content, model) => {
+    const t0 = Date.now();
+    set({
+      draft: "",
+      busy: true,
+      optimisticUserMessage: content,
+      streamingContent: null,
+      lastModel: model ?? null,
+      lastRunLatencyMs: null
+    });
     try {
       if (mode === "write") {
         await api.createMessage(sessionId, { role: "user", content, message_type: "user" });
@@ -59,20 +111,57 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         });
       }
       await get().loadTimeline(sessionId);
+      set({ lastRunLatencyMs: Date.now() - t0 });
     } finally {
       set({ busy: false });
     }
   },
 
-  runOnce: async (sessionId) => {
-    set({ busy: true });
+  runOnce: async (sessionId, model) => {
+    const t0 = Date.now();
+    set({
+      busy: true,
+      optimisticUserMessage: null,
+      streamingContent: null,
+      lastModel: model ?? null,
+      lastRunLatencyMs: null
+    });
     try {
       await api.runSession(sessionId, { max_tool_rounds: 5 });
       await get().loadTimeline(sessionId);
+      set({ lastRunLatencyMs: Date.now() - t0 });
     } finally {
       set({ busy: false });
     }
   },
 
-  getTimeline: () => buildTimeline(get().timelineSource)
+  getTimeline: () => {
+    const {
+      timelineSource,
+      optimisticUserMessage,
+      streamingContent,
+      lastModel,
+      lastRunLatencyMs
+    } = get();
+    const items = buildTimeline(timelineSource, lastModel);
+
+    if (lastRunLatencyMs != null) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].role === "assistant") {
+          items[i] = { ...items[i], latencyMs: lastRunLatencyMs };
+          break;
+        }
+      }
+    }
+
+    if (streamingContent) {
+      items.push(syntheticAssistantMessage(streamingContent, lastModel));
+    }
+
+    if (optimisticUserMessage) {
+      items.push(syntheticUserMessage(optimisticUserMessage));
+    }
+
+    return items;
+  }
 }));

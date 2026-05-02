@@ -1,5 +1,5 @@
 import type { ToolResultPayload } from "@/types";
-import { InfoGrid, RawJson } from "@/components/ui/Shared";
+import { InfoGrid } from "@/components/ui/Shared";
 import { objectEntries } from "@/lib/utils";
 import { MarketQuoteRenderer } from "@/features/trade/tool-renderers/MarketQuoteRenderer";
 import { MarketHistoryChartRenderer } from "@/features/trade/tool-renderers/MarketHistoryChartRenderer";
@@ -9,12 +9,10 @@ import { OrderResultRenderer } from "@/features/trade/tool-renderers/OrderResult
 
 export function ToolResultRenderer({
   payload,
-  toolName,
-  raw
+  toolName
 }: {
   payload: ToolResultPayload;
   toolName?: string | null;
-  raw?: Record<string, unknown>;
 }) {
   if (payload.kind === "quote") {
     return <MarketQuoteRenderer data={payload.quote} />;
@@ -36,7 +34,6 @@ export function ToolResultRenderer({
           数据拉取结果
         </strong>
         <InfoGrid items={objectEntries(payload.stats)} />
-        {raw && <RawJson data={raw} />}
       </div>
     );
   }
@@ -72,7 +69,6 @@ export function ToolResultRenderer({
         {payload.title}
       </strong>
       <InfoGrid items={objectEntries(payload.data).slice(0, 8)} />
-      {raw && <RawJson data={raw} />}
     </div>
   );
 }

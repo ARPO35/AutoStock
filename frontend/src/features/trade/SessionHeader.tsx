@@ -105,7 +105,7 @@ export function SessionHeader() {
           className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm hover:bg-surface-elevated disabled:opacity-50 transition-colors"
           type="button"
           disabled={!selectedSessionId || busy || !selectedSession?.provider_id}
-          onClick={() => selectedSessionId && runOnce(selectedSessionId)}
+          onClick={() => selectedSessionId && runOnce(selectedSessionId, selectedSession?.model)}
         >
           <Play size={15} />
           运行一次

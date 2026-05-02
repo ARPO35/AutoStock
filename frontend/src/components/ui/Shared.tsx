@@ -1,5 +1,33 @@
 import type { ReactNode } from "react";
 
+export function Spinner({ size = 16 }: { size?: number }) {
+  return (
+    <div className="flex justify-start px-4 py-3">
+      <div
+        className="animate-spin rounded-full border-2 border-hairline border-t-brand-primary"
+        style={{ width: size, height: size }}
+      />
+    </div>
+  );
+}
+
+export function LoadingDots() {
+  return (
+    <div className="flex justify-start items-center gap-1.5 px-4 py-3">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="w-2 h-2 rounded-full bg-text-muted"
+          style={{
+            animation: "bounce-dot 1.2s ease infinite",
+            animationDelay: `${i * 150}ms`
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function Metric({
   label,
   value,

@@ -1,37 +1,36 @@
-import { useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useRef } from "react";
 import { useTradeStore } from "@/stores/tradeStore";
-import { EmptyState } from "@/components/ui/Shared";
-import { TimelineCard } from "@/features/trade/TimelineCard";
+import { EmptyState, LoadingDots } from "@/components/ui/Shared";
+import { MessageBubble } from "@/features/trade/MessageBubble";
 
 export function LLMLinearTimeline() {
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const getTimeline = useTradeStore((s) => s.getTimeline);
+  const busy = useTradeStore((s) => s.busy);
+  const optimisticUserMessage = useTradeStore((s) => s.optimisticUserMessage);
   const timeline = getTimeline();
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const virtualizer = useVirtualizer({
-    count: timeline.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 120,
-    overscan: 5
-  });
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [timeline.length, optimisticUserMessage, busy]);
 
   if (!selectedSessionId) {
     return (
-      <div className="min-h-0 overflow-auto p-4 grid place-items-center">
+      <div className="flex-1 min-h-0 grid place-items-center p-4">
         <EmptyState
           title="暂无会话"
-          description="创建账户和 Session 后，这里会显示真实消息、工具调用与工具结果。"
+          description="创建账户和 Session 后，这里会显示对话消息、工具调用与工具结果。"
         />
       </div>
     );
   }
 
-  if (timeline.length === 0) {
+  if (timeline.length === 0 && !busy) {
     return (
-      <div className="min-h-0 overflow-auto p-4 grid place-items-center">
+      <div className="flex-1 min-h-0 grid place-items-center p-4">
         <EmptyState
           title="暂无消息"
           description="发送消息或运行 Session 后，这里会显示真实执行链。"
@@ -41,33 +40,13 @@ export function LLMLinearTimeline() {
   }
 
   return (
-    <div className="relative min-h-0 overflow-auto py-4 px-3.5" ref={scrollRef}>
-      <div
-        className="absolute left-[80px] top-5 bottom-5 w-px"
-        style={{
-          background:
-            "linear-gradient(180deg, transparent, rgba(113, 166, 233, 0.5), transparent)"
-        }}
-      />
-      <div
-        className="relative"
-        style={{ height: `${virtualizer.getTotalSize()}px` }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const item = timeline[virtualRow.index];
-          return (
-            <div
-              key={virtualRow.key}
-              className="absolute top-0 left-0 w-full"
-              style={{
-                height: `${virtualRow.size}px`,
-                transform: `translateY(${virtualRow.start}px)`
-              }}
-            >
-              <TimelineCard item={item} index={virtualRow.index} />
-            </div>
-          );
-        })}
+    <div className="flex-1 min-h-0 overflow-y-auto" ref={scrollRef}>
+      <div className="flex flex-col gap-3 p-4 min-h-full">
+        {timeline.map((item) => (
+          <MessageBubble key={item.id} item={item} />
+        ))}
+        {busy && <LoadingDots />}
+        <div ref={bottomRef} />
       </div>
     </div>
   );

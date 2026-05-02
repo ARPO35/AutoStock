@@ -117,18 +117,19 @@ export function extractDomain(url: string): string {
   }
 }
 
-export function buildTimeline(source: SessionTimelineItem[]): TimelineItem[] {
+export function buildTimeline(source: SessionTimelineItem[], model?: string | null): TimelineItem[] {
   const callsById = new Map(
     source.filter((item) => item.type === "tool_call").map((item) => [item.id, item])
   );
 
   return source.map((item): TimelineItem => {
-    if (item.type === "message") return messageTimelineItem(item);
+    if (item.type === "message") return messageTimelineItem(item, model);
 
     if (item.type === "tool_call") {
       return {
         id: item.id,
         kind: "tool-call",
+        role: "tool-call",
         time: humanTime(item.started_at),
         title: "Tool Call",
         runId: item.run_id,
@@ -136,7 +137,8 @@ export function buildTimeline(source: SessionTimelineItem[]): TimelineItem[] {
         toolName: item.tool_name,
         status: item.status,
         argsSummary: summarizeArgs(item.arguments_json),
-        raw: { ...item, arguments: parseJsonObject(item.arguments_json) }
+        raw: { ...item, arguments: parseJsonObject(item.arguments_json) },
+        model: model ?? null
       };
     }
 
@@ -146,6 +148,7 @@ export function buildTimeline(source: SessionTimelineItem[]): TimelineItem[] {
     return {
       id: item.id,
       kind: parsed.error ? "error" : "tool-result",
+      role: parsed.error ? "error" : "tool-result",
       time: humanTime(item.created_at),
       title: parsed.error ? "工具错误" : "工具结果",
       runId: item.run_id,
@@ -153,12 +156,13 @@ export function buildTimeline(source: SessionTimelineItem[]): TimelineItem[] {
       toolName: call?.tool_name ?? null,
       body: typeof parsed.error === "string" ? parsed.error : undefined,
       result: classifyToolResult(call?.tool_name, parsed),
-      raw: parsed
+      raw: parsed,
+      model: model ?? null
     };
   });
 }
 
-function messageTimelineItem(item: SessionTimelineItem): TimelineItem {
+function messageTimelineItem(item: SessionTimelineItem, model?: string | null): TimelineItem {
   const role = item.role ?? "user";
   const kind: TimelineKind =
     role === "assistant"
@@ -172,6 +176,7 @@ function messageTimelineItem(item: SessionTimelineItem): TimelineItem {
   return {
     id: item.id,
     kind,
+    role: kind,
     time: humanTime(item.created_at),
     title:
       role === "assistant"
@@ -180,7 +185,8 @@ function messageTimelineItem(item: SessionTimelineItem): TimelineItem {
           ? "事件"
           : "用户",
     body: item.content || "",
-    raw: { role: item.role, message_type: item.message_type }
+    raw: { role: item.role, message_type: item.message_type },
+    model: model ?? null
   };
 }
 

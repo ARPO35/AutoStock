@@ -31,6 +31,7 @@ export interface SessionView {
 export interface TimelineItem {
   id: string;
   kind: TimelineKind;
+  role: "user" | "assistant" | "tool-call" | "tool-result" | "event" | "error";
   time: string;
   title: string;
   body?: string;
@@ -41,6 +42,11 @@ export interface TimelineItem {
   argsSummary?: string;
   result?: ToolResultPayload;
   raw?: Record<string, unknown>;
+  model?: string | null;
+  latencyMs?: number | null;
+  tps?: number | null;
+  tokenCount?: number | null;
+  streaming?: boolean;
 }
 
 export type ToolResultPayload =

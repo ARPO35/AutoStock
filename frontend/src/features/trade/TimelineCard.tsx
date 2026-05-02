@@ -41,7 +41,6 @@ export function TimelineCard({ item, index }: { item: TimelineItem; index: numbe
           <ToolResultRenderer
             payload={item.result}
             toolName={item.toolName}
-            raw={item.raw}
           />
         )}
         {item.body && (
