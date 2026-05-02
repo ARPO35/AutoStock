@@ -23,7 +23,6 @@ export interface Provider {
 export interface Account {
   id: string;
   name: string;
-  provider_id: string;
   initial_cash: number;
   created_at: string;
   updated_at: string;
@@ -35,6 +34,8 @@ export interface Session {
   llm_account_id: string | null;
   skill_id: string | null;
   simulator_account_id: string | null;
+  provider_id: string | null;
+  model: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -163,6 +164,26 @@ export interface DataConflict {
   status: string;
 }
 
+export interface ProviderModelsResponse {
+  provider_id: string;
+  models: string[];
+}
+
+export interface ProviderChatTestResponse {
+  ok: boolean;
+  content: string | null;
+  model: string | null;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+export interface ProviderUsageResponse {
+  provider_id: string;
+  total_runs: number;
+  active_sessions: number;
+  model: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -181,6 +202,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(detail);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -194,6 +216,8 @@ export const api = {
   sessions: () => request<Session[]>("/api/sessions"),
   createSession: (payload: Record<string, unknown>) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(payload) }),
+  updateSession: (sessionId: string, payload: Record<string, unknown>) =>
+    request<Session>(`/api/sessions/${sessionId}`, { method: "PUT", body: JSON.stringify(payload) }),
   messages: (sessionId: string) => request<Message[]>(`/api/sessions/${sessionId}/messages`),
   createMessage: (sessionId: string, payload: Record<string, unknown>) =>
     request<Message>(`/api/sessions/${sessionId}/messages`, {
@@ -246,5 +270,27 @@ export const api = {
     request<DataConflict>(`/api/data/conflicts/${conflictId}/resolve`, {
       method: "POST",
       body: JSON.stringify({ status })
-    })
+    }),
+  // --- Provider 管理 ---
+  updateProvider: (providerId: string, payload: Record<string, unknown>) =>
+    request<Provider>(`/api/providers/${providerId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  deleteProvider: (providerId: string) =>
+    request<void>(`/api/providers/${providerId}`, { method: "DELETE" }),
+  providerModels: (providerId: string) =>
+    request<ProviderModelsResponse>(`/api/providers/${providerId}/models`, {
+      method: "POST"
+    }),
+  providerChatTest: (providerId: string, message?: string) =>
+    request<ProviderChatTestResponse>(`/api/providers/${providerId}/chat-test`, {
+      method: "POST",
+      body: JSON.stringify({ message: message ?? "这是一个连接测试，你只需要回答\"1\"即可" })
+    }),
+  providerUsage: (providerId: string) =>
+    request<ProviderUsageResponse>(`/api/providers/${providerId}/usage`),
+  // --- Session 管理 ---
+  deleteSession: (sessionId: string) =>
+    request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" })
 };

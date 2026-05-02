@@ -61,3 +61,9 @@ export interface ProviderCard {
   supportsStrictSchema: boolean;
   supportsReasoning: boolean;
 }
+
+export interface NavItem {
+  key: RouteKey;
+  label: string;
+  sub: string;
+}

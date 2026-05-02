@@ -1,0 +1,82 @@
+import { type KeyboardEvent, useCallback } from "react";
+import { Send, StopCircle } from "lucide-react";
+import { useTradeStore } from "@/stores/tradeStore";
+
+export function ChatInputBox() {
+  const draft = useTradeStore((s) => s.draft);
+  const setDraft = useTradeStore((s) => s.setDraft);
+  const busy = useTradeStore((s) => s.busy);
+  const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
+  const sendMessage = useTradeStore((s) => s.sendMessage);
+
+  const disabled = !selectedSessionId;
+  const canSend = !busy && !disabled && draft.trim().length > 0;
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (canSend) sendMessage(selectedSessionId, "run", draft.trim());
+      }
+    },
+    [canSend, draft, selectedSessionId, sendMessage]
+  );
+
+  return (
+    <footer className="border-t border-hairline p-3 bg-surface-canvas/50">
+      <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2.5">
+        <textarea
+          className="w-full min-h-[78px] resize-y px-3 py-2.5 rounded-lg bg-surface-card border border-hairline text-text-on-dark placeholder:text-text-muted focus:border-accent-turquoise focus:ring-2 focus:ring-accent-turquoise/50 leading-relaxed text-sm"
+          value={draft}
+          disabled={disabled}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={
+            disabled
+              ? "请先创建并选择 Session。"
+              : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"
+          }
+        />
+        <div className="flex flex-col gap-1.5">
+          <button
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md bg-brand-primary text-brand-ink font-semibold text-sm hover:bg-brand-primary-active disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!canSend}
+            onClick={() => sendMessage(selectedSessionId, "run", draft.trim())}
+          >
+            <Send size={17} />
+            发送
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-hairline bg-surface-card text-text-body text-sm hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!canSend}
+            onClick={() => sendMessage(selectedSessionId, "event", draft.trim())}
+          >
+            作为事件运行
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-hairline bg-surface-card text-text-body text-sm hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!canSend}
+            onClick={() => sendMessage(selectedSessionId, "write", draft.trim())}
+          >
+            只写入
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-trading-rise/50 bg-trading-rise/10 text-trading-rise text-sm disabled:opacity-50 transition-colors"
+            type="button"
+            disabled
+            title="后端尚未提供停止当前 run 的接口"
+          >
+            <StopCircle size={15} />
+            停止
+          </button>
+        </div>
+      </div>
+      <p className="mt-2 text-text-muted text-xs">
+        工具列表来自后端 /api/tools；工具结果来自 Session timeline。
+      </p>
+    </footer>
+  );
+}
