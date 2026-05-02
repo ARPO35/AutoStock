@@ -6,10 +6,9 @@ import { MessageBubble } from "@/features/trade/MessageBubble";
 export function LLMLinearTimeline() {
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const loadTimeline = useTradeStore((s) => s.loadTimeline);
-  const getTimeline = useTradeStore((s) => s.getTimeline);
+  const timeline = useTradeStore((s) => s.getTimeline());
   const busy = useTradeStore((s) => s.busy);
   const loadingTimeline = useTradeStore((s) => s.loadingTimeline);
-  const timeline = getTimeline();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
