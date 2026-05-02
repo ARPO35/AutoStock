@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTradeStore } from "@/stores/tradeStore";
 import { EmptyState, LoadingDots, Spinner } from "@/components/ui/Shared";
 import { MessageBubble } from "@/features/trade/MessageBubble";
@@ -6,9 +6,22 @@ import { MessageBubble } from "@/features/trade/MessageBubble";
 export function LLMLinearTimeline() {
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const loadTimeline = useTradeStore((s) => s.loadTimeline);
-  const timeline = useTradeStore((s) => s.getTimeline());
   const busy = useTradeStore((s) => s.busy);
   const loadingTimeline = useTradeStore((s) => s.loadingTimeline);
+
+  // 订阅 getTimeline() 依赖的原始字段，避免无限重渲染
+  const timelineSource = useTradeStore((s) => s.timelineSource);
+  const streamingContent = useTradeStore((s) => s.streamingContent);
+  const streamingReasoning = useTradeStore((s) => s.streamingReasoning);
+  const optimisticUserMessage = useTradeStore((s) => s.optimisticUserMessage);
+  const lastModel = useTradeStore((s) => s.lastModel);
+  const lastRunLatencyMs = useTradeStore((s) => s.lastRunLatencyMs);
+
+  const timeline = useMemo(
+    () => useTradeStore.getState().getTimeline(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timelineSource, streamingContent, streamingReasoning, optimisticUserMessage, lastModel, lastRunLatencyMs]
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -21,7 +34,7 @@ export function LLMLinearTimeline() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [timeline.length, busy]);
+  }, [timeline.length, busy, streamingContent]);
 
   if (!selectedSessionId) {
     return (
