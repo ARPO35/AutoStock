@@ -101,15 +101,56 @@ class SessionRunManager:
         executor = ToolExecutor(self.tool_registry)
 
         for _round in range(max_tool_rounds):
-            response = await provider.chat(config=config, messages=messages, tools=tools)
-            if not response.tool_calls:
-                content = response.content or ""
+            content_parts: list[str] = []
+            reasoning_parts: list[str] = []
+            tool_calls_by_index: dict[int, dict[str, str]] = {}
+
+            async for chunk in provider.chat_stream(config, messages, tools):  # type: ignore[attr-defined]
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                    await self._send(
+                        session_id,
+                        "assistant_token",
+                        {"run_id": run_id, "token": delta["content"]},
+                    )
+
+                if delta.get("reasoning_content"):
+                    reasoning_parts.append(delta["reasoning_content"])
+
+                for tc_delta in delta.get("tool_calls") or []:
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tool_calls_by_index:
+                        tool_calls_by_index[idx] = {"id": "", "name": "", "arguments": ""}
+                    tc = tool_calls_by_index[idx]
+                    if tc_delta.get("id"):
+                        tc["id"] = tc_delta["id"]
+                    fn = tc_delta.get("function") or {}
+                    if fn.get("name"):
+                        tc["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        tc["arguments"] += fn["arguments"]
+
+            full_content = "".join(content_parts)
+            full_reasoning = "".join(reasoning_parts) or None
+
+            tool_calls: list[ToolCall] = []
+            for idx in sorted(tool_calls_by_index):
+                tc = tool_calls_by_index[idx]
+                if tc["id"] and tc["name"]:
+                    tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]))
+
+            if not tool_calls:
                 final_message = self._create_message(
                     session_id=session_id,
                     role="assistant",
-                    content=content,
+                    content=full_content,
                     message_type="assistant",
-                    reasoning_content=response.reasoning_content,
+                    reasoning_content=full_reasoning,
                 )
                 self._finish_run(run_id, status="finished", final_message_id=str(final_message["id"]))
                 await self._send(
@@ -123,20 +164,20 @@ class SessionRunManager:
             assistant_message = self._create_message(
                 session_id=session_id,
                 role="assistant",
-                content=response.content or "",
+                content=full_content,
                 message_type="tool_call_request",
-                reasoning_content=response.reasoning_content,
+                reasoning_content=full_reasoning,
             )
             messages.append(
                 ChatMessage(
                     role="assistant",
-                    content=response.content,
-                    reasoning_content=response.reasoning_content,
-                    tool_calls=[self._tool_call_payload(call) for call in response.tool_calls],
+                    content=full_content,
+                    reasoning_content=full_reasoning,
+                    tool_calls=[self._tool_call_payload(call) for call in tool_calls],
                 )
             )
 
-            for call in response.tool_calls:
+            for call in tool_calls:
                 tool_call_id = uuid4().hex
                 now = utc_now()
                 self.store.execute(

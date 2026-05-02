@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -61,4 +62,12 @@ class ChatProvider(Protocol):
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
     ) -> ChatResponse:
+        ...
+
+    async def chat_stream(
+        self,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         ...

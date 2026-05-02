@@ -8,6 +8,17 @@ from app.llm.openai_compatible import OpenAICompatibleProvider
 
 
 class DeepSeekProvider(OpenAICompatibleProvider):
+    def _build_chat_request(
+        self,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+    ) -> dict[str, Any]:
+        request = super()._build_chat_request(config, messages, tools)
+        request["reasoning_effort"] = "high"
+        request["extra_body"] = {"thinking": {"type": "enabled"}}
+        return request
+
     async def chat(
         self,
         config: LLMProviderConfig,

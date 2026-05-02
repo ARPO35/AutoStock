@@ -87,6 +87,7 @@ export interface RuntimeEvent {
   error?: string | null;
   status?: string;
   message?: Message;
+  token?: string;
 }
 
 export interface SessionTimelineItem {

@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from app.llm.base import ChatMessage, ChatResponse, LLMProviderConfig, ToolCall, ToolDefinition
 
 
 class OpenAICompatibleProvider:
+    def _build_chat_request(
+        self,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+    ) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "model": config.model,
+            "messages": [self._message_to_payload(message) for message in messages],
+            "temperature": config.temperature,
+        }
+        if config.max_tokens is not None:
+            request["max_tokens"] = config.max_tokens
+        if tools and config.supports_tools:
+            request["tools"] = [self._tool_to_payload(tool) for tool in tools]
+            request["parallel_tool_calls"] = config.supports_parallel_tool_calls
+        return request
+
     async def chat(
         self,
         config: LLMProviderConfig,
@@ -23,17 +42,7 @@ class OpenAICompatibleProvider:
             timeout=config.timeout_seconds,
         )
 
-        request: dict[str, Any] = {
-            "model": config.model,
-            "messages": [self._message_to_payload(message) for message in messages],
-            "temperature": config.temperature,
-        }
-        if config.max_tokens is not None:
-            request["max_tokens"] = config.max_tokens
-        if tools and config.supports_tools:
-            request["tools"] = [self._tool_to_payload(tool) for tool in tools]
-            request["parallel_tool_calls"] = config.supports_parallel_tool_calls
-
+        request = self._build_chat_request(config, messages, tools)
         response = await client.chat.completions.create(**request)
         choice = response.choices[0]
         message = choice.message
@@ -50,6 +59,31 @@ class OpenAICompatibleProvider:
         raw = response.model_dump(mode="json") if hasattr(response, "model_dump") else {}
         usage = raw.get("usage") or {}
         return ChatResponse(content=message.content, tool_calls=calls, raw=raw, usage=usage)
+
+    async def chat_stream(
+        self,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        try:
+            from openai import AsyncOpenAI
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("The openai package is required for LLM provider calls.") from exc
+
+        client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=config.timeout_seconds,
+        )
+
+        request = self._build_chat_request(config, messages, tools)
+        request["stream"] = True
+        request["stream_options"] = {"include_usage": True}
+
+        stream = await client.chat.completions.create(**request)
+        async for chunk in stream:
+            yield chunk.model_dump(mode="json")
 
     def _message_to_payload(self, message: ChatMessage) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role}

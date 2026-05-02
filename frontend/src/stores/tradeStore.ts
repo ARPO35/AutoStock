@@ -4,17 +4,23 @@ import type { TimelineItem } from "@/types";
 import { api } from "@/api";
 import { buildTimeline, humanTime } from "@/lib/utils";
 
+const RUN_TIMEOUT_MS = 120_000;
+
 interface TradeState {
   selectedSessionId: string;
   timelineSource: SessionTimelineItem[];
   events: RuntimeEvent[];
   draft: string;
   busy: boolean;
+  loadingTimeline: boolean;
 
   optimisticUserMessage: string | null;
   streamingContent: string | null;
   lastModel: string | null;
   lastRunLatencyMs: number | null;
+
+  _ws: WebSocket | null;
+  _runTimer: ReturnType<typeof setTimeout> | null;
 
   setSelectedSessionId: (id: string) => void;
   setDraft: (value: string) => void;
@@ -27,6 +33,9 @@ interface TradeState {
   runOnce: (sessionId: string, model?: string | null) => Promise<void>;
 
   getTimeline: () => TimelineItem[];
+
+  _connectWs: (sessionId: string) => void;
+  _disconnectWs: () => void;
 }
 
 function syntheticUserMessage(content: string): TimelineItem {
@@ -59,11 +68,15 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   events: [],
   draft: "",
   busy: false,
+  loadingTimeline: false,
 
   optimisticUserMessage: null,
   streamingContent: null,
   lastModel: null,
   lastRunLatencyMs: null,
+
+  _ws: null,
+  _runTimer: null,
 
   setSelectedSessionId: (id) =>
     set({
@@ -79,15 +92,91 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     set((s) => ({ events: [event, ...s.events].slice(0, 60) })),
 
   loadTimeline: async (sessionId) => {
+    set({ loadingTimeline: true });
     try {
       const source = await api.sessionTimeline(sessionId);
       set({
         timelineSource: source,
         optimisticUserMessage: null,
-        streamingContent: null
+        streamingContent: null,
+        loadingTimeline: false
       });
     } catch {
-      // 由 ui store 处理
+      set({ loadingTimeline: false });
+    }
+  },
+
+  _connectWs: (sessionId) => {
+    const existing = get()._ws;
+    if (existing) {
+      existing.close();
+    }
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      set({ _ws: ws });
+    };
+
+    ws.onmessage = (evt) => {
+      let event: RuntimeEvent;
+      try {
+        event = JSON.parse(evt.data as string) as RuntimeEvent;
+      } catch {
+        return;
+      }
+      get().pushEvent(event);
+
+      if (event.type === "assistant_token") {
+        set((s) => ({
+          streamingContent: (s.streamingContent ?? "") + (event.token ?? ""),
+        }));
+      }
+
+      if (event.type === "run_finished") {
+        get()._disconnectWs();
+        get().loadTimeline(sessionId);
+        const t0 = get().lastRunLatencyMs;
+        if (t0 != null) {
+          set({ lastRunLatencyMs: Date.now() - (Date.now() - t0) });
+        }
+        set({ busy: false });
+      }
+
+      if (event.type === "error") {
+        get()._disconnectWs();
+        set({ busy: false });
+        get().loadTimeline(sessionId);
+      }
+    };
+
+    ws.onerror = () => {
+      get()._disconnectWs();
+      set({ busy: false });
+    };
+
+    ws.onclose = () => {
+      set({ _ws: null });
+    };
+
+    set({ _ws: ws });
+  },
+
+  _disconnectWs: () => {
+    const ws = get()._ws;
+    const timer = get()._runTimer;
+    if (timer) {
+      clearTimeout(timer);
+      set({ _runTimer: null });
+    }
+    if (ws) {
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      try { ws.close(); } catch { /* ignore */ }
+      set({ _ws: null });
     }
   },
 
@@ -99,40 +188,65 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       optimisticUserMessage: content,
       streamingContent: null,
       lastModel: model ?? null,
-      lastRunLatencyMs: null
+      lastRunLatencyMs: null,
+      events: [],
     });
-    try {
-      if (mode === "write") {
+
+    if (mode === "write") {
+      try {
         await api.createMessage(sessionId, { role: "user", content, message_type: "user" });
-      } else {
-        await api.runSession(sessionId, {
-          message: mode === "event" ? `[手动事件]\n${content}` : content,
-          max_tool_rounds: 5
-        });
+        await get().loadTimeline(sessionId);
+      } finally {
+        set({ busy: false });
       }
-      await get().loadTimeline(sessionId);
-      set({ lastRunLatencyMs: Date.now() - t0 });
-    } finally {
-      set({ busy: false });
+      return;
     }
+
+    get()._connectWs(sessionId);
+
+    const timer = setTimeout(() => {
+      const state = get();
+      if (state.busy) {
+        state._disconnectWs();
+        set({ busy: false });
+        get().loadTimeline(sessionId);
+      }
+    }, RUN_TIMEOUT_MS);
+    set({ _runTimer: timer, lastRunLatencyMs: Date.now() - t0 });
+
+    api.runSession(sessionId, {
+      message: mode === "event" ? `[手动事件]\n${content}` : content,
+      max_tool_rounds: 5,
+    }).catch(() => {
+      // errors are handled via WS events
+    });
   },
 
   runOnce: async (sessionId, model) => {
-    const t0 = Date.now();
     set({
       busy: true,
       optimisticUserMessage: null,
       streamingContent: null,
       lastModel: model ?? null,
-      lastRunLatencyMs: null
+      lastRunLatencyMs: null,
+      events: [],
     });
-    try {
-      await api.runSession(sessionId, { max_tool_rounds: 5 });
-      await get().loadTimeline(sessionId);
-      set({ lastRunLatencyMs: Date.now() - t0 });
-    } finally {
-      set({ busy: false });
-    }
+
+    get()._connectWs(sessionId);
+
+    const timer = setTimeout(() => {
+      const state = get();
+      if (state.busy) {
+        state._disconnectWs();
+        set({ busy: false });
+        get().loadTimeline(sessionId);
+      }
+    }, RUN_TIMEOUT_MS);
+    set({ _runTimer: timer });
+
+    api.runSession(sessionId, { max_tool_rounds: 5 }).catch(() => {
+      // handled via WS
+    });
   },
 
   getTimeline: () => {
