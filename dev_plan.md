@@ -114,29 +114,28 @@ Single Docker Container
 ├─ WebUI Static Frontend
 ├─ WebChat Session Runtime
 ├─ LLM Provider Layer
-│  ├─ OpenAI-Compatible Provider
-│  └─ DeepSeek Provider
-├─ Provider Capability Registry
-├─ Tool Call Runtime
-├─ Skill Manager
-├─ Session-bound Trigger Scheduler
-├─ AKShare Market Provider
-├─ Market Cache / Data Warehouse
-├─ Tavily Search Provider
-├─ A股 Simulator
+│  ├─ OpenAI-Compatible Provider        ← 已实现
+│  └─ DeepSeek Provider                 ← 已实现
+├─ Provider Config (llm_providers 表)   ← 已实现
+├─ Tool Call Runtime                    ← 已实现 (4 tools)
+├─ Skill Manager                        ← 未实现
+├─ Session-bound Trigger Scheduler      ← 未实现
+├─ AKShare Market Provider              ← 已实现
+├─ Market Cache / Data Warehouse        ← 已实现 (DuckDB)
+├─ Tavily Search Provider               ← 未实现
+├─ A股 Simulator                        ← 未实现
 ├─ SQLite
-│  ├─ 配置
-│  ├─ 会话
-│  ├─ 消息
-│  ├─ 触发器
-│  ├─ 订单
-│  ├─ 成交
-│  └─ 决策日志
+│  ├─ 配置 (llm_providers, llm_accounts)
+│  ├─ 会话 (chat_sessions)
+│  ├─ 消息 (chat_messages)
+│  ├─ 运行记录 (chat_runs)
+│  ├─ 工具调用 (chat_tool_calls)
+│  └─ 工具结果 (chat_tool_results)
 └─ DuckDB
-   ├─ 历史行情
-   ├─ 实时行情缓存
-   ├─ 回放数据
-   └─ 分析结果
+   ├─ 历史行情 (market_bars)
+   ├─ 实时行情快照 (market_quotes)
+   ├─ 缓存状态 (market_cache_status)
+   └─ 数据冲突 (data_conflicts)
 ```
 
 设计原则：
@@ -164,24 +163,49 @@ Single Docker Container
 │  ├─ app/
 │  │  ├─ main.py
 │  │  ├─ api/
+│  │  │  ├─ sessions.py
+│  │  │  ├─ providers.py
+│  │  │  ├─ tools.py
+│  │  │  ├─ market.py
+│  │  │  ├─ data.py
+│  │  │  ├─ ws.py
+│  │  │  └─ dependencies.py
 │  │  ├─ core/
-│  │  ├─ providers/
+│  │  │  ├─ config.py
+│  │  │  └─ websocket_manager.py
+│  │  ├─ llm/
+│  │  │  ├─ base.py
+│  │  │  ├─ openai_compatible.py
+│  │  │  ├─ deepseek.py
+│  │  │  └─ registry.py
 │  │  ├─ tools/
-│  │  ├─ simulator/
-│  │  ├─ scheduler/
-│  │  ├─ skills/
+│  │  │  ├─ registry.py
+│  │  │  ├─ executor.py
+│  │  │  └─ market_tools.py
+│  │  ├─ market/
+│  │  │  ├─ akshare_provider.py
+│  │  │  └─ normalizer.py
+│  │  ├─ sessions/
+│  │  │  └─ runtime.py
 │  │  └─ storage/
-│  └─ pyproject.toml
+│  │     ├─ sqlite.py
+│  │     └─ duckdb.py
+│  ├─ pyproject.toml
+│  └─ tests/
 ├─ frontend_dist/
-├─ user_skills/
 ├─ data/
 │  ├─ app.db
-│  ├─ market.duckdb
-│  ├─ logs/
-│  └─ exports/
+│  └─ market.duckdb
 └─ config/
    └─ default.yaml
 ```
+
+说明：
+- `app/llm/` 对应原计划中的 `app/providers/`（已更名为 llm）
+- `app/simulator/`、`app/scheduler/`、`app/skills/` 未实现
+- `user_skills/` 目录未创建，Skill 系统未实现
+- `data/logs/`、`data/exports/` 目录未创建
+- `config/default.yaml` 存在但代码未通过 YAML 加载配置，配置通过环境变量 + 数据类管理
 
 ### 5.2 启动方式
 
@@ -394,8 +418,10 @@ chat_sessions
 - id
 - name
 - llm_account_id
-- skill_id
-- simulator_account_id
+- skill_id           ← 已预留，未使用
+- simulator_account_id  ← 已预留，未使用
+- provider_id        ← 实际列（绑定 Provider）
+- model              ← 实际列（Session 级模型）
 - status
 - created_at
 - updated_at
@@ -411,12 +437,29 @@ chat_messages
 - message_type
 - trigger_id
 - parent_message_id
+- reasoning_content  ← 实际列（DeepSeek thinking 内容）
 - created_at
+```
+
+```sql
+chat_runs             ← 实际表，原计划未单独列出
+- id
+- session_id
+- provider_id
+- model
+- status
+- event_message_id
+- max_tool_rounds
+- started_at
+- finished_at
+- final_message_id
+- error
 ```
 
 ```sql
 chat_tool_calls
 - id
+- run_id              ← 实际列（关联 run）
 - session_id
 - message_id
 - provider_call_id
@@ -431,6 +474,7 @@ chat_tool_calls
 ```sql
 chat_tool_results
 - id
+- run_id              ← 实际列（关联 run）
 - session_id
 - tool_call_id
 - result_json
@@ -453,83 +497,47 @@ trigger fires
 
 ## 8. LLM 事件循环
 
-### 8.1 工作流
+### 8.1 实际工作流（当前实现）
 
 ```text
-事件触发
-→ 写入 Chat Session 消息
-→ 构建上下文
-→ 加载 Provider
-→ 加载 Skill
-→ 加载可用 Tools
-→ 调用 LLM
-→ 解析 tool calls
-→ 执行工具
-→ 写入 tool results
-→ 再次调用 LLM
-→ 直到没有 tool call 或达到限制
-→ 保存最终回复
-→ 更新模拟账户
-→ 写入成本和日志
+用户发送消息 → DB 创建消息
+→ POST /api/sessions/{id}/run
+→ SessionRunManager.run_once()
+→ _load_context()：从 DB 加载历史消息
+→ _tool_definitions()：从 ToolRegistry 获取工具定义
+→ _run_loop(account, messages, tools, max_rounds):
+    → provider.chat_stream() 流式调用 LLM
+    → WS 推送 assistant_token（逐 token）
+    → WS 推送 assistant_reasoning（DeepSeek thinking）
+    → 累积完整回复
+    → 解析 tool calls
+    → 若无 tool calls：创建 assistant 消息 → 发送 assistant_message + run_finished
+    → 若有 tool calls：
+        → 遍历每个 tool call：
+            → WS 推送 tool_call_started
+            → ToolExecutor.execute()
+            → DB 存入 tool_call + tool_result
+            → WS 推送 tool_call_finished
+            → 将 tool result 追加到 messages 上下文
+        → 继续下一轮 LLM 调用（最多 max_tool_rounds 轮）
 ```
 
-### 8.2 伪代码
+### 8.2 WebSocket 事件类型（实际）
 
-```python
-async def run_session_once(session_id: str, event_message_id: str):
-    session = db.get_session(session_id)
-    account = db.get_llm_account(session.llm_account_id)
-    skill = skill_manager.load(session.skill_id)
-    provider = provider_registry.get(account.provider_type)
+| 事件 | 方向 | 说明 |
+|---|---|---|
+| `run_started` | S→C | run 启动 |
+| `assistant_token` | S→C | LLM 逐 token 流式输出 |
+| `assistant_reasoning` | S→C | DeepSeek thinking 内容 |
+| `tool_call_started` | S→C | 工具调用开始 |
+| `tool_call_finished` | S→C | 工具执行完成（ok/error） |
+| `assistant_message` | S→C | 最终助理消息已创建 |
+| `run_finished` | S→C | run 结束 |
+| `error` | S→C | 异常 |
 
-    messages = context_builder.build(
-        session_id=session_id,
-        global_prompt=db.get_global_prompt(),
-        skill_prompt=skill.prompt,
-        event_message_id=event_message_id,
-        recent_messages_limit=session.context_limit,
-    )
+### 8.3 并发规则 ← 未实现
 
-    tools = tool_registry.resolve(skill.allowed_tools)
-    tools = provider.adapter.adapt_tools(tools)
-
-    run = db.create_run(session_id=session_id)
-
-    for i in range(session.max_tool_rounds):
-        response = await provider.chat(
-            account=account,
-            messages=messages,
-            tools=tools,
-        )
-
-        db.save_llm_response(run.id, response)
-
-        if not response.tool_calls:
-            db.finish_run(run.id, final_message=response.content)
-            return response
-
-        for call in response.tool_calls:
-            normalized_call = provider.adapter.normalize_tool_call(call)
-            result = await tool_executor.execute(
-                session_id=session_id,
-                tool_call=normalized_call,
-            )
-
-            db.save_tool_call(run.id, normalized_call)
-            db.save_tool_result(run.id, normalized_call.id, result)
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": normalized_call.id,
-                "content": result.to_json()
-            })
-
-    db.finish_run(run.id, status="max_tool_rounds_reached")
-```
-
-### 8.3 并发规则
-
-这里的并发控制不是限制 LLM 交易自由，而是保证同一条会话不出现上下文交叉。
+当前无并发控制机制。同一 Session 串行执行，不同 Session 可并行。后续计划：
 
 | 场景 | 规则 |
 |---|---|
@@ -541,7 +549,7 @@ async def run_session_once(session_id: str, event_message_id: str):
 
 ---
 
-## 9. 定时触发器设计
+## 9. 定时触发器设计 ← 未实现
 
 ### 9.1 触发器结构
 
@@ -624,18 +632,25 @@ capabilities:
   supports_thinking_mode: false
 ```
 
-### 10.3 DeepSeek Provider
+### 10.3 DeepSeek Provider ← 已实现
 
-DeepSeek 虽然兼容 OpenAI API，但仍单独做 Provider。
+DeepSeek 虽然兼容 OpenAI API，但仍单独做 Provider（继承 OpenAICompatibleProvider）。
 
-原因：
+实际实现要点：
 
-- 默认 base_url 不同。
-- DeepSeek V4 模型名可预设。
-- Thinking / Non-Thinking 模式需要配置。
-- strict tool schema 有 DeepSeek 自己的限制。
-- thinking 内容解析需要特殊处理。
-- 后续可以针对 DeepSeek V4 做 schema 降级和 prompt 适配。
+- `deepseek.py` 继承 `openai_compatible.py` 的 `OpenAICompatibleProvider`
+- `_build_chat_request()` 覆写：移除 `temperature`（thinking 模式不支持），添加 `reasoning_effort: "high"` 和 `extra_body: {"thinking": {"type": "enabled"}}`
+- `chat_stream()` 继承基类实现
+- `_message_to_payload()` 覆写：将 `reasoning_content` 编入消息 payload，否则后续轮次不传思考内容会导致 400
+- 发送请求前流程：
+  ```text
+  Provider Config (strict_tool_schema, thinking_mode)
+  → ToolRegistry 构建 JSON Schema
+  → _build_chat_request() 注入 reasoning_effort/thinking
+  → openai SDK streaming API
+  → 回读 reasoning_content + content
+  → 保存到 chat_messages.reasoning_content
+  ```
 
 配置：
 
@@ -646,7 +661,6 @@ api_key: sk-xxx
 model: deepseek-v4-pro
 thinking_mode: thinking
 strict_tool_schema: true
-temperature: 0.7
 max_tokens: 8192
 ```
 
@@ -701,7 +715,7 @@ Internal Tool Schema
 
 ---
 
-## 11. Skill 系统设计
+## 11. Skill 系统设计 ← 未实现
 
 ### 11.1 Skill 目标
 
@@ -775,56 +789,55 @@ defaults:
 
 ## 12. Tool Call 设计
 
-### 12.1 工具分组
+### 12.1 已实现的工具
+
+当前注册 4 个工具（`app/tools/registry.py` + `app/tools/market_tools.py`）：
+
+| 工具名 | 显示名 | 说明 |
+|---|---|---|
+| `system_echo` | system.echo | Echo 测试工具 |
+| `market_quote` | market.quote | 查询 A 股实时行情（通过 AKShare） |
+| `market_history` | market.history | 查询历史 K 线（优先本地缓存，支持自动补拉） |
+| `data_fetch_history` | data.fetch_history | 手动拉取并缓存历史行情到 DuckDB |
+
+### 12.2 计划中的工具分组 ← 未实现
 
 ```text
-market.*
-data.*
-portfolio.*
-order.*
-simulator.*
-tavily.*
-journal.*
-report.*
+market.*          ← 部分实现 (market_quote, market_history)
+data.*            ← 部分实现 (data_fetch_history)
+portfolio.*       ← 未实现
+order.*           ← 未实现
+simulator.*       ← 未实现
+tavily.*          ← 未实现
+journal.*         ← 未实现
+report.*          ← 未实现
 ```
 
-### 12.2 Market Tools
+### 12.3 计划中的工具清单
+
+以下均为计划设计，尚未实现：
+
+<details>
+<summary>未来工具详情（点击展开）</summary>
+
+**Market Tools (待实现: stock_list, minute, announcement, index_quote)**
 
 ```text
 market.stock_list
-market.quote
-market.history
 market.minute
 market.announcement
 market.index_quote
 ```
 
-用途：
-
-- 查询股票列表。
-- 查询实时行情。
-- 查询历史 K 线。
-- 查询分钟线。
-- 查询公告。
-- 查询指数行情。
-
-### 12.3 Data Tools
+**Data Tools (待实现: cache_status, find_missing, resolve_conflict)**
 
 ```text
-data.fetch_history
 data.cache_status
 data.find_missing
 data.resolve_conflict
 ```
 
-用途：
-
-- 手动拉取指定时间段数据。
-- 查看本地缓存。
-- 查找缺失行情。
-- 查看数据冲突。
-
-### 12.4 Portfolio Tools
+**Portfolio Tools**
 
 ```text
 portfolio.get_state
@@ -834,15 +847,7 @@ portfolio.get_trades
 portfolio.get_performance
 ```
 
-用途：
-
-- 查询现金。
-- 查询持仓。
-- 查询订单。
-- 查询成交。
-- 查询收益。
-
-### 12.5 Order Tools
+**Order Tools**
 
 ```text
 order.buy
@@ -850,13 +855,7 @@ order.sell
 order.cancel
 ```
 
-用途：
-
-- 模拟买入。
-- 模拟卖出。
-- 撤销未成交订单。
-
-### 12.6 Simulator Tools
+**Simulator Tools**
 
 ```text
 simulator.next_tick
@@ -865,42 +864,21 @@ simulator.reset
 simulator.set_mode
 ```
 
-用途：
-
-- 历史回放推进。
-- 实时模拟切换。
-- 重置实验。
-- 切换 replay / realtime。
-
-### 12.7 Tavily Tools
+**Tavily Tools**
 
 ```text
 tavily.search
 tavily.extract
 ```
 
-用途：
-
-- 搜索公司新闻。
-- 搜索政策信息。
-- 搜索行业变化。
-- 抽取网页正文。
-- 为 LLM 补充实时外部信息。
-
-### 12.8 Journal Tools
+**Journal Tools**
 
 ```text
 journal.write
 journal.query_recent
 ```
 
-用途：
-
-- 让 LLM 写交易理由。
-- 让 LLM 查询最近决策。
-- 支持连续复盘。
-
-### 12.9 Report Tools
+**Report Tools**
 
 ```text
 report.generate_daily
@@ -908,11 +886,7 @@ report.generate_session
 report.generate_comparison
 ```
 
-用途：
-
-- 生成每日复盘。
-- 生成单 Session 报告。
-- 生成多模型对比报告。
+</details>
 
 ---
 
@@ -1027,7 +1001,7 @@ data_conflicts
 
 ---
 
-## 14. A 股模拟器设计
+## 14. A 股模拟器设计 ← 未实现
 
 ### 14.1 模拟器目标
 
@@ -1115,7 +1089,7 @@ simulator_accounts
 
 ---
 
-## 15. 历史回放一致性
+## 15. 历史回放一致性 ← 未实现
 
 这是计划项，但应在架构上提前预留。
 
@@ -1173,7 +1147,7 @@ replay_clock.current_time
 
 ---
 
-## 16. Tavily 搜索设计
+## 16. Tavily 搜索设计 ← 未实现
 
 ### 16.1 用途
 
@@ -1231,7 +1205,7 @@ Tavily 用于补充 AKShare 不覆盖或不充分覆盖的信息。
 
 ---
 
-## 17. 成本记录
+## 17. 成本记录 ← 未实现
 
 ### 17.1 目标
 
@@ -1270,7 +1244,7 @@ WebUI 应展示：
 
 ---
 
-## 18. 决策日志与实验分析
+## 18. 决策日志与实验分析 ← 未实现
 
 ### 18.1 必须保存的内容
 
@@ -1320,7 +1294,7 @@ tool call 次数
 
 ---
 
-## 19. 多模型实验设计
+## 19. 多模型实验设计 ← 未实现
 
 ### 19.1 目标
 
@@ -1423,78 +1397,142 @@ tool whitelist
 
 保存系统配置和高频写入之外的业务数据：
 
+**已实现的表：**
+
 ```text
-settings
-llm_providers
-llm_accounts
-skills
-skill_versions
-chat_sessions
-chat_messages
-chat_runs
-chat_tool_calls
-chat_tool_results
-triggers
-simulator_accounts
-orders
-trades
-positions
-journal_entries
-llm_usage_records
+llm_providers        ← Provider 配置
+llm_accounts         ← LLM 账户
+chat_sessions        ← Session（含 provider_id, model, skill_id 预留）
+chat_messages        ← 消息（含 reasoning_content 列）
+chat_runs            ← 每次 LLM 运行记录
+chat_tool_calls      ← 工具调用记录
+chat_tool_results    ← 工具调用结果
+```
+
+**未实现的表：**
+
+```text
+skills               ← 未实现
+skill_versions       ← 未实现
+triggers             ← 未实现
+simulator_accounts   ← 未实现
+orders               ← 未实现
+trades               ← 未实现
+positions            ← 未实现
+journal_entries      ← 未实现
+llm_usage_records    ← 未实现
 ```
 
 ### 21.2 DuckDB
 
 保存行情和分析数据：
 
+**已实现的表：**
+
 ```text
-market_bars
-market_quotes
-market_announcements
-market_cache_status
-data_conflicts
-replay_datasets
-performance_snapshots
-analysis_reports
+market_bars          ← K 线数据 (PK: symbol+interval+datetime+adjust)
+market_quotes        ← 实时行情快照
+market_cache_status  ← 缓存覆盖范围
+data_conflicts       ← 数据冲突记录
+```
+
+**未实现的表：**
+
+```text
+market_announcements  ← 未实现
+replay_datasets       ← 未实现
+performance_snapshots ← 未实现
+analysis_reports      ← 未实现
 ```
 
 ---
 
-## 22. 后端 API 规划
+## 22. 后端 API（实际实现）
 
-### 22.1 Session API
+### 22.1 健康检查
+
+```text
+GET    /api/health
+```
+
+### 22.2 Provider API ← 已实现
+
+```text
+GET    /api/providers
+POST   /api/providers
+GET    /api/providers/{provider_id}
+PUT    /api/providers/{provider_id}
+DELETE /api/providers/{provider_id}
+POST   /api/providers/{provider_id}/models        ← 拉取远端模型列表
+POST   /api/providers/{provider_id}/chat-test      ← 测试聊天
+GET    /api/providers/{provider_id}/usage          ← 使用统计
+```
+
+### 22.3 Account API ← 已实现
+
+```text
+GET    /api/accounts
+POST   /api/accounts
+```
+
+### 22.4 Session API ← 已实现
 
 ```text
 GET    /api/sessions
 POST   /api/sessions
-GET    /api/sessions/{id}
-POST   /api/sessions/{id}/messages
-POST   /api/sessions/{id}/run
-GET    /api/sessions/{id}/messages
-GET    /api/sessions/{id}/runs
+GET    /api/sessions/{session_id}
+PUT    /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
+GET    /api/sessions/{session_id}/messages
+POST   /api/sessions/{session_id}/messages
+GET    /api/sessions/{session_id}/timeline         ← 合并消息+工具调用+结果
+GET    /api/sessions/{session_id}/runs
+POST   /api/sessions/{session_id}/run              ← 触发 LLM 运行
 ```
 
-### 22.2 WebSocket
+### 22.5 Tools API ← 已实现
 
 ```text
-/ws/sessions/{id}
+GET    /api/tools
+POST   /api/tools/{tool_name}/test
 ```
 
-推送：
+### 22.6 Market API ← 已实现
 
 ```text
-new_message
-llm_delta
-thinking_delta
+GET    /api/market/history
+GET    /api/market/quote
+```
+
+### 22.7 Data API ← 已实现
+
+```text
+POST   /api/data/fetch-history
+GET    /api/data/cache-status
+GET    /api/data/conflicts
+POST   /api/data/conflicts/{conflict_id}/resolve
+```
+
+### 22.8 WebSocket ← 已实现
+
+```text
+WS     /ws/sessions/{session_id}
+```
+
+实际推送事件类型：
+
+```text
+run_started
+assistant_token          ← 逐 token 流式输出
+assistant_reasoning      ← DeepSeek thinking 内容
 tool_call_started
 tool_call_finished
-order_created
-trade_created
+assistant_message        ← 最终助手消息
 run_finished
 error
 ```
 
-### 22.3 Skill API
+### 22.9 Skill API ← 未实现
 
 ```text
 GET    /api/skills
@@ -1506,7 +1544,7 @@ POST   /api/skills/{id}/disable
 POST   /api/skills/{id}/reload
 ```
 
-### 22.4 Trigger API
+### 22.10 Trigger API ← 未实现
 
 ```text
 GET    /api/triggers
@@ -1516,17 +1554,7 @@ DELETE /api/triggers/{id}
 POST   /api/triggers/{id}/run-now
 ```
 
-### 22.5 Data API
-
-```text
-POST   /api/data/fetch-history
-GET    /api/data/cache-status
-GET    /api/data/missing
-GET    /api/data/conflicts
-POST   /api/data/conflicts/{id}/resolve
-```
-
-### 22.6 Simulator API
+### 22.11 Simulator API ← 未实现
 
 ```text
 GET    /api/simulator/accounts
@@ -1634,7 +1662,7 @@ Timeline 虚拟列表
 
 ## 24. 开发阶段计划
 
-## 阶段 1：MVP 骨架
+## 阶段 1：MVP 骨架 ← 已完成
 
 目标：跑通单容器 WebChat + LLM tool call。
 
@@ -1663,7 +1691,7 @@ tool call 和 result 会显示在 Chat 中
 
 ---
 
-## 阶段 2：AKShare 数据与 Market Cache
+## 阶段 2：AKShare 数据与 Market Cache ← 已完成
 
 目标：接入免费 A 股数据源并本地保存。
 
@@ -1692,7 +1720,7 @@ tool call 和 result 会显示在 Chat 中
 
 ---
 
-## 阶段 3：模拟盘
+## 阶段 3：模拟盘 ← 未实现
 
 目标：让 LLM 能真实操作模拟账户。
 
@@ -1720,7 +1748,7 @@ LLM 可以通过 tool call 卖出
 
 ---
 
-## 阶段 4：Skill 管理
+## 阶段 4：Skill 管理 ← 未实现
 
 目标：让用户通过 WebUI 上传和编辑 skill。
 
@@ -1747,7 +1775,7 @@ LLM 运行时加载对应 skill
 
 ---
 
-## 阶段 5：定时触发器
+## 阶段 5：定时触发器 ← 未实现
 
 目标：让 Session 支持带 prompt 的定时事件。
 
@@ -1774,7 +1802,7 @@ LLM 自动运行并调用工具
 
 ---
 
-## 阶段 6：Tavily 搜索
+## 阶段 6：Tavily 搜索 ← 未实现
 
 目标：让 LLM 能搜索实时网页信息。
 
@@ -1797,7 +1825,7 @@ LLM 可以基于搜索结果继续调用 tavily.extract
 
 ---
 
-## 阶段 7：成本记录与分析
+## 阶段 7：成本记录与分析 ← 未实现
 
 目标：记录不同模型的运行成本。
 
@@ -1820,7 +1848,7 @@ WebUI 可查看 Session 总成本和单次运行成本
 
 ---
 
-## 阶段 8：历史回放一致性
+## 阶段 8：历史回放一致性 ← 未实现
 
 目标：为历史 replay 做架构统一。
 
@@ -1843,7 +1871,7 @@ replay 模式下 LLM 只能看到当前回放时间之前的数据
 
 ---
 
-## 阶段 9：多模型实验
+## 阶段 9：多模型实验 ← 未实现
 
 目标：支持比较不同 LLM 的炒股能力。
 
@@ -1865,88 +1893,95 @@ replay 模式下 LLM 只能看到当前回放时间之前的数据
 
 ---
 
-## 25. 推荐技术栈
+## 25. 技术栈
 
-| 层 | 技术 |
-|---|---|
-| 后端 | FastAPI |
-| 前端 | React + TypeScript + Vite |
-| LLM SDK | openai Python SDK + 自定义 Provider Adapter |
-| DeepSeek | 独立 DeepSeek Provider |
-| 调度 | APScheduler |
-| 数据源 | AKShare |
-| 搜索 | Tavily Python SDK |
-| 配置库 | Pydantic Settings |
-| 业务数据库 | SQLite |
-| 行情数据库 | DuckDB |
-| 数据处理 | pandas |
-| 容器 | Docker |
-| 实时推送 | WebSocket |
-| 日志 | structlog / logging |
-| 包管理 | uv |
+| 层 | 技术 | 状态 |
+|---|---|---|
+| 后端 | FastAPI | 已实现 |
+| 前端 | React + TypeScript + Vite | 已实现 |
+| LLM SDK | openai Python SDK | 已实现 |
+| DeepSeek | 独立 DeepSeek Provider (继承 OpenAI-Compatible) | 已实现 |
+| 调度 | APScheduler | 未使用 (触发器未实现) |
+| 数据源 | AKShare | 已实现 |
+| 搜索 | Tavily Python SDK | 未使用 (Tavily tool 未实现) |
+| 配置管理 | Python 数据类 + 环境变量 | 已实现 |
+| 业务数据库 | SQLite | 已实现 |
+| 行情数据库 | DuckDB | 已实现 |
+| 数据处理 | pandas | 已实现 |
+| 容器 | Docker (多阶段构建) | 已实现 |
+| 实时推送 | WebSocket | 已实现 |
+| 日志 | structlog / logging | 未实现 |
+| 包管理 | uv | 已实现 |
 
 ---
 
-## 26. 推荐项目结构
+## 26. 实际项目结构
 
 ```text
 backend/app/
 ├─ main.py
 ├─ api/
+│  ├─ __init__.py
 │  ├─ sessions.py
 │  ├─ providers.py
-│  ├─ skills.py
-│  ├─ triggers.py
+│  ├─ tools.py
 │  ├─ market.py
-│  ├─ simulator.py
-│  └─ data.py
+│  ├─ data.py
+│  ├─ ws.py
+│  └─ dependencies.py
 ├─ core/
+│  ├─ __init__.py
 │  ├─ config.py
-│  ├─ database.py
-│  ├─ event_bus.py
 │  └─ websocket_manager.py
-├─ llm/
+├─ llm/                       ← 原计划 app/providers/，已改名为 app/llm/
+│  ├─ __init__.py
 │  ├─ base.py
 │  ├─ openai_compatible.py
 │  ├─ deepseek.py
-│  ├─ capabilities.py
-│  └─ adapters.py
+│  └─ registry.py
 ├─ tools/
+│  ├─ __init__.py
 │  ├─ registry.py
 │  ├─ executor.py
-│  ├─ market_tools.py
-│  ├─ order_tools.py
-│  ├─ portfolio_tools.py
-│  ├─ tavily_tools.py
-│  ├─ data_tools.py
-│  └─ journal_tools.py
+│  └─ market_tools.py
 ├─ market/
+│  ├─ __init__.py
 │  ├─ akshare_provider.py
-│  ├─ cache.py
-│  ├─ normalizer.py
-│  └─ replay_provider.py
-├─ simulator/
-│  ├─ account.py
-│  ├─ order.py
-│  ├─ matching.py
-│  ├─ rules_a_stock.py
-│  └─ portfolio.py
+│  └─ normalizer.py
 ├─ sessions/
-│  ├─ runtime.py
-│  ├─ context_builder.py
-│  └─ run_manager.py
-├─ skills/
-│  ├─ manager.py
-│  ├─ validator.py
-│  └─ loader.py
-├─ scheduler/
-│  ├─ manager.py
-│  ├─ trigger_runner.py
-│  └─ calendar.py
+│  ├─ __init__.py
+│  └─ runtime.py
 └─ storage/
+   ├─ __init__.py
    ├─ sqlite.py
-   ├─ duckdb.py
-   └─ migrations/
+   └─ duckdb.py
+
+backend/tests/
+├─ test_mvp.py
+└─ test_market.py
+```
+
+**未实现的目录：**
+
+```text
+app/simulator/                ← 未创建（A股模拟器）
+app/scheduler/                ← 未创建（定时触发器）
+app/skills/                   ← 未创建（Skill 系统）
+app/core/event_bus.py         ← 未创建
+app/core/database.py          ← 未创建
+app/llm/capabilities.py       ← 未创建（能力通过 Provider Config 管理）
+app/llm/adapters.py           ← 未创建
+app/tools/order_tools.py      ← 未创建
+app/tools/portfolio_tools.py  ← 未创建
+app/tools/tavily_tools.py     ← 未创建
+app/tools/data_tools.py       ← 未创建
+app/tools/journal_tools.py    ← 未创建
+app/market/cache.py           ← 未创建（缓存逻辑在 storage/duckdb.py）
+app/market/replay_provider.py ← 未创建
+app/sessions/context_builder.py ← 未创建（上下文加载在 runtime.py 内联）
+app/sessions/run_manager.py   ← 未创建
+app/storage/migrations/       ← 未创建（表由 sqlite.py 自动创建）
+```
 ```
 
 ---
