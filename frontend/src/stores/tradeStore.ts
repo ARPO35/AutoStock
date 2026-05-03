@@ -144,9 +144,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         currentContent: "",
         currentToolCalls: [],
         loadingTimeline: false,
+        busy: false,
       });
     } catch {
-      set({ loadingTimeline: false });
+      set({ loadingTimeline: false, busy: false });
     }
   },
 
