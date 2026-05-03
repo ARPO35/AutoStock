@@ -18,12 +18,15 @@ export function ToolCallCard({ item }: { item: TimelineItem }) {
         <span className="text-text-muted-strong">{displayName}</span>
         <span>{args}</span>
         {hasError && <span className="text-trading-rise ml-1">失败</span>}
+        {item.status === "finished" && !item.result && <span className="text-trading-fall ml-1">已完成</span>}
       </summary>
       <div className="ml-3 pl-3 border-l border-hairline mt-1 py-1">
         {hasError ? (
           <p className="text-trading-rise text-xs">{item.body || "工具执行失败"}</p>
         ) : hasResult ? (
           <ToolResultRenderer payload={item.result!} toolName={item.toolName} />
+        ) : item.status === "finished" ? (
+          <p className="text-text-muted text-xs">已完成</p>
         ) : (
           <p className="text-text-muted text-xs">执行中...</p>
         )}
