@@ -78,9 +78,10 @@ function syntheticAssistantMessage(
   model: string | null,
   reasoning?: string | null,
   reasoningDurationMs?: number | null,
+  roundId?: string,
 ): TimelineItem {
   return {
-    id: "streaming",
+    id: roundId ?? "streaming-current",
     kind: "assistant",
     role: "assistant",
     time: "",
@@ -410,6 +411,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
           lastModel,
           round.reasoning || null,
           null,
+          round.id,
         ));
       }
       for (const tc of round.toolCalls) {
@@ -423,6 +425,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         lastModel,
         currentReasoning || null,
         null,
+        "current",
       ));
     }
     for (const tc of currentToolCalls) {
