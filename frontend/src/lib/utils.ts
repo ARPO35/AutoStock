@@ -291,10 +291,18 @@ export interface StreamingToolCallLike {
   arguments_json: string;
   status: string;
   error?: string | null;
-  result?: ToolResultPayload | null;
+  rawResult: Record<string, unknown> | null;
 }
 
 export function syntheticToolCallItem(tc: StreamingToolCallLike): TimelineItem {
+  let result: ToolResultPayload | undefined;
+  if (tc.rawResult) {
+    const envelope: Record<string, unknown> = tc.status === "error"
+      ? { ok: false, error: tc.error ?? null, result: tc.rawResult }
+      : { ok: true, result: tc.rawResult };
+    result = classifyToolResult(tc.toolName, envelope);
+  }
+
   return {
     id: `ws-tc-${tc.toolCallId}`,
     kind: "tool-call",
@@ -306,6 +314,7 @@ export function syntheticToolCallItem(tc: StreamingToolCallLike): TimelineItem {
     status: tc.status,
     argsSummary: summarizeArgsChinese(tc.arguments_json),
     raw: { arguments_json: tc.arguments_json },
+    result,
     body: tc.status === "error" ? (tc.error || "工具执行失败") : undefined,
   };
 }

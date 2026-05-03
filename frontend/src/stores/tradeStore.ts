@@ -12,6 +12,7 @@ export interface StreamingToolCall {
   arguments_json: string;
   status: string;
   error?: string | null;
+  rawResult: Record<string, unknown> | null;
 }
 
 interface StreamedRound {
@@ -221,6 +222,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
             toolName: event.tool_name ?? "",
             arguments_json: event.arguments_json ?? "{}",
             status: "running",
+            rawResult: null,
           }],
         }));
       }
@@ -229,7 +231,12 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         set((s) => ({
           currentToolCalls: s.currentToolCalls.map((tc) =>
             tc.toolCallId === event.tool_call_id
-              ? { ...tc, status: event.ok ? "finished" : "error", error: event.error ?? tc.error }
+              ? {
+                  ...tc,
+                  status: event.ok ? "finished" : "error",
+                  error: event.error ?? tc.error,
+                  rawResult: (event.result as Record<string, unknown>) ?? null,
+                }
               : tc
           ),
         }));
