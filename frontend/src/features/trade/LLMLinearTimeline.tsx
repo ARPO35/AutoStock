@@ -9,19 +9,20 @@ export function LLMLinearTimeline() {
   const busy = useTradeStore((s) => s.busy);
   const loadingTimeline = useTradeStore((s) => s.loadingTimeline);
 
-  // 订阅 getTimeline() 依赖的原始字段，避免无限重渲染
   const timelineSource = useTradeStore((s) => s.timelineSource);
-  const streamingContent = useTradeStore((s) => s.streamingContent);
-  const streamingReasoning = useTradeStore((s) => s.streamingReasoning);
   const optimisticUserMessage = useTradeStore((s) => s.optimisticUserMessage);
   const lastModel = useTradeStore((s) => s.lastModel);
   const lastRunLatencyMs = useTradeStore((s) => s.lastRunLatencyMs);
-  const streamingToolCalls = useTradeStore((s) => s.streamingToolCalls);
+  const streamedRounds = useTradeStore((s) => s.streamedRounds);
+  const currentReasoning = useTradeStore((s) => s.currentReasoning);
+  const currentContent = useTradeStore((s) => s.currentContent);
+  const currentToolCalls = useTradeStore((s) => s.currentToolCalls);
 
   const timeline = useMemo(
     () => useTradeStore.getState().getTimeline(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timelineSource, streamingContent, streamingReasoning, optimisticUserMessage, lastModel, lastRunLatencyMs, streamingToolCalls]
+    [timelineSource, optimisticUserMessage, lastModel, lastRunLatencyMs,
+     streamedRounds, currentReasoning, currentContent, currentToolCalls]
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -35,7 +36,7 @@ export function LLMLinearTimeline() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [timeline.length, busy, streamingContent]);
+  }, [timeline.length, busy, currentContent]);
 
   if (!selectedSessionId) {
     return (
@@ -73,7 +74,7 @@ export function LLMLinearTimeline() {
         {timeline.map((item) => (
           <MessageBubble key={item.id} item={item} />
         ))}
-        {busy && !loadingTimeline && !streamingContent && !streamingReasoning && <LoadingDots />}
+        {busy && !loadingTimeline && !currentContent && !currentReasoning && <LoadingDots />}
         <div ref={bottomRef} />
       </div>
     </div>

@@ -10,9 +10,15 @@ export interface StreamingToolCall {
   toolCallId: string;
   toolName: string;
   arguments_json: string;
-  status: "running" | "finished" | "error";
+  status: string;
   error?: string | null;
-  result?: import("@/types").ToolResultPayload | null;
+}
+
+interface StreamedRound {
+  id: string;
+  reasoning: string;
+  content: string;
+  toolCalls: StreamingToolCall[];
 }
 
 interface TradeState {
@@ -24,16 +30,17 @@ interface TradeState {
   loadingTimeline: boolean;
 
   optimisticUserMessage: string | null;
-  streamingContent: string | null;
-  streamingReasoning: string | null;
-  reasoningStart: number | null;
   lastModel: string | null;
   lastRunLatencyMs: number | null;
-  streamingToolCalls: StreamingToolCall[];
+  runError: string | null;
+
+  streamedRounds: StreamedRound[];
+  currentReasoning: string;
+  currentContent: string;
+  currentToolCalls: StreamingToolCall[];
 
   _ws: WebSocket | null;
   _runTimer: ReturnType<typeof setTimeout> | null;
-  runError: string | null;
 
   setSelectedSessionId: (id: string) => void;
   setDraft: (value: string) => void;
@@ -52,6 +59,7 @@ interface TradeState {
 }
 
 let _optId = 0;
+let _roundId = 0;
 
 function syntheticUserMessage(content: string): TimelineItem {
   _optId += 1;
@@ -94,25 +102,26 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   loadingTimeline: false,
 
   optimisticUserMessage: null,
-  streamingContent: null,
-  streamingReasoning: null,
-  reasoningStart: null,
   lastModel: null,
   lastRunLatencyMs: null,
-  streamingToolCalls: [],
+  runError: null,
+
+  streamedRounds: [],
+  currentReasoning: "",
+  currentContent: "",
+  currentToolCalls: [],
 
   _ws: null,
   _runTimer: null,
-  runError: null,
 
   setSelectedSessionId: (id) =>
     set({
       selectedSessionId: id,
       optimisticUserMessage: null,
-      streamingContent: null,
-      streamingReasoning: null,
-      reasoningStart: null,
-      streamingToolCalls: [],
+      streamedRounds: [],
+      currentReasoning: "",
+      currentContent: "",
+      currentToolCalls: [],
       runError: null,
     }),
   setDraft: (value) => set({ draft: value }),
@@ -129,11 +138,11 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       set({
         timelineSource: source,
         optimisticUserMessage: null,
-        streamingContent: null,
-        streamingReasoning: null,
-        reasoningStart: null,
-        streamingToolCalls: [],
-        loadingTimeline: false
+        streamedRounds: [],
+        currentReasoning: "",
+        currentContent: "",
+        currentToolCalls: [],
+        loadingTimeline: false,
       });
     } catch {
       set({ loadingTimeline: false });
@@ -145,8 +154,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     if (existing) {
       existing.close();
     }
-
-    set({ streamingToolCalls: [] });
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
@@ -165,52 +172,87 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       }
       get().pushEvent(event);
 
-      if (event.type === "assistant_token") {
-        set((s) => ({
-          streamingContent: (s.streamingContent ?? "") + (event.token ?? ""),
-        }));
+      if (event.type === "assistant_reasoning") {
+        set((s) => {
+          if (s.currentToolCalls.length > 0) {
+            _roundId += 1;
+            return {
+              streamedRounds: [...s.streamedRounds, {
+                id: `round-${_roundId}`,
+                reasoning: s.currentReasoning,
+                content: s.currentContent,
+                toolCalls: s.currentToolCalls,
+              }],
+              currentReasoning: event.token ?? "",
+              currentContent: "",
+              currentToolCalls: [],
+            };
+          }
+          return { currentReasoning: s.currentReasoning + (event.token ?? "") };
+        });
       }
 
-      if (event.type === "assistant_reasoning") {
-        set((s) => ({
-          streamingReasoning: (s.streamingReasoning ?? "") + (event.token ?? ""),
-          reasoningStart: s.reasoningStart ?? Date.now(),
-        }));
+      if (event.type === "assistant_token") {
+        set((s) => {
+          if (s.currentToolCalls.length > 0) {
+            _roundId += 1;
+            return {
+              streamedRounds: [...s.streamedRounds, {
+                id: `round-${_roundId}`,
+                reasoning: s.currentReasoning,
+                content: s.currentContent,
+                toolCalls: s.currentToolCalls,
+              }],
+              currentReasoning: "",
+              currentContent: event.token ?? "",
+              currentToolCalls: [],
+            };
+          }
+          return { currentContent: s.currentContent + (event.token ?? "") };
+        });
       }
 
       if (event.type === "tool_call_started") {
         set((s) => ({
-          streamingToolCalls: [
-            ...s.streamingToolCalls,
-            {
-              toolCallId: event.tool_call_id ?? "",
-              toolName: event.tool_name ?? "",
-              arguments_json: event.arguments_json ?? "{}",
-              status: "running",
-            } satisfies StreamingToolCall as StreamingToolCall,
-          ],
+          currentToolCalls: [...s.currentToolCalls, {
+            toolCallId: event.tool_call_id ?? "",
+            toolName: event.tool_name ?? "",
+            arguments_json: event.arguments_json ?? "{}",
+            status: "running",
+          }],
         }));
       }
 
       if (event.type === "tool_call_finished") {
         set((s) => ({
-          streamingToolCalls: s.streamingToolCalls.map((tc) =>
+          currentToolCalls: s.currentToolCalls.map((tc) =>
             tc.toolCallId === event.tool_call_id
-              ? {
-                  ...tc,
-                  status: (event.ok ? "finished" : "error") as StreamingToolCall["status"],
-                  error: event.error ?? tc.error,
-                  result: event.result as StreamingToolCall["result"] ?? tc.result,
-                }
+              ? { ...tc, status: event.ok ? "finished" : "error", error: event.error ?? tc.error }
               : tc
           ),
         }));
       }
 
       if (event.type === "run_finished") {
+        set((s) => {
+          if (!s.currentReasoning && !s.currentContent && s.currentToolCalls.length === 0) {
+            return {};
+          }
+          _roundId += 1;
+          return {
+            streamedRounds: [...s.streamedRounds, {
+              id: `round-${_roundId}`,
+              reasoning: s.currentReasoning,
+              content: s.currentContent,
+              toolCalls: s.currentToolCalls,
+            }],
+            currentReasoning: "",
+            currentContent: "",
+            currentToolCalls: [],
+          };
+        });
         get()._disconnectWs();
         get().loadTimeline(sessionId);
-        set({ busy: false });
       }
 
       if (event.type === "error") {
@@ -249,15 +291,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
 
   sendMessage: async (sessionId, mode, content, model) => {
-    const t0 = Date.now();
     set({
       draft: "",
       busy: true,
       optimisticUserMessage: content,
-      streamingContent: null,
-      streamingReasoning: null,
-      reasoningStart: null,
-      streamingToolCalls: [],
+      streamedRounds: [],
+      currentReasoning: "",
+      currentContent: "",
+      currentToolCalls: [],
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -277,9 +318,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     get()._connectWs(sessionId);
 
     const timer = setTimeout(() => {
-      const state = get();
-      if (state.busy) {
-        state._disconnectWs();
+      const s = get();
+      if (s.busy) {
+        s._disconnectWs();
         set({ busy: false });
         get().loadTimeline(sessionId);
       }
@@ -304,10 +345,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     set({
       busy: true,
       optimisticUserMessage: null,
-      streamingContent: null,
-      streamingReasoning: null,
-      reasoningStart: null,
-      streamingToolCalls: [],
+      streamedRounds: [],
+      currentReasoning: "",
+      currentContent: "",
+      currentToolCalls: [],
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -316,9 +357,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     get()._connectWs(sessionId);
 
     const timer = setTimeout(() => {
-      const state = get();
-      if (state.busy) {
-        state._disconnectWs();
+      const s = get();
+      if (s.busy) {
+        s._disconnectWs();
         set({ busy: false });
         get().loadTimeline(sessionId);
       }
@@ -340,11 +381,12 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     const {
       timelineSource,
       optimisticUserMessage,
-      streamingContent,
-      streamingReasoning,
-      streamingToolCalls,
+      streamedRounds,
+      currentReasoning,
+      currentContent,
+      currentToolCalls,
       lastModel,
-      lastRunLatencyMs
+      lastRunLatencyMs,
     } = get();
     const items = buildTimeline(timelineSource, lastModel);
 
@@ -357,24 +399,34 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       }
     }
 
-    // 1. 乐观用户消息（紧接历史之后）
     if (optimisticUserMessage) {
       items.push(syntheticUserMessage(optimisticUserMessage));
     }
 
-    // 2. 流式工具调用（WS 事件实时构建）
-    for (const tc of streamingToolCalls) {
-      items.push(syntheticToolCallItem(tc));
+    for (const round of streamedRounds) {
+      if (round.reasoning || round.content) {
+        items.push(syntheticAssistantMessage(
+          round.content,
+          lastModel,
+          round.reasoning || null,
+          null,
+        ));
+      }
+      for (const tc of round.toolCalls) {
+        items.push(syntheticToolCallItem(tc));
+      }
     }
 
-    // 3. 助手回复（推理 + 内容）放在最后
-    if (streamingReasoning || streamingContent) {
+    if (currentReasoning || currentContent) {
       items.push(syntheticAssistantMessage(
-        streamingContent || "",
+        currentContent,
         lastModel,
-        streamingReasoning,
+        currentReasoning || null,
         null,
       ));
+    }
+    for (const tc of currentToolCalls) {
+      items.push(syntheticToolCallItem(tc));
     }
 
     return items;
