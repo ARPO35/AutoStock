@@ -136,6 +136,89 @@ CREATE TABLE IF NOT EXISTS llm_accounts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_accounts_name
     ON llm_accounts(name);
 
+CREATE TABLE IF NOT EXISTS simulator_accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    initial_cash REAL NOT NULL,
+    cash REAL NOT NULL,
+    frozen_cash REAL NOT NULL DEFAULT 0,
+    total_asset REAL NOT NULL,
+    commission_rate REAL NOT NULL DEFAULT 0.00025,
+    min_commission REAL NOT NULL DEFAULT 5.0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_simulator_accounts_created
+    ON simulator_accounts(created_at);
+
+CREATE TABLE IF NOT EXISTS positions (
+    id TEXT PRIMARY KEY,
+    simulator_account_id TEXT NOT NULL REFERENCES simulator_accounts(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL,
+    available_quantity INTEGER NOT NULL,
+    avg_cost REAL NOT NULL,
+    market_value REAL NOT NULL DEFAULT 0,
+    unrealized_pnl REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_account_symbol
+    ON positions(simulator_account_id, symbol);
+
+CREATE INDEX IF NOT EXISTS idx_positions_symbol
+    ON positions(symbol);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    simulator_account_id TEXT NOT NULL REFERENCES simulator_accounts(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    price REAL NOT NULL,
+    quantity INTEGER NOT NULL,
+    filled_quantity INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_account_created
+    ON orders(simulator_account_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_orders_session
+    ON orders(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_orders_status
+    ON orders(status);
+
+CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    simulator_account_id TEXT NOT NULL REFERENCES simulator_accounts(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    price REAL NOT NULL,
+    quantity INTEGER NOT NULL,
+    fee REAL NOT NULL DEFAULT 0,
+    tax REAL NOT NULL DEFAULT 0,
+    traded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trades_account_traded
+    ON trades(simulator_account_id, traded_at);
+
+CREATE INDEX IF NOT EXISTS idx_trades_order
+    ON trades(order_id);
+
+CREATE INDEX IF NOT EXISTS idx_trades_session
+    ON trades(session_id);
+
 CREATE TABLE IF NOT EXISTS chat_runs (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
