@@ -20,6 +20,7 @@ def utc_now() -> str:
 class SessionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     skill_id: str | None = None
+    prompt_role_id: str | None = None
     simulator_account_id: str | None = None
     llm_account_id: str | None = None
     provider_id: str | None = None
@@ -30,6 +31,7 @@ class SessionRead(BaseModel):
     id: str
     name: str
     skill_id: str | None
+    prompt_role_id: str | None = None
     simulator_account_id: str | None
     provider_id: str | None = None
     model: str | None = None
@@ -124,9 +126,9 @@ async def create_session(
         """
         INSERT INTO chat_sessions (
             id, name, skill_id, simulator_account_id,
-            provider_id, model, status, created_at, updated_at
+            provider_id, model, prompt_role_id, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
         """,
         (
             session_id,
@@ -135,6 +137,7 @@ async def create_session(
             simulator_account_id,
             payload.provider_id,
             payload.model,
+            _resolve_prompt_role(store, payload.prompt_role_id),
             now,
             now,
         ),
@@ -149,6 +152,7 @@ class SessionUpdate(BaseModel):
     llm_account_id: str | None = None
     provider_id: str | None = None
     model: str | None = None
+    prompt_role_id: str | None = None
 
 
 @router.put("/{session_id}", response_model=SessionRead)
@@ -177,6 +181,9 @@ async def update_session(
     if payload.model is not None:
         setters.append("model = ?")
         params.append(payload.model)
+    if payload.prompt_role_id is not None:
+        setters.append("prompt_role_id = ?")
+        params.append(_resolve_prompt_role(store, payload.prompt_role_id))
 
     if setters:
         setters.append("updated_at = ?")
@@ -199,6 +206,17 @@ def _validate_simulator_account(store: SQLiteStore, account_id: str | None) -> N
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Simulator account not found: {account_id}",
         )
+
+
+def _resolve_prompt_role(store: SQLiteStore, role_id: str | None) -> str:
+    resolved = role_id or "default"
+    row = store.fetch_one("SELECT id FROM prompt_roles WHERE id = ?", (resolved,))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Prompt role not found: {resolved}",
+        )
+    return str(row["id"])
 
 
 @router.get("/{session_id}", response_model=SessionRead)

@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.data import router as data_router
 from app.api.market import router as market_router
+from app.api.prompts import router as prompts_router
 from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
 from app.api.simulator import router as simulator_router
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": settings.app_version}
 
     app.include_router(providers_router)
+    app.include_router(prompts_router)
     app.include_router(sessions_router)
     app.include_router(tools_router)
     app.include_router(data_router)

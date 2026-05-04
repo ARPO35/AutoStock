@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,66 @@ class SQLiteStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE chat_sessions ADD COLUMN prompt_role_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+            self._seed_default_prompt_role()
             self.connection.commit()
+
+    def _seed_default_prompt_role(self) -> None:
+        exists = self.connection.execute(
+            "SELECT id FROM prompt_roles WHERE id = ?",
+            ("default",),
+        ).fetchone()
+        if exists:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        self.connection.execute(
+            """
+            INSERT INTO prompt_roles (id, name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("default", "默认角色", now, now),
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO prompt_entries (
+                id, role_id, name, ref_name, content, enabled, builtin,
+                sort_order, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "default-system",
+                    "default",
+                    "系统提示词",
+                    "system",
+                    "",
+                    1,
+                    1,
+                    0,
+                    now,
+                    now,
+                ),
+                (
+                    "default-userinput",
+                    "default",
+                    "用户输入",
+                    "UserInput",
+                    "{UserInput}{time}",
+                    1,
+                    1,
+                    1,
+                    now,
+                    now,
+                ),
+            ],
+        )
 
     def execute(
         self,
@@ -89,11 +149,38 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     simulator_account_id TEXT,
     provider_id TEXT,
     model TEXT,
+    prompt_role_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     archived_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS prompt_roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS prompt_entries (
+    id TEXT PRIMARY KEY,
+    role_id TEXT NOT NULL REFERENCES prompt_roles(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    ref_name TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    builtin INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_entries_role_ref
+    ON prompt_entries(role_id, ref_name);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_entries_role_order
+    ON prompt_entries(role_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     id TEXT PRIMARY KEY,

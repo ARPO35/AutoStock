@@ -45,6 +45,77 @@ def test_session_crud(monkeypatch) -> None:
     assert [item["content"] for item in messages.json()] == ["hello"]
 
 
+def test_prompt_role_crud_and_session_binding(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+
+    roles = client.get("/api/prompt-roles")
+    assert roles.status_code == 200
+    default_role = roles.json()[0]
+    assert default_role["id"] == "default"
+    assert [entry["ref_name"] for entry in default_role["entries"][:2]] == ["system", "UserInput"]
+
+    created = client.post("/api/prompt-roles", json={"name": "短线角色"})
+    assert created.status_code == 201
+    role = created.json()
+
+    updated = client.put(
+        f"/api/prompt-roles/{role['id']}",
+        json={
+            "name": "短线角色",
+            "entries": [
+                {
+                    "id": role["entries"][0]["id"],
+                    "name": "should be locked",
+                    "ref_name": "system",
+                    "content": "你是交易助手",
+                    "enabled": True,
+                    "builtin": True,
+                },
+                {
+                    "id": role["entries"][1]["id"],
+                    "name": "should be locked",
+                    "ref_name": "UserInput",
+                    "content": "{UserInput}{time}{risk}",
+                    "enabled": True,
+                    "builtin": True,
+                },
+                {
+                    "name": "风控",
+                    "ref_name": "risk",
+                    "content": "严格止损",
+                    "enabled": True,
+                    "builtin": False,
+                },
+            ],
+        },
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["entries"][0]["name"] == "系统提示词"
+    assert body["entries"][1]["name"] == "用户输入"
+    assert body["entries"][2]["ref_name"] == "risk"
+
+    bad = client.put(
+        f"/api/prompt-roles/{role['id']}",
+        json={
+            "name": "bad",
+            "entries": [
+                {"name": "系统提示词", "ref_name": "system", "content": "", "enabled": True},
+                {"name": "用户输入", "ref_name": "UserInput", "content": "", "enabled": True},
+                {"name": "非法", "ref_name": "time", "content": "", "enabled": True},
+            ],
+        },
+    )
+    assert bad.status_code == 400
+
+    session = client.post(
+        "/api/sessions",
+        json={"name": "Prompt Bound Session", "prompt_role_id": role["id"]},
+    )
+    assert session.status_code == 201
+    assert session.json()["prompt_role_id"] == role["id"]
+
+
 def test_session_timeline_empty_and_messages(monkeypatch) -> None:
     client = make_client(monkeypatch)
 
