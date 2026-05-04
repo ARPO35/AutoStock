@@ -202,7 +202,7 @@ Single Docker Container
 
 说明：
 - `app/llm/` 对应原计划中的 `app/providers/`（已更名为 llm）
-- `app/simulator/`、`app/scheduler/`、`app/skills/` 未实现
+- `app/simulator/` 已实现
 - `user_skills/` 目录未创建，Skill 系统未实现
 - `data/logs/`、`data/exports/` 目录未创建
 - `config/default.yaml` 存在但代码未通过 YAML 加载配置，配置通过环境变量 + 数据类管理
@@ -417,9 +417,8 @@ Chat Session = 一条完整的 LLM 交易实验线程
 chat_sessions
 - id
 - name
-- llm_account_id
 - skill_id           ← 已预留，未使用
-- simulator_account_id  ← 已预留，未使用
+- simulator_account_id  ← 关联模拟账户（已实现）
 - provider_id        ← 实际列（绑定 Provider）
 - model              ← 实际列（Session 级模型）
 - status
@@ -791,7 +790,7 @@ defaults:
 
 ### 12.1 已实现的工具
 
-当前注册 4 个工具（`app/tools/registry.py` + `app/tools/market_tools.py`）：
+当前核心工具（`app/tools/registry.py`）：
 
 | 工具名 | 显示名 | 说明 |
 |---|---|---|
@@ -799,14 +798,20 @@ defaults:
 | `market_quote` | market.quote | 查询 A 股实时行情（通过 AKShare） |
 | `market_history` | market.history | 查询历史 K 线（优先本地缓存，支持自动补拉） |
 | `data_fetch_history` | data.fetch_history | 手动拉取并缓存历史行情到 DuckDB |
+| `portfolio_get_state` | portfolio.get_state | 查询模拟账户资产概览（与账户面板同估值口径） |
+| `portfolio_get_positions` | portfolio.get_positions | 查询持仓（含 `quantity`/`available_quantity`） |
+| `portfolio_get_orders` | portfolio.get_orders | 查询订单列表（支持状态过滤） |
+| `order_buy` | order.buy | 模拟买入（默认绑定当前会话账户） |
+| `order_sell` | order.sell | 模拟卖出（默认绑定当前会话账户） |
+| `order_cancel` | order.cancel | 撤销 `pending` 订单 |
 
 ### 12.2 计划中的工具分组 ← 未实现
 
 ```text
 market.*          ← 部分实现 (market_quote, market_history)
 data.*            ← 部分实现 (data_fetch_history)
-portfolio.*       ← 未实现
-order.*           ← 未实现
+portfolio.*       ← 已实现 (portfolio_get_state, portfolio_get_positions, portfolio_get_orders)
+order.*           ← 已实现 (order_buy, order_sell, order_cancel)
 simulator.*       ← 未实现
 tavily.*          ← 未实现
 journal.*         ← 未实现
@@ -1001,7 +1006,7 @@ data_conflicts
 
 ---
 
-## 14. A 股模拟器设计 ← 未实现
+## 14. A 股模拟器设计 ← 已实现
 
 ### 14.1 模拟器目标
 
@@ -1078,12 +1083,13 @@ positions
 ```sql
 simulator_accounts
 - id
-- llm_account_id
 - name
 - initial_cash
 - cash
 - frozen_cash
 - total_asset
+- commission_rate    ← 佣金比率，可每账号独立配置
+- min_commission      ← 最低佣金，可每账号独立配置
 - created_at
 ```
 
@@ -1401,12 +1407,15 @@ tool whitelist
 
 ```text
 llm_providers        ← Provider 配置
-llm_accounts         ← LLM 账户
-chat_sessions        ← Session（含 provider_id, model, skill_id 预留）
+chat_sessions        ← Session（含 simulator_account_id）
 chat_messages        ← 消息（含 reasoning_content 列）
 chat_runs            ← 每次 LLM 运行记录
 chat_tool_calls      ← 工具调用记录
 chat_tool_results    ← 工具调用结果
+simulator_accounts   ← 模拟账户（含 commission_rate, min_commission）
+positions            ← 持仓
+orders               ← 订单
+trades               ← 成交
 ```
 
 **未实现的表：**
@@ -1415,10 +1424,6 @@ chat_tool_results    ← 工具调用结果
 skills               ← 未实现
 skill_versions       ← 未实现
 triggers             ← 未实现
-simulator_accounts   ← 未实现
-orders               ← 未实现
-trades               ← 未实现
-positions            ← 未实现
 journal_entries      ← 未实现
 llm_usage_records    ← 未实现
 ```
@@ -1468,12 +1473,21 @@ POST   /api/providers/{provider_id}/chat-test      ← 测试聊天
 GET    /api/providers/{provider_id}/usage          ← 使用统计
 ```
 
-### 22.3 Account API ← 已实现
+### 22.3 Simulator Account API ← 已实现
 
 ```text
-GET    /api/accounts
-POST   /api/accounts
+GET    /api/simulator/accounts
+POST   /api/simulator/accounts
+GET    /api/simulator/accounts/{id}
+PUT    /api/simulator/accounts/{id}
+DELETE /api/simulator/accounts/{id}
+GET    /api/simulator/accounts/{id}/positions
+GET    /api/simulator/accounts/{id}/orders
+GET    /api/simulator/accounts/{id}/trades
+POST   /api/simulator/accounts/{id}/reset
 ```
+
+原 `llm_accounts` 表已合并到 `simulator_accounts`。
 
 ### 22.4 Session API ← 已实现
 
@@ -1554,7 +1568,7 @@ DELETE /api/triggers/{id}
 POST   /api/triggers/{id}/run-now
 ```
 
-### 22.11 Simulator API ← 未实现
+### 22.11 Simulator API ← 已实现
 
 ```text
 GET    /api/simulator/accounts
@@ -1720,7 +1734,7 @@ tool call 和 result 会显示在 Chat 中
 
 ---
 
-## 阶段 3：模拟盘 ← 未实现
+## 阶段 3：模拟盘 ← 已完成
 
 目标：让 LLM 能真实操作模拟账户。
 
@@ -1745,6 +1759,15 @@ LLM 可以通过 tool call 买入
 LLM 可以通过 tool call 卖出
 系统正确更新现金、持仓、订单、成交
 ```
+
+阶段 3 收口补充（A 股规则严格版）：
+
+- 工具执行层注入 `session_id` 与会话绑定的 `simulator_account_id`，LLM 下单默认归因到当前会话与账户。
+- 印花税按卖出单边 `0.0005` 计算（2023-08-28 后减半口径）。
+- T+1 通过 `available_quantity` 生效：当日买入不立即可卖，跨交易日自动解锁。
+- 交易时段校验默认开启（可用 `AUTOSTOCK_SIMULATOR_ENFORCE_TRADING_HOURS` 配置关闭测试环境约束）。
+- 成交后刷新持仓估值 `market_value/unrealized_pnl`，并据此更新 `total_asset`，与 `portfolio_get_state` 口径一致。
+- timeline/messages API 回传 `reasoning_content`，支持完整复盘。
 
 ---
 
@@ -1901,7 +1924,7 @@ replay 模式下 LLM 只能看到当前回放时间之前的数据
 | 前端 | React + TypeScript + Vite | 已实现 |
 | LLM SDK | openai Python SDK | 已实现 |
 | DeepSeek | 独立 DeepSeek Provider (继承 OpenAI-Compatible) | 已实现 |
-| 调度 | APScheduler | 未使用 (触发器未实现) |
+| A股模拟器 | app/simulator/ (engine + rules) | 已实现 |
 | 数据源 | AKShare | 已实现 |
 | 搜索 | Tavily Python SDK | 未使用 (Tavily tool 未实现) |
 | 配置管理 | Python 数据类 + 环境变量 | 已实现 |
@@ -1964,15 +1987,11 @@ backend/tests/
 **未实现的目录：**
 
 ```text
-app/simulator/                ← 未创建（A股模拟器）
+app/simulator/                ← 已创建（A股模拟器）
 app/scheduler/                ← 未创建（定时触发器）
 app/skills/                   ← 未创建（Skill 系统）
-app/core/event_bus.py         ← 未创建
-app/core/database.py          ← 未创建
-app/llm/capabilities.py       ← 未创建（能力通过 Provider Config 管理）
-app/llm/adapters.py           ← 未创建
-app/tools/order_tools.py      ← 未创建
-app/tools/portfolio_tools.py  ← 未创建
+app/tools/order_tools.py      ← 已创建
+app/tools/portfolio_tools.py  ← 已创建
 app/tools/tavily_tools.py     ← 未创建
 app/tools/data_tools.py       ← 未创建
 app/tools/journal_tools.py    ← 未创建
