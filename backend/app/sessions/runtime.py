@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
+import re
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
@@ -15,10 +16,17 @@ from app.tools.executor import ToolExecutor, ToolExecutionResult
 from app.tools.registry import ToolRegistry
 
 ProviderFactory = Callable[[LLMProviderConfig], ChatProvider]
+PROMPT_REF_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class RenderedPrompts:
+    system_content: str | None
+    user_content: str | None
 
 
 class SessionRunManager:
@@ -46,10 +54,20 @@ class SessionRunManager:
             raise RuntimeError("Session already has an active run.")
 
         async with lock:
-            if message:
-                self._create_message(session_id=session_id, role="user", content=message)
-
             session = self._get_session(session_id)
+            rendered_prompts = self._render_prompts(
+                role_id=str(session.get("prompt_role_id") or "default"),
+                user_input=message,
+            )
+            if rendered_prompts.system_content:
+                self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
+            if message:
+                user_content = rendered_prompts.user_content
+                if user_content is None:
+                    user_content = message
+                if user_content.strip():
+                    self._create_message(session_id=session_id, role="user", content=user_content)
+
             simulator_account_id = (
                 str(session["simulator_account_id"])
                 if session.get("simulator_account_id")
@@ -85,6 +103,7 @@ class SessionRunManager:
                     provider=provider,
                     config=config,
                     max_tool_rounds=max_tool_rounds,
+                    system_prompt=rendered_prompts.system_content,
                 )
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
@@ -102,8 +121,9 @@ class SessionRunManager:
         provider: ChatProvider,
         config: LLMProviderConfig,
         max_tool_rounds: int,
+        system_prompt: str | None,
     ) -> dict[str, Any]:
-        messages = self._load_context(session_id)
+        messages = self._load_context(session_id, system_prompt=system_prompt)
         tools = self._tool_definitions(config)
         executor = ToolExecutor(self.tool_registry)
 
@@ -276,19 +296,19 @@ class SessionRunManager:
             for definition in self.tool_registry.definitions()
         ]
 
-    def _load_context(self, session_id: str) -> list[ChatMessage]:
+    def _load_context(self, session_id: str, system_prompt: str | None = None) -> list[ChatMessage]:
         rows = self.store.fetch_all(
             """
             SELECT role, content, reasoning_content
             FROM chat_messages
             WHERE session_id = ?
-              AND role IN ('system', 'user', 'assistant')
+              AND role IN ('user', 'assistant')
               AND message_type != 'tool_call_request'
             ORDER BY created_at ASC
             """,
             (session_id,),
         )
-        return [
+        messages = [
             ChatMessage(
                 role=str(row["role"]),
                 content=str(row["content"]),
@@ -296,6 +316,86 @@ class SessionRunManager:
             )
             for row in rows
         ]
+        if system_prompt:
+            messages.insert(0, ChatMessage(role="system", content=system_prompt))
+        return messages
+
+    def _render_prompts(self, role_id: str, user_input: str | None) -> RenderedPrompts:
+        entries = self.store.fetch_all(
+            """
+            SELECT ref_name, content, enabled
+            FROM prompt_entries
+            WHERE role_id = ?
+            ORDER BY sort_order ASC
+            """,
+            (role_id,),
+        )
+        if not entries and role_id != "default":
+            entries = self.store.fetch_all(
+                """
+                SELECT ref_name, content, enabled
+                FROM prompt_entries
+                WHERE role_id = 'default'
+                ORDER BY sort_order ASC
+                """
+            )
+        by_ref = {str(row["ref_name"]): row for row in entries}
+        render_time = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        def render_ref(ref_name: str, stack: set[str]) -> str:
+            if ref_name == "UserInput":
+                return user_input or ""
+            if ref_name == "time":
+                return render_time
+            entry = by_ref.get(ref_name)
+            if entry is None:
+                return "{" + ref_name + "}"
+            if not entry["enabled"]:
+                return ""
+            if ref_name in stack:
+                return ""
+            return PROMPT_REF_RE.sub(
+                lambda match: render_ref(match.group(1), {*stack, ref_name}),
+                str(entry["content"]),
+            )
+
+        def render_entry(ref_name: str) -> str | None:
+            entry = by_ref.get(ref_name)
+            if entry is None or not entry["enabled"]:
+                return None
+            return PROMPT_REF_RE.sub(
+                lambda match: render_ref(match.group(1), {ref_name}),
+                str(entry["content"]),
+            )
+
+        system_content = render_entry("system")
+        user_content = render_entry("UserInput") if user_input is not None else None
+        return RenderedPrompts(
+            system_content=system_content if system_content and system_content.strip() else None,
+            user_content=user_content,
+        )
+
+    def _create_system_prompt_if_changed(self, session_id: str, content: str) -> None:
+        last = self.store.fetch_one(
+            """
+            SELECT content
+            FROM chat_messages
+            WHERE session_id = ?
+              AND role = 'system'
+              AND message_type = 'system_prompt'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        if last and last["content"] == content:
+            return
+        self._create_message(
+            session_id=session_id,
+            role="system",
+            content=content,
+            message_type="system_prompt",
+        )
 
     def _create_message(
         self,

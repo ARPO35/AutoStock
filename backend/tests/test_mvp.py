@@ -304,6 +304,91 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
     ]
 
 
+def test_session_run_applies_prompt_role_templates(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+    captured_messages = []
+
+    class CapturePromptProvider:
+        async def chat_stream(self, config, messages, tools):
+            captured_messages.append([(message.role, message.content) for message in messages])
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: CapturePromptProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    role = client.post("/api/prompt-roles", json={"name": "Prompt Role"}).json()
+    updated_role = client.put(
+        f"/api/prompt-roles/{role['id']}",
+        json={
+            "name": "Prompt Role",
+            "entries": [
+                {
+                    "id": role["entries"][0]["id"],
+                    "name": "系统提示词",
+                    "ref_name": "system",
+                    "content": "系统规则：{risk}",
+                    "enabled": True,
+                    "builtin": True,
+                },
+                {
+                    "id": role["entries"][1]["id"],
+                    "name": "用户输入",
+                    "ref_name": "UserInput",
+                    "content": "问题：{UserInput}\n时间：{time}\n{risk}",
+                    "enabled": True,
+                    "builtin": True,
+                },
+                {
+                    "name": "风控",
+                    "ref_name": "risk",
+                    "content": "严格止损",
+                    "enabled": True,
+                    "builtin": False,
+                },
+            ],
+        },
+    ).json()
+
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Prompted Session",
+            "provider_id": provider["id"],
+            "model": "deepseek-v4-flash",
+            "prompt_role_id": updated_role["id"],
+        },
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "分析持仓"})
+    assert run.status_code == 200
+    assert captured_messages[0][0] == ("system", "系统规则：严格止损")
+    assert captured_messages[0][1][0] == "user"
+    assert "问题：分析持仓" in captured_messages[0][1][1]
+    assert "严格止损" in captured_messages[0][1][1]
+
+    stored = client.get(f"/api/sessions/{session['id']}/messages").json()
+    assert [message["message_type"] for message in stored] == ["system_prompt", "user", "assistant"]
+
+    second = client.post(f"/api/sessions/{session['id']}/run", json={"message": "再次分析"})
+    assert second.status_code == 200
+    stored_again = client.get(f"/api/sessions/{session['id']}/messages").json()
+    assert [message["message_type"] for message in stored_again].count("system_prompt") == 1
+
+
 def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app
