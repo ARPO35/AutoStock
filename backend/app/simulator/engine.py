@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.market.akshare_provider import AKShareMarketProvider
-from app.simulator.rules import TradingRules, TradingRuleError
+from app.simulator.rules import A_SHARE_TIMEZONE, TradingRules, TradingRuleError
 from app.storage.sqlite import SQLiteStore
 
 
@@ -13,7 +13,7 @@ def utc_now() -> str:
 
 
 def cn_today() -> str:
-    return datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    return datetime.now(A_SHARE_TIMEZONE).date().isoformat()
 
 
 class SimulatorEngine:
@@ -402,7 +402,7 @@ class SimulatorEngine:
             if available >= quantity:
                 continue
             updated_at = str(row.get("updated_at") or "")
-            updated_day = updated_at[:10] if len(updated_at) >= 10 else ""
+            updated_day = _cn_date_from_iso(updated_at)
             if updated_day and updated_day < today:
                 self.store.execute(
                     "UPDATE positions SET available_quantity = ? WHERE id = ?",
@@ -499,3 +499,12 @@ def _order_dict(store: SQLiteStore, order_id: str) -> dict[str, object]:
     if row is None:
         raise LookupError(f"订单不存在: {order_id}")
     return row
+
+
+def _cn_date_from_iso(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return datetime.fromisoformat(value).astimezone(A_SHARE_TIMEZONE).date().isoformat()
+    except ValueError:
+        return value[:10] if len(value) >= 10 else ""
