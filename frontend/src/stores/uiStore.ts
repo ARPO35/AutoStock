@@ -3,7 +3,7 @@ import type { RouteKey } from "@/types";
 
 const viewTabs = ["总览", "账号详情", "交易历史", "资产曲线", "股票信息", "决策日志", "时间线控制"];
 const editTabs = ["账户信息", "余额修改", "持仓修改", "订单修正", "会话绑定"];
-const manageSections = ["模型与API", "Skills", "Tools", "触发器", "数据管理", "系统设置"];
+const manageSections = ["模型与API", "提示词", "Skills", "Tools", "触发器", "数据管理", "系统设置"];
 
 interface UIState {
   route: RouteKey;

@@ -20,6 +20,7 @@ import { api } from "@/api";
 import { useDataStore } from "@/stores/dataStore";
 import { useMarketStore } from "@/stores/marketStore";
 import { useUIStore, manageSections } from "@/stores/uiStore";
+import { PromptManagement } from "@/pages/manage/PromptManagement";
 import {
   EmptyState,
   PanelHeader,
@@ -97,6 +98,7 @@ export function ManagePage() {
         {/* Main Content */}
         <section className="border border-hairline rounded-xl bg-surface-card p-4 min-h-0 overflow-auto">
           {manageSection === "模型与API" && <ProviderManagement />}
+          {manageSection === "提示词" && <PromptManagement />}
           {manageSection === "Tools" && <ToolManagement />}
           {manageSection === "数据管理" && <DataManagement />}
           {manageSection === "Skills" && <SkillsPlaceholder />}
@@ -1208,6 +1210,7 @@ function SystemPlaceholder() {
 function sectionIcon(section: string) {
   const size = 15;
   if (section === "模型与API") return <KeyRound size={size} />;
+  if (section === "提示词") return <Code2 size={size} />;
   if (section === "Skills") return <Bot size={size} />;
   if (section === "Tools") return <Wrench size={size} />;
   if (section === "触发器") return <Bell size={size} />;

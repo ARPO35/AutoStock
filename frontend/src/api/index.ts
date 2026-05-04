@@ -33,6 +33,7 @@ export interface Session {
   name: string;
   llm_account_id?: string | null;
   skill_id: string | null;
+  prompt_role_id: string | null;
   simulator_account_id: string | null;
   provider_id: string | null;
   model: string | null;
@@ -186,6 +187,27 @@ export interface ProviderUsageResponse {
   model: string;
 }
 
+export interface PromptEntry {
+  id: string;
+  role_id: string;
+  name: string;
+  ref_name: string;
+  content: string;
+  enabled: boolean;
+  builtin: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptRole {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  entries: PromptEntry[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -220,6 +242,16 @@ export const api = {
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(payload) }),
   updateSession: (sessionId: string, payload: Record<string, unknown>) =>
     request<Session>(`/api/sessions/${sessionId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  promptRoles: () => request<PromptRole[]>("/api/prompt-roles"),
+  createPromptRole: (payload: Record<string, unknown>) =>
+    request<PromptRole>("/api/prompt-roles", { method: "POST", body: JSON.stringify(payload) }),
+  updatePromptRole: (roleId: string, payload: Record<string, unknown>) =>
+    request<PromptRole>(`/api/prompt-roles/${roleId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deletePromptRole: (roleId: string) =>
+    request<void>(`/api/prompt-roles/${roleId}`, { method: "DELETE" }),
+  importPromptRole: (payload: Record<string, unknown>) =>
+    request<PromptRole>("/api/prompt-roles/import", { method: "POST", body: JSON.stringify(payload) }),
+  exportPromptRole: (roleId: string) => request<PromptRole>(`/api/prompt-roles/${roleId}/export`),
   messages: (sessionId: string) => request<Message[]>(`/api/sessions/${sessionId}/messages`),
   createMessage: (sessionId: string, payload: Record<string, unknown>) =>
     request<Message>(`/api/sessions/${sessionId}/messages`, {
