@@ -21,6 +21,7 @@ class SessionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     skill_id: str | None = None
     simulator_account_id: str | None = None
+    llm_account_id: str | None = None
     provider_id: str | None = None
     model: str | None = None
 
@@ -117,6 +118,8 @@ async def create_session(
 ) -> dict[str, object]:
     session_id = uuid4().hex
     now = utc_now()
+    simulator_account_id = payload.simulator_account_id or payload.llm_account_id
+    _validate_simulator_account(store, simulator_account_id)
     store.execute(
         """
         INSERT INTO chat_sessions (
@@ -129,7 +132,7 @@ async def create_session(
             session_id,
             payload.name,
             payload.skill_id,
-            payload.simulator_account_id,
+            simulator_account_id,
             payload.provider_id,
             payload.model,
             now,
@@ -142,6 +145,8 @@ async def create_session(
 class SessionUpdate(BaseModel):
     """可更新字段均为可选，留空不修改。"""
     name: str | None = None
+    simulator_account_id: str | None = None
+    llm_account_id: str | None = None
     provider_id: str | None = None
     model: str | None = None
 
@@ -161,6 +166,11 @@ async def update_session(
     if payload.name is not None:
         setters.append("name = ?")
         params.append(payload.name)
+    account_id = payload.simulator_account_id or payload.llm_account_id
+    if account_id is not None:
+        _validate_simulator_account(store, account_id)
+        setters.append("simulator_account_id = ?")
+        params.append(account_id)
     if payload.provider_id is not None:
         setters.append("provider_id = ?")
         params.append(payload.provider_id)
@@ -178,6 +188,17 @@ async def update_session(
         )
 
     return _get_session_or_404(store, session_id)
+
+
+def _validate_simulator_account(store: SQLiteStore, account_id: str | None) -> None:
+    if not account_id:
+        return
+    row = store.fetch_one("SELECT id FROM simulator_accounts WHERE id = ?", (account_id,))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Simulator account not found: {account_id}",
+        )
 
 
 @router.get("/{session_id}", response_model=SessionRead)

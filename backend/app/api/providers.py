@@ -146,7 +146,7 @@ async def list_accounts(store: SQLiteStore = Depends(get_store)) -> list[dict[st
     return store.fetch_all(
         """
         SELECT *
-        FROM llm_accounts
+        FROM simulator_accounts
         ORDER BY created_at DESC
         """
     )
@@ -155,21 +155,15 @@ async def list_accounts(store: SQLiteStore = Depends(get_store)) -> list[dict[st
 @router.post("/api/accounts", response_model=AccountRead, status_code=status.HTTP_201_CREATED)
 async def create_account(
     payload: AccountCreate,
-    store: SQLiteStore = Depends(get_store),
+    request: Request,
 ) -> dict[str, object]:
-    account_id = uuid4().hex
-    now = utc_now()
     try:
-        store.execute(
-            """
-            INSERT INTO llm_accounts (id, name, initial_cash, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (account_id, payload.name, payload.initial_cash, now, now),
+        return request.app.state.simulator_engine.create_account(
+            name=payload.name,
+            initial_cash=payload.initial_cash,
         )
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    return _get_account_or_404(store, account_id)
 
 
 class ProviderUpdate(BaseModel):

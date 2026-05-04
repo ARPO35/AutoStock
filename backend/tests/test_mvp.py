@@ -89,6 +89,39 @@ def test_provider_and_simulator_account_and_key_mask(monkeypatch) -> None:
     assert account.status_code == 201
 
 
+def test_account_api_creates_bindable_simulator_session(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+
+    account = client.post(
+        "/api/accounts",
+        json={"name": "Bindable Account", "initial_cash": 1000000},
+    )
+    assert account.status_code == 201
+    account_id = account.json()["id"]
+    simulator_account = client.get(f"/api/simulator/accounts/{account_id}")
+    assert simulator_account.status_code == 200
+
+    session = client.post(
+        "/api/sessions",
+        json={"name": "Bound Session", "simulator_account_id": account_id},
+    )
+    assert session.status_code == 201
+    assert session.json()["simulator_account_id"] == account_id
+
+    legacy_session = client.post(
+        "/api/sessions",
+        json={"name": "Legacy Bound Session", "llm_account_id": account_id},
+    )
+    assert legacy_session.status_code == 201
+    assert legacy_session.json()["simulator_account_id"] == account_id
+
+    missing = client.post(
+        "/api/sessions",
+        json={"name": "Missing Account", "simulator_account_id": "missing"},
+    )
+    assert missing.status_code == 400
+
+
 def test_echo_tool(monkeypatch) -> None:
     client = make_client(monkeypatch)
 
