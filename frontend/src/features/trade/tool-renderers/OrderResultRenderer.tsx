@@ -6,11 +6,14 @@ export function OrderResultRenderer({ data }: { data: Record<string, unknown> })
   const name = formatValue(data.name ?? data.stock_name ?? data["股票名称"]);
   const quantity = formatValue(data.quantity ?? data.qty ?? data["数量"]);
   const orderPrice = formatValue(data.order_price ?? data.price ?? data["委托价"]);
-  const tradePrice = formatValue(data.trade_price ?? data.filled_price ?? data["成交价"]);
-  const fee = formatValue(data.fee ?? data.commission ?? data["手续费"]);
+  const tradePrice = formatValue(data.trade_price ?? data.filled_price ?? data.price ?? data["成交价"]);
+  const turnover = formatValue(data.turnover ?? data.amount ?? data["成交额"]);
+  const fee = formatValue(data.fee ?? data.total_fee ?? data.commission ?? data["手续费"]);
+  const netAmount = formatValue(data.total_cost ?? data.total_proceeds ?? data["总成本"] ?? data["到账金额"]);
   const status = formatValue(data.status ?? data.order_status ?? data["状态"]);
   const sourceSession = formatValue(data.session_id ?? data.source_session ?? data["来源Session"]);
   const sourceModel = formatValue(data.model ?? data.source_model ?? data["来源模型"]);
+  const netAmountLabel = data.total_proceeds != null || data["到账金额"] != null ? "到账金额" : "总成本";
 
   return (
     <div className="mt-2 p-3 border border-hairline rounded-lg bg-surface-canvas/40">
@@ -40,6 +43,14 @@ export function OrderResultRenderer({ data }: { data: Record<string, unknown> })
         <div>
           <span className="block text-text-muted text-xs">手续费</span>
           <strong className="text-text-on-dark">{fee}</strong>
+        </div>
+        <div>
+          <span className="block text-text-muted text-xs">成交额</span>
+          <strong className="text-text-on-dark">{turnover}</strong>
+        </div>
+        <div>
+          <span className="block text-text-muted text-xs">{netAmountLabel}</span>
+          <strong className="text-text-on-dark">{netAmount}</strong>
         </div>
         <div>
           <span className="block text-text-muted text-xs">状态</span>

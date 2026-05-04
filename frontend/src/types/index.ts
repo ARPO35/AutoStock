@@ -55,6 +55,11 @@ export type ToolResultPayload =
   | { kind: "quote"; quote: Record<string, unknown> }
   | { kind: "history"; history: Record<string, unknown>; bars: Record<string, unknown>[] }
   | { kind: "fetch-history"; stats: Record<string, unknown> }
+  | { kind: "order-result"; data: Record<string, unknown> }
+  | { kind: "portfolio-state"; data: Record<string, unknown> }
+  | { kind: "portfolio-positions"; data: Record<string, unknown> }
+  | { kind: "portfolio-orders"; data: Record<string, unknown> }
+  | { kind: "portfolio-trades"; data: Record<string, unknown> }
   | { kind: "json"; title: string; data: Record<string, unknown> };
 
 export interface ProviderCard {

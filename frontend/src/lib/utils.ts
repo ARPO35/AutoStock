@@ -85,6 +85,13 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   "market.quote": "行情报价",
   "market.history": "历史行情",
   "data.fetch_history": "数据拉取",
+  "order.buy": "模拟买入",
+  "order.sell": "模拟卖出",
+  "order.cancel": "撤单",
+  "portfolio.get_state": "账户概览",
+  "portfolio.get_positions": "持仓查询",
+  "portfolio.get_orders": "订单查询",
+  "portfolio.get_trades": "成交查询",
 };
 
 export function toolDisplayName(name: string | null | undefined): string {
@@ -253,6 +260,8 @@ function classifyToolResult(
     envelope.result && typeof envelope.result === "object" && !Array.isArray(envelope.result)
       ? (envelope.result as Record<string, unknown>)
       : envelope;
+  const name = toolName ?? "";
+  const kind = typeof result.kind === "string" ? result.kind : "";
 
   if (toolName === "market_quote") return { kind: "quote", quote: result };
   if (toolName === "market_history")
@@ -262,6 +271,21 @@ function classifyToolResult(
       bars: Array.isArray(result.bars) ? (result.bars as Record<string, unknown>[]) : []
     };
   if (toolName === "data_fetch_history") return { kind: "fetch-history", stats: result };
+  if (name.startsWith("order_") || kind === "order_result") {
+    return { kind: "order-result", data: result };
+  }
+  if (name === "portfolio_get_state" || kind === "portfolio_state") {
+    return { kind: "portfolio-state", data: result };
+  }
+  if (name === "portfolio_get_positions" || kind === "portfolio_positions") {
+    return { kind: "portfolio-positions", data: result };
+  }
+  if (name === "portfolio_get_orders" || kind === "portfolio_orders") {
+    return { kind: "portfolio-orders", data: result };
+  }
+  if (name === "portfolio_get_trades" || kind === "portfolio_trades") {
+    return { kind: "portfolio-trades", data: result };
+  }
   return { kind: "json", title: toolName ? `${toolName} 结果` : "工具结果", data: envelope };
 }
 

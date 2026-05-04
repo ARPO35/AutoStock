@@ -38,6 +38,19 @@ export function ToolResultRenderer({
     );
   }
 
+  if (payload.kind === "order-result") {
+    return <OrderResultRenderer data={payload.data} />;
+  }
+
+  if (
+    payload.kind === "portfolio-state" ||
+    payload.kind === "portfolio-positions" ||
+    payload.kind === "portfolio-orders" ||
+    payload.kind === "portfolio-trades"
+  ) {
+    return <PortfolioStateRenderer data={payload.data} />;
+  }
+
   const name = (toolName ?? "").toLowerCase();
 
   if (name === "tavily_search" || name.includes("tavily")) {
