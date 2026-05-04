@@ -31,7 +31,7 @@ export interface Account {
 export interface Session {
   id: string;
   name: string;
-  llm_account_id: string | null;
+  llm_account_id?: string | null;
   skill_id: string | null;
   simulator_account_id: string | null;
   provider_id: string | null;
@@ -212,9 +212,9 @@ export const api = {
   providers: () => request<Provider[]>("/api/providers"),
   createProvider: (payload: Record<string, unknown>) =>
     request<Provider>("/api/providers", { method: "POST", body: JSON.stringify(payload) }),
-  accounts: () => request<Account[]>("/api/accounts"),
+  accounts: () => request<Account[]>("/api/simulator/accounts"),
   createAccount: (payload: Record<string, unknown>) =>
-    request<Account>("/api/accounts", { method: "POST", body: JSON.stringify(payload) }),
+    request<Account>("/api/simulator/accounts", { method: "POST", body: JSON.stringify(payload) }),
   sessions: () => request<Session[]>("/api/sessions"),
   createSession: (payload: Record<string, unknown>) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(payload) }),

@@ -32,7 +32,7 @@ export function AccountSessionSidebar() {
     return accounts.map((account) => ({
       ...account,
       sessions: sessions
-        .filter((s) => s.llm_account_id === account.id)
+        .filter((s) => s.simulator_account_id === account.id)
         .map((s) => ({
           ...s,
           status: normalizeStatus(s.status)
@@ -44,7 +44,7 @@ export function AccountSessionSidebar() {
     e.preventDefault();
     if (!sessionAccountId || !sessionName.trim()) return;
     try {
-      const created = await createSession({ name: sessionName.trim(), llm_account_id: sessionAccountId });
+      const created = await createSession({ name: sessionName.trim(), simulator_account_id: sessionAccountId });
       setSelectedSessionId(created.id as string);
       setSessionName("");
     } catch {

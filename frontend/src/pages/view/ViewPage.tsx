@@ -155,7 +155,7 @@ function ViewOverview({
             <AccountSummaryCard
               key={a.id}
               account={a}
-              sessions={sessions.filter((s) => s.llm_account_id === a.id)}
+              sessions={sessions.filter((s) => s.simulator_account_id === a.id)}
             />
           ))
         )}
@@ -264,7 +264,7 @@ function AccountDetailPanel({
   const accountRows = useMemo(
     () =>
       accounts.map((a) => {
-        const related = sessions.filter((s) => s.llm_account_id === a.id);
+        const related = sessions.filter((s) => s.simulator_account_id === a.id);
         return {
           ...a,
           sessionCount: related.length,
@@ -279,7 +279,7 @@ function AccountDetailPanel({
   const sessionRows = useMemo(
     () =>
       sessions.map((s) => {
-        const acc = accountRows.find((a) => a.id === s.llm_account_id);
+        const acc = accountRows.find((a) => a.id === s.simulator_account_id);
         return {
           id: s.id,
           name: s.name,

@@ -13,8 +13,8 @@ export function AccountInspectorPanel() {
   const events = useTradeStore((s) => s.events);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
-  const selectedAccount = selectedSession?.llm_account_id
-    ? accounts.find((a) => a.id === selectedSession.llm_account_id) ?? null
+  const selectedAccount = selectedSession?.simulator_account_id
+    ? accounts.find((a) => a.id === selectedSession.simulator_account_id) ?? null
     : null;
   const selectedProvider = selectedSession?.provider_id
     ? providers.find((p) => p.id === selectedSession.provider_id) ?? null
@@ -23,14 +23,14 @@ export function AccountInspectorPanel() {
   const runningCount = selectedAccount
     ? sessions.filter(
         (s) =>
-          s.llm_account_id === selectedAccount.id &&
+          s.simulator_account_id === selectedAccount.id &&
           s.status !== null &&
           s.status.includes("run")
       ).length
     : 0;
 
   const sessionCount = selectedAccount
-    ? sessions.filter((s) => s.llm_account_id === selectedAccount.id).length
+    ? sessions.filter((s) => s.simulator_account_id === selectedAccount.id).length
     : 0;
 
   return (

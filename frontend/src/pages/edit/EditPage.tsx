@@ -115,7 +115,7 @@ function EditForms() {
     try {
       await createSession({
         name: sessionName.trim(),
-        llm_account_id: sessionAccountId
+        simulator_account_id: sessionAccountId
       });
       setSessionName("");
     } catch {
