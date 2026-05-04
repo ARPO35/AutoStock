@@ -107,6 +107,46 @@ def create_portfolio_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             "order_count": len(order_list),
         }
 
+    async def get_trades(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        account_id = _resolve_account_id(arguments, runtime_context)
+        trades = engine.get_trades(account_id)
+
+        trade_list = []
+        for trade in trades:
+            order = engine.store.fetch_one(
+                "SELECT name FROM orders WHERE id = ?",
+                (trade["order_id"],),
+            )
+            price = round(float(trade["price"]), 2)
+            quantity = int(trade["quantity"])
+            fee = round(float(trade["fee"]), 2)
+            tax = round(float(trade["tax"]), 2)
+            trade_list.append({
+                "trade_id": trade["id"],
+                "order_id": trade["order_id"],
+                "session_id": trade["session_id"],
+                "symbol": trade["symbol"],
+                "name": (order or {}).get("name", ""),
+                "side": trade["side"],
+                "price": price,
+                "quantity": quantity,
+                "fee": fee,
+                "tax": tax,
+                "total_fee": round(fee + tax, 2),
+                "turnover": round(price * quantity, 2),
+                "traded_at": trade["traded_at"],
+            })
+
+        return {
+            "kind": "portfolio_trades",
+            "account_id": account_id,
+            "trades": trade_list,
+            "trade_count": len(trade_list),
+        }
+
     return [
         ToolSpec(
             name="portfolio_get_state",
@@ -164,6 +204,24 @@ def create_portfolio_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
                 "additionalProperties": False,
             },
             handler=get_orders,
+            strict=True,
+        ),
+        ToolSpec(
+            name="portfolio_get_trades",
+            display_name="portfolio.get_trades",
+            description="查询模拟账户成交记录：成交ID、订单ID、股票、方向、成交价、数量、费用和成交时间。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "simulator_account_id": {
+                        "type": "string",
+                        "description": "模拟账户ID。",
+                    }
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=get_trades,
             strict=True,
         ),
     ]

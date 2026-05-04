@@ -6,7 +6,7 @@ from typing import Any
 
 from app.llm.base import ToolDefinition
 
-ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+ToolHandler = Callable[..., Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,11 @@ async def echo_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"echo": arguments["message"]}
 
 
-def create_default_registry(market_store: Any | None = None, market_provider: Any | None = None) -> ToolRegistry:
+def create_default_registry(
+    market_store: Any | None = None,
+    market_provider: Any | None = None,
+    simulator_engine: Any | None = None,
+) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -88,5 +92,13 @@ def create_default_registry(market_store: Any | None = None, market_provider: An
         from app.tools.market_tools import create_market_tool_specs
 
         for spec in create_market_tool_specs(market_store, market_provider):
+            registry.register(spec)
+    if simulator_engine is not None:
+        from app.tools.order_tools import create_order_tool_specs
+        from app.tools.portfolio_tools import create_portfolio_tool_specs
+
+        for spec in create_order_tool_specs(simulator_engine):
+            registry.register(spec)
+        for spec in create_portfolio_tool_specs(simulator_engine):
             registry.register(spec)
     return registry

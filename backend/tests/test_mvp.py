@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.llm.base import ChatResponse, ToolCall
 from app.main import create_app
 from app.sessions.runtime import SessionRunManager
+from app.tools.executor import ToolExecutor
 
 
 def _test_dir() -> Path:
@@ -92,7 +93,17 @@ def test_echo_tool(monkeypatch) -> None:
 
     tools = client.get("/api/tools")
     assert tools.status_code == 200
-    assert "system_echo" in [tool["name"] for tool in tools.json()]
+    tool_names = {tool["name"] for tool in tools.json()}
+    assert {
+        "system_echo",
+        "order_buy",
+        "order_sell",
+        "order_cancel",
+        "portfolio_get_state",
+        "portfolio_get_positions",
+        "portfolio_get_orders",
+        "portfolio_get_trades",
+    }.issubset(tool_names)
 
     result = client.post("/api/tools/system_echo/test", json={"arguments": {"message": "ping"}})
     assert result.status_code == 200
@@ -355,3 +366,21 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
     assert len(trades) == 1
     assert orders[0]["session_id"] == session["id"]
     assert trades[0]["session_id"] == session["id"]
+
+    executor = ToolExecutor(app.state.tool_registry)
+    import asyncio
+    trade_result = asyncio.run(
+        executor.execute(
+            "portfolio_get_trades",
+            "{}",
+            runtime_context={
+                "session_id": session["id"],
+                "simulator_account_id": account["id"],
+            },
+        )
+    )
+    assert trade_result.ok is True
+    assert trade_result.result["kind"] == "portfolio_trades"
+    assert trade_result.result["trade_count"] == 1
+    assert trade_result.result["trades"][0]["session_id"] == session["id"]
+    assert trade_result.result["trades"][0]["name"] == "平安银行"

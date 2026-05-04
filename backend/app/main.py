@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app.state.tool_registry = create_default_registry(
         market_store=app.state.market_store,
         market_provider=app.state.market_provider,
+        simulator_engine=app.state.simulator_engine,
     )
     app.state.run_manager = SessionRunManager(
         store=app.state.store,
