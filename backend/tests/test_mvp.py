@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -360,6 +361,28 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
 
     run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "buy"})
     assert run.status_code == 200
+    stored_result = app.state.store.fetch_one(
+        """
+        SELECT result_json
+        FROM chat_tool_results
+        WHERE session_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (session["id"],),
+    )
+    assert stored_result is not None
+    order_result = json.loads(stored_result["result_json"])["result"]
+    assert order_result["kind"] == "order_result"
+    assert order_result["order_price"] == 12.0
+    assert order_result["trade_price"] == 12.0
+    assert order_result["filled_price"] == 12.0
+    assert order_result["turnover"] == 1200.0
+    assert order_result["commission"] == 5.0
+    assert order_result["tax"] == 0.0
+    assert order_result["fee"] == 5.0
+    assert order_result["total_cost"] == 1205.0
+
     orders = client.get(f"/api/simulator/accounts/{account['id']}/orders").json()
     trades = client.get(f"/api/simulator/accounts/{account['id']}/trades").json()
     assert len(orders) == 1

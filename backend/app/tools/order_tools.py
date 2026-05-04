@@ -8,6 +8,46 @@ from app.tools.registry import ToolSpec
 
 
 def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
+    def _filled_order_result(
+        *,
+        result: dict[str, Any],
+        side_label: str,
+        symbol: str,
+        quantity: int,
+    ) -> dict[str, Any]:
+        order = result.get("order") or {}
+        trade = result.get("trade") or {}
+        order_price = round(float(order.get("price", 0)), 2)
+        trade_price = round(float(trade.get("price", order_price)), 2)
+        commission = round(float(trade.get("fee", 0)), 2)
+        tax = round(float(trade.get("tax", 0)), 2)
+        total_fee = round(commission + tax, 2)
+        turnover = round(trade_price * quantity, 2)
+
+        payload = {
+            "kind": "order_result",
+            "order_id": order.get("id"),
+            "trade_id": trade.get("id"),
+            "side": side_label,
+            "symbol": symbol,
+            "name": order.get("name", ""),
+            "quantity": quantity,
+            "price": trade_price,
+            "order_price": order_price,
+            "trade_price": trade_price,
+            "filled_price": trade_price,
+            "commission": commission,
+            "tax": tax,
+            "fee": total_fee,
+            "turnover": turnover,
+            "status": "已成交",
+        }
+        if side_label == "买入":
+            payload["total_cost"] = round(turnover + total_fee, 2)
+        else:
+            payload["total_proceeds"] = round(turnover - total_fee, 2)
+        return payload
+
     async def order_buy(
         arguments: dict[str, Any],
         runtime_context: dict[str, Any] | None = None,
@@ -30,22 +70,12 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             quantity=quantity,
         )
 
-        trade_data = result.get("trade")
-        return {
-            "kind": "order_result",
-            "side": "买入",
-            "symbol": symbol,
-            "name": result.get("order", {}).get("name", ""),
-            "quantity": quantity,
-            "price": float(result.get("order", {}).get("price", 0)),
-            "fee": (
-                round(float(trade_data["fee"]) + float(trade_data["tax"]), 2)
-                if trade_data
-                else 0
-            ),
-            "status": "已成交",
-            "total_cost": round(float(result.get("order", {}).get("price", 0)) * quantity, 2),
-        }
+        return _filled_order_result(
+            result=result,
+            side_label="买入",
+            symbol=symbol,
+            quantity=quantity,
+        )
 
     async def order_sell(
         arguments: dict[str, Any],
@@ -69,22 +99,12 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             quantity=quantity,
         )
 
-        trade_data = result.get("trade")
-        return {
-            "kind": "order_result",
-            "side": "卖出",
-            "symbol": symbol,
-            "name": result.get("order", {}).get("name", ""),
-            "quantity": quantity,
-            "price": float(result.get("order", {}).get("price", 0)),
-            "fee": (
-                round(float(trade_data["fee"]) + float(trade_data["tax"]), 2)
-                if trade_data
-                else 0
-            ),
-            "status": "已成交",
-            "total_proceeds": round(float(result.get("order", {}).get("price", 0)) * quantity, 2),
-        }
+        return _filled_order_result(
+            result=result,
+            side_label="卖出",
+            symbol=symbol,
+            quantity=quantity,
+        )
 
     async def order_cancel(
         arguments: dict[str, Any],
