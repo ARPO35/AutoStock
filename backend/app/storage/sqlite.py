@@ -37,6 +37,12 @@ class SQLiteStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE chat_runs ADD COLUMN token_usage TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
             self.connection.commit()
 
     def execute(
@@ -230,7 +236,8 @@ CREATE TABLE IF NOT EXISTS chat_runs (
     started_at TEXT NOT NULL,
     finished_at TEXT,
     final_message_id TEXT,
-    error TEXT
+    error TEXT,
+    token_usage TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_runs_session_started

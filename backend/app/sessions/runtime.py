@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -106,12 +107,18 @@ class SessionRunManager:
         tools = self._tool_definitions(config)
         executor = ToolExecutor(self.tool_registry)
 
+        usage: dict[str, Any] | None = None
+
         for _round in range(max_tool_rounds):
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
             tool_calls_by_index: dict[int, dict[str, str]] = {}
 
             async for chunk in provider.chat_stream(config, messages, tools):  # type: ignore[attr-defined]
+                chunk_usage = chunk.get("usage")
+                if chunk_usage:
+                    usage = chunk_usage
+
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
@@ -163,14 +170,14 @@ class SessionRunManager:
                     message_type="assistant",
                     reasoning_content=full_reasoning,
                 )
-                self._finish_run(run_id, status="finished", final_message_id=str(final_message["id"]))
+                self._finish_run(run_id, status="finished", final_message_id=str(final_message["id"]), token_usage=usage)
                 await self._send(
                     session_id,
                     "assistant_message",
                     {"run_id": run_id, "message": final_message},
                 )
-                await self._send(session_id, "run_finished", {"run_id": run_id, "status": "finished"})
-                return {"run_id": run_id, "status": "finished", "final_message": final_message}
+                await self._send(session_id, "run_finished", {"run_id": run_id, "status": "finished", "usage": usage})
+                return {"run_id": run_id, "status": "finished", "final_message": final_message, "usage": usage}
 
             assistant_message = self._create_message(
                 session_id=session_id,
@@ -254,11 +261,11 @@ class SessionRunManager:
                     },
                 )
 
-        self._finish_run(run_id, status="max_tool_rounds_reached")
+        self._finish_run(run_id, status="max_tool_rounds_reached", token_usage=usage)
         await self._send(
             session_id,
             "run_finished",
-            {"run_id": run_id, "status": "max_tool_rounds_reached"},
+            {"run_id": run_id, "status": "max_tool_rounds_reached", "usage": usage},
         )
         return {"run_id": run_id, "status": "max_tool_rounds_reached"}
 
@@ -352,14 +359,15 @@ class SessionRunManager:
         status: str,
         final_message_id: str | None = None,
         error: str | None = None,
+        token_usage: dict[str, Any] | None = None,
     ) -> None:
         self.store.execute(
             """
             UPDATE chat_runs
-            SET status = ?, finished_at = ?, final_message_id = ?, error = ?
+            SET status = ?, finished_at = ?, final_message_id = ?, error = ?, token_usage = ?
             WHERE id = ?
             """,
-            (status, utc_now(), final_message_id, error, run_id),
+            (status, utc_now(), final_message_id, error, json.dumps(token_usage) if token_usage else None, run_id),
         )
 
     def _provider_config(self, row: dict[str, Any]) -> LLMProviderConfig:
