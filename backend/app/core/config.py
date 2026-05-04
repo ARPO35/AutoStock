@@ -12,11 +12,16 @@ class Settings:
     market_duckdb_path: str = "data/market.duckdb"
     frontend_dist_path: str = "frontend_dist"
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:5173"])
+    simulator_enforce_trading_hours: bool = True
 
 
 @lru_cache
 def get_settings() -> Settings:
     cors_origins = os.getenv("AUTOSTOCK_CORS_ORIGINS")
+    simulator_enforce_trading_hours = (
+        os.getenv("AUTOSTOCK_SIMULATOR_ENFORCE_TRADING_HOURS", "1").strip().lower()
+        not in {"0", "false", "no", "off"}
+    )
     return Settings(
         app_name=os.getenv("AUTOSTOCK_APP_NAME", "AutoStock"),
         app_version=os.getenv("AUTOSTOCK_APP_VERSION", "0.1.0"),
@@ -29,4 +34,5 @@ def get_settings() -> Settings:
             if cors_origins
             else ["http://localhost:5173"]
         ),
+        simulator_enforce_trading_hours=simulator_enforce_trading_hours,
     )

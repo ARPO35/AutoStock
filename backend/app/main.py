@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     app.state.simulator_engine = SimulatorEngine(
         store=app.state.store,
         market_provider=app.state.market_provider,
-        enforce_trading_hours=False,
+        enforce_trading_hours=settings.simulator_enforce_trading_hours,
     )
     app.state.tool_registry = create_default_registry(
         market_store=app.state.market_store,
