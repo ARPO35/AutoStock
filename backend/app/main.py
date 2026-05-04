@@ -21,6 +21,20 @@ from app.storage.sqlite import SQLiteStore
 from app.tools.registry import create_default_registry
 
 
+class LazyASGIApp:
+    def __init__(self, factory):
+        self._factory = factory
+        self._app: FastAPI | None = None
+
+    def _get_app(self) -> FastAPI:
+        if self._app is None:
+            self._app = self._factory()
+        return self._app
+
+    async def __call__(self, scope, receive, send):
+        await self._get_app()(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version=settings.app_version)
@@ -40,7 +54,6 @@ def create_app() -> FastAPI:
     app.state.tool_registry = create_default_registry(
         market_store=app.state.market_store,
         market_provider=app.state.market_provider,
-        simulator_engine=app.state.simulator_engine,
     )
     app.state.run_manager = SessionRunManager(
         store=app.state.store,
@@ -77,3 +90,8 @@ def create_app() -> FastAPI:
 
 def get_app() -> FastAPI:
     return create_app()
+
+
+# Backward-compatible ASGI entrypoint for `uvicorn app.main:app --reload`.
+# Keep initialization lazy so import/reload does not eagerly lock local DB files.
+app = LazyASGIApp(create_app)
