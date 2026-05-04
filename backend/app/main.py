@@ -8,12 +8,14 @@ from app.api.data import router as data_router
 from app.api.market import router as market_router
 from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
+from app.api.simulator import router as simulator_router
 from app.api.tools import router as tools_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.websocket_manager import WebSocketManager
 from app.market.akshare_provider import AKShareMarketProvider
 from app.sessions.runtime import SessionRunManager
+from app.simulator.engine import SimulatorEngine
 from app.storage.duckdb import MarketDuckDBStore
 from app.storage.sqlite import SQLiteStore
 from app.tools.registry import create_default_registry
@@ -30,9 +32,15 @@ def create_app() -> FastAPI:
     app.state.market_store = market_store
     app.state.market_provider = AKShareMarketProvider()
     app.state.websocket_manager = WebSocketManager()
+    app.state.simulator_engine = SimulatorEngine(
+        store=app.state.store,
+        market_provider=app.state.market_provider,
+        enforce_trading_hours=False,
+    )
     app.state.tool_registry = create_default_registry(
         market_store=app.state.market_store,
         market_provider=app.state.market_provider,
+        simulator_engine=app.state.simulator_engine,
     )
     app.state.run_manager = SessionRunManager(
         store=app.state.store,
@@ -57,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(tools_router)
     app.include_router(data_router)
     app.include_router(market_router)
+    app.include_router(simulator_router)
     app.include_router(ws_router)
 
     frontend_dist = Path(settings.frontend_dist_path)
@@ -66,4 +75,5 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+def get_app() -> FastAPI:
+    return create_app()

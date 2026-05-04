@@ -49,7 +49,11 @@ class SessionRunManager:
                 self._create_message(session_id=session_id, role="user", content=message)
 
             session = self._get_session(session_id)
-            account = self._get_account(str(session["llm_account_id"]))  # 校验账号存在
+            simulator_account_id = (
+                str(session["simulator_account_id"])
+                if session.get("simulator_account_id")
+                else None
+            )
             provider_id = session.get("provider_id")
             if not provider_id:
                 raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
@@ -76,6 +80,7 @@ class SessionRunManager:
                 result = await self._run_loop(
                     run_id=run_id,
                     session_id=session_id,
+                    simulator_account_id=simulator_account_id,
                     provider=provider,
                     config=config,
                     max_tool_rounds=max_tool_rounds,
@@ -92,6 +97,7 @@ class SessionRunManager:
         self,
         run_id: str,
         session_id: str,
+        simulator_account_id: str | None,
         provider: ChatProvider,
         config: LLMProviderConfig,
         max_tool_rounds: int,
@@ -215,7 +221,14 @@ class SessionRunManager:
                     },
                 )
 
-                tool_result = await executor.execute(call.name, call.arguments)
+                tool_result = await executor.execute(
+                    call.name,
+                    call.arguments,
+                    runtime_context={
+                        "session_id": session_id,
+                        "simulator_account_id": simulator_account_id,
+                    },
+                )
                 self._save_tool_result(
                     run_id=run_id,
                     session_id=session_id,
@@ -377,15 +390,7 @@ class SessionRunManager:
         session = self.store.fetch_one("SELECT * FROM chat_sessions WHERE id = ?", (session_id,))
         if session is None:
             raise LookupError("Session not found.")
-        if not session.get("llm_account_id"):
-            raise ValueError("Session is not bound to an LLM account.")
         return session
-
-    def _get_account(self, account_id: str) -> dict[str, Any]:
-        account = self.store.fetch_one("SELECT * FROM llm_accounts WHERE id = ?", (account_id,))
-        if account is None:
-            raise LookupError("LLM account not found.")
-        return account
 
     def _get_provider(self, provider_id: str) -> dict[str, Any]:
         provider = self.store.fetch_one("SELECT * FROM llm_providers WHERE id = ?", (provider_id,))

@@ -31,7 +31,12 @@ class ToolExecutor:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
-    async def execute(self, tool_name: str, arguments_json: str) -> ToolExecutionResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments_json: str,
+        runtime_context: dict[str, Any] | None = None,
+    ) -> ToolExecutionResult:
         try:
             arguments = json.loads(arguments_json or "{}")
         except json.JSONDecodeError as exc:
@@ -52,7 +57,10 @@ class ToolExecutor:
 
         try:
             tool = self.registry.get(tool_name)
-            result = await tool.handler(arguments)
+            if runtime_context is not None:
+                result = await tool.handler(arguments, runtime_context)
+            else:
+                result = await tool.handler(arguments)
         except KeyError as exc:
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -60,6 +68,16 @@ class ToolExecutor:
                 result=None,
                 error=str(exc),
             )
+        except TypeError:
+            try:
+                result = await tool.handler(arguments)
+            except Exception as exc:
+                return ToolExecutionResult(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=None,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
         except Exception as exc:
             return ToolExecutionResult(
                 tool_name=tool_name,

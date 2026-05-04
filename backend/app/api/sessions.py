@@ -19,7 +19,6 @@ def utc_now() -> str:
 
 class SessionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    llm_account_id: str | None = None
     skill_id: str | None = None
     simulator_account_id: str | None = None
     provider_id: str | None = None
@@ -29,7 +28,6 @@ class SessionCreate(BaseModel):
 class SessionRead(BaseModel):
     id: str
     name: str
-    llm_account_id: str | None
     skill_id: str | None
     simulator_account_id: str | None
     provider_id: str | None = None
@@ -53,6 +51,7 @@ class MessageRead(BaseModel):
     session_id: str
     role: str
     content: str
+    reasoning_content: str | None = None
     message_type: str
     trigger_id: str | None
     parent_message_id: str | None
@@ -85,6 +84,9 @@ class TimelineItemRead(BaseModel):
     role: str | None = None
     message_type: str | None = None
     content: str | None = None
+    reasoning_content: str | None = None
+    trigger_id: str | None = None
+    parent_message_id: str | None = None
     created_at: str | None = None
     run_id: str | None = None
     tool_call_id: str | None = None
@@ -118,15 +120,14 @@ async def create_session(
     store.execute(
         """
         INSERT INTO chat_sessions (
-            id, name, llm_account_id, skill_id, simulator_account_id,
+            id, name, skill_id, simulator_account_id,
             provider_id, model, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
         """,
         (
             session_id,
             payload.name,
-            payload.llm_account_id,
             payload.skill_id,
             payload.simulator_account_id,
             payload.provider_id,
