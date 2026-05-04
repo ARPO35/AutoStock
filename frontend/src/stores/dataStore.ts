@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Provider, Account, Session, ToolSchema } from "@/api";
+import type { Provider, Account, Session, ToolSchema, PromptRole } from "@/api";
 import { api } from "@/api";
 
 interface DataState {
@@ -7,9 +7,11 @@ interface DataState {
   accounts: Account[];
   sessions: Session[];
   tools: ToolSchema[];
+  promptRoles: PromptRole[];
 
   loadAll: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  loadPromptRoles: () => Promise<void>;
   refreshAll: () => Promise<void>;
 
   createProvider: (payload: Record<string, unknown>) => Promise<Provider>;
@@ -26,16 +28,18 @@ export const useDataStore = create<DataState>((set, get) => ({
   accounts: [],
   sessions: [],
   tools: [],
+  promptRoles: [],
 
   loadAll: async () => {
     try {
-      const [p, a, s, t] = await Promise.all([
+      const [p, a, s, t, promptRoles] = await Promise.all([
         api.providers(),
         api.accounts(),
         api.sessions(),
-        api.tools()
+        api.tools(),
+        api.promptRoles()
       ]);
-      set({ providers: p, accounts: a, sessions: s, tools: t });
+      set({ providers: p, accounts: a, sessions: s, tools: t, promptRoles });
     } catch {
       // handled by ui store error
     }
@@ -44,6 +48,14 @@ export const useDataStore = create<DataState>((set, get) => ({
   loadSessions: async () => {
     try {
       set({ sessions: await api.sessions() });
+    } catch {
+      // handled by ui store
+    }
+  },
+
+  loadPromptRoles: async () => {
+    try {
+      set({ promptRoles: await api.promptRoles() });
     } catch {
       // handled by ui store
     }
@@ -66,7 +78,11 @@ export const useDataStore = create<DataState>((set, get) => ({
   },
 
   createSession: async (payload) => {
-    const created = await api.createSession(payload);
+    const promptRoleId = payload.prompt_role_id ?? get().promptRoles[0]?.id;
+    const created = await api.createSession({
+      ...payload,
+      ...(promptRoleId ? { prompt_role_id: promptRoleId } : {})
+    });
     set((s) => ({ sessions: [created, ...s.sessions] }));
     return created;
   },

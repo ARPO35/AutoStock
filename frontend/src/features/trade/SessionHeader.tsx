@@ -10,6 +10,7 @@ export function SessionHeader() {
   const accounts = useDataStore((s) => s.accounts);
   const sessions = useDataStore((s) => s.sessions);
   const providers = useDataStore((s) => s.providers);
+  const promptRoles = useDataStore((s) => s.promptRoles);
   const loadSessions = useDataStore((s) => s.loadSessions);
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const busy = useTradeStore((s) => s.busy);
@@ -22,6 +23,9 @@ export function SessionHeader() {
   const selectedProvider = selectedSession?.provider_id
     ? providers.find((p) => p.id === selectedSession.provider_id) ?? null
     : null;
+  const selectedPromptRole = selectedSession?.prompt_role_id
+    ? promptRoles.find((role) => role.id === selectedSession.prompt_role_id) ?? null
+    : promptRoles[0] ?? null;
 
   const status: SessionStatus = normalizeStatus(selectedSession?.status);
   const statusVariant = status === "running" ? "running" : status === "error" ? "error" : status === "queued" ? "queued" : "default";
@@ -44,6 +48,16 @@ export function SessionHeader() {
     if (!selectedSessionId) return;
     try {
       await api.updateSession(selectedSessionId, { model: model || null });
+      await loadSessions();
+    } catch {
+      // 由 store 处理
+    }
+  };
+
+  const handlePromptRoleChange = async (promptRoleId: string) => {
+    if (!selectedSessionId) return;
+    try {
+      await api.updateSession(selectedSessionId, { prompt_role_id: promptRoleId || "default" });
       await loadSessions();
     } catch {
       // 由 store 处理
@@ -83,6 +97,23 @@ export function SessionHeader() {
               disabled={busy}
               onBlur={(e) => handleModelChange(e.target.value)}
             />
+            <select
+              className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 min-w-[130px]"
+              value={selectedSession?.prompt_role_id ?? selectedPromptRole?.id ?? ""}
+              onChange={(e) => handlePromptRoleChange(e.target.value)}
+              disabled={busy || promptRoles.length === 0}
+              title="提示词角色"
+            >
+              {promptRoles.length === 0 ? (
+                <option value="">无提示词角色</option>
+              ) : (
+                promptRoles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
         )}
         <div className="flex flex-wrap gap-1.5 mt-2">
@@ -91,6 +122,9 @@ export function SessionHeader() {
           </span>
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
             Skill：{selectedSession?.skill_id ?? "--"}
+          </span>
+          <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
+            提示词：{selectedPromptRole?.name ?? "--"}
           </span>
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
             模式：实时

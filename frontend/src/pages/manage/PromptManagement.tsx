@@ -5,6 +5,7 @@ import { api } from "@/api";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, PanelHeader } from "@/components/ui/Shared";
 import { Textarea } from "@/components/ui/Input";
+import { useDataStore } from "@/stores/dataStore";
 
 type EditableEntry = PromptEntry & { local?: boolean };
 type EditableRole = Omit<PromptRole, "entries"> & { entries: EditableEntry[] };
@@ -48,6 +49,7 @@ export function PromptManagement() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const loadPromptRoles = useDataStore((s) => s.loadPromptRoles);
 
   const selectedRole = useMemo(
     () => roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null,
@@ -59,6 +61,7 @@ export function PromptManagement() {
     try {
       const loaded = await api.promptRoles();
       setRoles(loaded);
+      void loadPromptRoles();
       const selected = nextSelectedId
         ? loaded.find((role) => role.id === nextSelectedId) ?? loaded[0] ?? null
         : loaded.find((role) => role.id === selectedRoleId) ?? loaded[0] ?? null;
