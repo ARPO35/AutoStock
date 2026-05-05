@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import create_app
+from app.market.akshare_provider import AKShareMarketProvider
 from app.market.normalizer import normalize_history_rows, normalize_spot_rows
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
@@ -69,6 +73,29 @@ class FakeMarketProvider:
             ),
             fetch_time="2026-04-27T09:35:00+00:00",
         )[0]
+
+
+class BlockingFakeAKShare:
+    def __init__(self, release_event: threading.Event) -> None:
+        self.release_event = release_event
+        self.timed_out = False
+
+    def stock_zh_a_hist(self, **kwargs):
+        if not self.release_event.wait(timeout=0.2):
+            self.timed_out = True
+        return FakeFrame(
+            [
+                {
+                    "日期": "2026-04-27",
+                    "开盘": 10.0,
+                    "最高": 11.0,
+                    "最低": 9.5,
+                    "收盘": 10.5,
+                    "成交量": 1000,
+                    "成交额": 10500,
+                }
+            ]
+        )
 
 
 def _test_dir() -> Path:
@@ -135,6 +162,31 @@ def test_normalizers_accept_chinese_columns() -> None:
     assert quotes[0]["symbol"] == "600000"
     assert quotes[0]["name"] == "浦发银行"
     assert quotes[0]["price"] == 10.8
+
+
+def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    release_event = threading.Event()
+    fake_ak = BlockingFakeAKShare(release_event)
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.01)
+        release_event.set()
+
+    async def run() -> list[dict[str, object]]:
+        started = time.perf_counter()
+        history, _ = await asyncio.gather(
+            provider.history("600000", "2026-04-27", "2026-04-27"),
+            release_soon(),
+        )
+        assert time.perf_counter() - started < 0.15
+        return history
+
+    history = asyncio.run(run())
+
+    assert fake_ak.timed_out is False
+    assert history[0]["symbol"] == "600000"
 
 
 def test_fetch_history_api_and_cache_hit(monkeypatch) -> None:

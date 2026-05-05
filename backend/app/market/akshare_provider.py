@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
+
 from app.market.normalizer import normalize_history_rows, normalize_spot_rows, normalize_symbol
 
 
@@ -9,6 +11,9 @@ class AKShareMarketProvider:
     source = "akshare"
 
     async def quote(self, symbol: str) -> dict[str, Any]:
+        return await run_in_threadpool(self.quote_sync, symbol)
+
+    def quote_sync(self, symbol: str) -> dict[str, Any]:
         ak = self._akshare()
         frame = ak.stock_zh_a_spot_em()
         quotes = normalize_spot_rows(frame)
@@ -19,6 +24,16 @@ class AKShareMarketProvider:
         raise LookupError(f"Symbol not found in AKShare spot data: {normalized_symbol}")
 
     async def history(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        interval: str = "daily",
+        adjust: str = "",
+    ) -> list[dict[str, Any]]:
+        return await run_in_threadpool(self.history_sync, symbol, start, end, interval, adjust)
+
+    def history_sync(
         self,
         symbol: str,
         start: str,
