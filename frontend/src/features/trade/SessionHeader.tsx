@@ -15,6 +15,7 @@ export function SessionHeader() {
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const busy = useTradeStore((s) => s.busy);
   const runOnce = useTradeStore((s) => s.runOnce);
+  const stopCurrentRun = useTradeStore((s) => s.stopCurrentRun);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
   const selectedAccount = selectedSession?.simulator_account_id
@@ -28,7 +29,15 @@ export function SessionHeader() {
     : promptRoles[0] ?? null;
 
   const status: SessionStatus = normalizeStatus(selectedSession?.status);
-  const statusVariant = status === "running" ? "running" : status === "error" ? "error" : status === "queued" ? "queued" : "default";
+  const statusVariant = status === "running"
+    ? "running"
+    : status === "error"
+      ? "error"
+      : status === "queued"
+        ? "queued"
+        : status === "cancelled"
+          ? "cancelled"
+          : "default";
 
   const handleProviderChange = async (providerId: string) => {
     if (!selectedSessionId) return;
@@ -147,8 +156,9 @@ export function SessionHeader() {
         <button
           className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm transition-colors"
           type="button"
-          disabled
-          title="后端尚未提供停止当前 run 的接口"
+          disabled={!selectedSessionId || !busy}
+          onClick={() => selectedSessionId && stopCurrentRun(selectedSessionId)}
+          title={busy ? "停止当前运行" : "当前没有正在运行的任务"}
         >
           <StopCircle size={15} />
           停止

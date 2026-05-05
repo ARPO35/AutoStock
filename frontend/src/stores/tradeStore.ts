@@ -34,6 +34,7 @@ interface TradeState {
   lastModel: string | null;
   lastRunLatencyMs: number | null;
   runError: string | null;
+  runNotice: string | null;
 
   streamedRounds: StreamedRound[];
   currentReasoning: string;
@@ -52,6 +53,7 @@ interface TradeState {
   loadTimeline: (sessionId: string) => Promise<void>;
   sendMessage: (sessionId: string, mode: "run" | "event" | "write", content: string, model?: string | null) => Promise<void>;
   runOnce: (sessionId: string, model?: string | null) => Promise<void>;
+  stopCurrentRun: (sessionId: string) => Promise<void>;
 
   getTimeline: () => TimelineItem[];
 
@@ -107,6 +109,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   lastModel: null,
   lastRunLatencyMs: null,
   runError: null,
+  runNotice: null,
 
   streamedRounds: [],
   currentReasoning: "",
@@ -122,9 +125,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       optimisticUserMessage: null,
       streamedRounds: [],
       currentReasoning: "",
-      currentContent: "",
-      currentToolCalls: [],
-      runError: null,
+        currentContent: "",
+        currentToolCalls: [],
+        runError: null,
+        runNotice: null,
     }),
   setDraft: (value) => set({ draft: value }),
   setBusy: (value) => set({ busy: value }),
@@ -146,6 +150,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         currentToolCalls: [],
         loadingTimeline: false,
         busy: false,
+        runNotice: null,
       });
     } catch {
       set({ loadingTimeline: false, busy: false });
@@ -243,9 +248,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       }
 
       if (event.type === "run_finished") {
+        const cancelled = String(event.status ?? "").toLowerCase().includes("cancel");
         set((s) => {
           if (!s.currentReasoning && !s.currentContent && s.currentToolCalls.length === 0) {
-            return {};
+            return { runNotice: cancelled ? "已停止当前运行" : s.runNotice };
           }
           _roundId += 1;
           return {
@@ -258,6 +264,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
             currentReasoning: "",
             currentContent: "",
             currentToolCalls: [],
+            runNotice: cancelled ? "已停止当前运行" : s.runNotice,
           };
         });
         get()._disconnectWs();
@@ -312,6 +319,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       lastRunLatencyMs: null,
       events: [],
       runError: null,
+      runNotice: null,
     });
 
     if (mode === "write") {
@@ -361,6 +369,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
+      runError: null,
+      runNotice: null,
     });
 
     get()._connectWs(sessionId);
@@ -384,6 +394,20 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         set({ busy: false });
       }
     });
+  },
+
+  stopCurrentRun: async (sessionId) => {
+    try {
+      const result = await api.stopSession(sessionId);
+      set({ runNotice: result.status === "cancelled" ? "已停止当前运行" : "当前没有正在运行的任务" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ runNotice: `停止请求失败：${msg}` });
+    } finally {
+      get()._disconnectWs();
+      set({ busy: false });
+      await get().loadTimeline(sessionId);
+    }
   },
 
   getTimeline: () => {

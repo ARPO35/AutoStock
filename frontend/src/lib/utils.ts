@@ -15,6 +15,7 @@ export function normalizeStatus(status: string | null | undefined): SessionStatu
   const value = (status ?? "idle").toLowerCase();
   if (value.includes("run")) return "running";
   if (value.includes("queue")) return "queued";
+  if (value.includes("cancel") || value.includes("stop")) return "cancelled";
   if (value.includes("error") || value.includes("fail")) return "error";
   if (value.includes("archive")) return "archived";
   return "idle";
@@ -25,6 +26,7 @@ export function statusLabel(status: SessionStatus): string {
     idle: "空闲",
     running: "运行中",
     queued: "排队",
+    cancelled: "已停止",
     error: "报错",
     archived: "归档"
   }[status];

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -387,6 +389,73 @@ def test_session_run_applies_prompt_role_templates(monkeypatch) -> None:
     assert second.status_code == 200
     stored_again = client.get(f"/api/sessions/{session['id']}/messages").json()
     assert [message["message_type"] for message in stored_again].count("system_prompt") == 1
+
+
+def test_session_run_can_be_stopped(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class SlowStreamProvider:
+        async def chat_stream(self, config, messages, tools):
+            for token in ["A", "B", "C", "D", "E", "F"]:
+                await asyncio.sleep(0.05)
+                yield {"choices": [{"delta": {"content": token}}]}
+
+    import asyncio
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: SlowStreamProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post(
+        "/api/simulator/accounts",
+        json={"name": "Account Under Test"},
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={"name": "Session Under Test", "simulator_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
+    ).json()
+
+    run_response: dict[str, object] = {}
+
+    def run_call() -> None:
+        resp = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+        run_response["status_code"] = resp.status_code
+        run_response["body"] = resp.json()
+
+    run_thread = threading.Thread(target=run_call)
+
+    run_thread.start()
+    time.sleep(0.12)
+
+    stop = client.post(f"/api/sessions/{session['id']}/stop")
+    assert stop.status_code == 200
+    assert stop.json()["status"] == "cancelled"
+
+    run_thread.join(timeout=3)
+    assert run_thread.is_alive() is False
+    assert run_response["status_code"] == 200
+    assert run_response["body"]["status"] == "cancelled"
+
+    runs = client.get(f"/api/sessions/{session['id']}/runs")
+    assert runs.status_code == 200
+    assert runs.json()[0]["status"] == "cancelled"
+
+    second_stop = client.post(f"/api/sessions/{session['id']}/stop")
+    assert second_stop.status_code == 200
+    assert second_stop.json()["status"] == "not_running"
 
 
 def test_session_timeline_includes_tool_calls_and_results(monkeypatch) -> None:

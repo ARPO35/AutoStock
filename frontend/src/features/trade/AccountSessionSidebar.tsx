@@ -142,7 +142,7 @@ export function AccountSessionSidebar() {
                         <small className="block text-text-muted text-xs truncate">{s.model ?? "--"}</small>
                       </span>
                       <span className="text-[10px] text-text-muted font-mono">
-                        {s.status === "running" ? "⏳" : s.status === "error" ? "⚠" : ""}
+                        {s.status === "running" ? "⏳" : s.status === "error" ? "⚠" : s.status === "cancelled" ? "⏹" : ""}
                       </span>
                       <button
                         type="button"
@@ -205,6 +205,8 @@ function StatusDot({ status }: { status: string }) {
       ? "bg-accent-turquoise shadow-[0_0_8px_rgba(45,189,182,0.6)]"
       : status === "queued"
         ? "bg-brand-primary"
+        : status === "cancelled"
+          ? "bg-text-muted"
         : status === "error"
           ? "bg-trading-rise"
           : "bg-text-muted";

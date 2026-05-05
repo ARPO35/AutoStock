@@ -80,6 +80,11 @@ class RunRead(BaseModel):
     error: str | None
 
 
+class RunStopRead(BaseModel):
+    status: Literal["cancelled", "not_running"]
+    run_id: str | None = None
+
+
 class TimelineItemRead(BaseModel):
     type: Literal["message", "tool_call", "tool_result"]
     id: str
@@ -406,6 +411,20 @@ async def run_session(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/stop", response_model=RunStopRead)
+async def stop_session_run(
+    session_id: str,
+    request: Request,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    _get_session_or_404(store, session_id)
+    result = request.app.state.run_manager.cancel_run(session_id)
+    return {
+        "status": str(result.get("status") or "not_running"),
+        "run_id": str(result["run_id"]) if result.get("run_id") else None,
+    }
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

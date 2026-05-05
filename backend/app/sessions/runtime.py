@@ -29,6 +29,12 @@ class RenderedPrompts:
     user_content: str | None
 
 
+@dataclass
+class ActiveRun:
+    run_id: str
+    cancel_event: asyncio.Event
+
+
 class SessionRunManager:
     def __init__(
         self,
@@ -42,6 +48,14 @@ class SessionRunManager:
         self.websocket_manager = websocket_manager
         self.provider_factory = provider_factory
         self._locks: dict[str, asyncio.Lock] = {}
+        self._active_runs: dict[str, ActiveRun] = {}
+
+    def cancel_run(self, session_id: str) -> dict[str, Any]:
+        active = self._active_runs.get(session_id)
+        if active is None:
+            return {"status": "not_running"}
+        active.cancel_event.set()
+        return {"status": "cancelled", "run_id": active.run_id}
 
     async def run_once(
         self,
@@ -54,6 +68,7 @@ class SessionRunManager:
             raise RuntimeError("Session already has an active run.")
 
         async with lock:
+            active_run: ActiveRun | None = None
             session = self._get_session(session_id)
             rendered_prompts = self._render_prompts(
                 role_id=str(session.get("prompt_role_id") or "default"),
@@ -82,6 +97,9 @@ class SessionRunManager:
             provider = self.provider_factory(config)
 
             run_id = uuid4().hex
+            cancel_event = asyncio.Event()
+            active_run = ActiveRun(run_id=run_id, cancel_event=cancel_event)
+            self._active_runs[session_id] = active_run
             started_at = utc_now()
             self.store.execute(
                 """
@@ -104,12 +122,17 @@ class SessionRunManager:
                     config=config,
                     max_tool_rounds=max_tool_rounds,
                     system_prompt=rendered_prompts.system_content,
+                    cancel_event=cancel_event,
                 )
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 self._finish_run(run_id, status="error", error=error)
                 await self._send(session_id, "error", {"run_id": run_id, "error": error})
                 raise
+            finally:
+                current = self._active_runs.get(session_id)
+                if current is not None and active_run is not None and current.run_id == active_run.run_id:
+                    self._active_runs.pop(session_id, None)
 
             return result
 
@@ -122,6 +145,7 @@ class SessionRunManager:
         config: LLMProviderConfig,
         max_tool_rounds: int,
         system_prompt: str | None,
+        cancel_event: asyncio.Event,
     ) -> dict[str, Any]:
         messages = self._load_context(session_id, system_prompt=system_prompt)
         tools = self._tool_definitions(config)
@@ -130,11 +154,27 @@ class SessionRunManager:
         usage: dict[str, Any] | None = None
 
         for _round in range(max_tool_rounds):
+            if cancel_event.is_set():
+                self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+                await self._send(
+                    session_id,
+                    "run_finished",
+                    {"run_id": run_id, "status": "cancelled", "usage": usage},
+                )
+                return {"run_id": run_id, "status": "cancelled"}
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
             tool_calls_by_index: dict[int, dict[str, str]] = {}
 
             async for chunk in provider.chat_stream(config, messages, tools):  # type: ignore[attr-defined]
+                if cancel_event.is_set():
+                    self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+                    await self._send(
+                        session_id,
+                        "run_finished",
+                        {"run_id": run_id, "status": "cancelled", "usage": usage},
+                    )
+                    return {"run_id": run_id, "status": "cancelled"}
                 chunk_usage = chunk.get("usage")
                 if chunk_usage:
                     usage = chunk_usage
@@ -216,6 +256,14 @@ class SessionRunManager:
             )
 
             for call in tool_calls:
+                if cancel_event.is_set():
+                    self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+                    await self._send(
+                        session_id,
+                        "run_finished",
+                        {"run_id": run_id, "status": "cancelled", "usage": usage},
+                    )
+                    return {"run_id": run_id, "status": "cancelled"}
                 tool_call_id = uuid4().hex
                 now = utc_now()
                 self.store.execute(

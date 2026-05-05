@@ -1,5 +1,5 @@
 export type RouteKey = "trade" | "view" | "edit" | "manage";
-export type SessionStatus = "idle" | "running" | "queued" | "error" | "archived";
+export type SessionStatus = "idle" | "running" | "queued" | "cancelled" | "error" | "archived";
 export type TimelineKind = "user" | "event" | "assistant" | "tool-call" | "tool-result" | "error";
 
 export interface AccountView {

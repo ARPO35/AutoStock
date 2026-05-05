@@ -187,6 +187,11 @@ export interface ProviderUsageResponse {
   model: string;
 }
 
+export interface StopRunResponse {
+  status: "cancelled" | "not_running";
+  run_id: string | null;
+}
+
 export interface PromptEntry {
   id: string;
   role_id: string;
@@ -264,6 +269,10 @@ export const api = {
     request<Record<string, unknown>>(`/api/sessions/${sessionId}/run`, {
       method: "POST",
       body: JSON.stringify(payload)
+    }),
+  stopSession: (sessionId: string) =>
+    request<StopRunResponse>(`/api/sessions/${sessionId}/stop`, {
+      method: "POST"
     }),
   tools: () => request<ToolSchema[]>("/api/tools"),
   testTool: (toolName: string, args: Record<string, unknown>) =>

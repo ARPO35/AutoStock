@@ -9,7 +9,9 @@ export function ChatInputBox() {
   const busy = useTradeStore((s) => s.busy);
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const sendMessage = useTradeStore((s) => s.sendMessage);
+  const stopCurrentRun = useTradeStore((s) => s.stopCurrentRun);
   const runError = useTradeStore((s) => s.runError);
+  const runNotice = useTradeStore((s) => s.runNotice);
 
   const sessions = useDataStore((s) => s.sessions);
   const providers = useDataStore((s) => s.providers);
@@ -76,8 +78,9 @@ export function ChatInputBox() {
           <button
             className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-trading-rise/50 bg-trading-rise/10 text-trading-rise text-sm disabled:opacity-50 transition-colors"
             type="button"
-            disabled
-            title="后端尚未提供停止当前 run 的接口"
+            disabled={!busy || !selectedSessionId}
+            onClick={() => selectedSessionId && stopCurrentRun(selectedSessionId)}
+            title={busy ? "停止当前运行" : "当前没有正在运行的任务"}
           >
             <StopCircle size={15} />
             停止
@@ -86,6 +89,9 @@ export function ChatInputBox() {
       </div>
       {runError && (
         <p className="mt-2 text-trading-rise text-xs">{runError}</p>
+      )}
+      {!runError && runNotice && (
+        <p className="mt-2 text-text-muted text-xs">{runNotice}</p>
       )}
     </footer>
   );

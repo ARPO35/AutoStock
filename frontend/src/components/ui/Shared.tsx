@@ -84,10 +84,11 @@ export function EmptyState({ title, description }: { title: string; description:
   );
 }
 
-export function Badge({ children, variant = "default" }: { children: ReactNode; variant?: "default" | "running" | "error" | "queued" }) {
+export function Badge({ children, variant = "default" }: { children: ReactNode; variant?: "default" | "running" | "error" | "queued" | "cancelled" }) {
   const colors = {
     default: "border-hairline bg-surface-elevated text-text-on-dark",
     running: "border-accent-turquoise/30 text-accent-turquoise",
+    cancelled: "border-text-muted/40 text-text-muted",
     error: "border-trading-rise/30 text-trading-rise",
     queued: "border-brand-primary/30 text-brand-primary"
   };
