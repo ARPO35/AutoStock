@@ -278,6 +278,7 @@ async def session_timeline(
                 "parent_message_id": row.get("parent_message_id"),
                 "created_at": row["created_at"],
                 "_sort_time": row["created_at"],
+                "_sort_rank": _timeline_message_rank(row),
             }
         )
 
@@ -303,6 +304,7 @@ async def session_timeline(
                 "finished_at": row["finished_at"],
                 "error": row["error"],
                 "_sort_time": row["started_at"],
+                "_sort_rank": 20,
             }
         )
 
@@ -324,12 +326,14 @@ async def session_timeline(
                 "result_json": row["result_json"],
                 "created_at": row["created_at"],
                 "_sort_time": row["created_at"],
+                "_sort_rank": 30,
             }
         )
 
-    items.sort(key=lambda item: str(item["_sort_time"]))
+    items.sort(key=lambda item: (str(item["_sort_time"]), int(item["_sort_rank"])))
     for item in items:
         item.pop("_sort_time", None)
+        item.pop("_sort_rank", None)
     return items
 
 
@@ -464,3 +468,11 @@ def _get_message_or_404(store: SQLiteStore, message_id: str) -> dict[str, object
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
     return message
+
+
+def _timeline_message_rank(row: dict[str, object]) -> int:
+    if row.get("message_type") == "tool_call_request":
+        return 10
+    if row.get("role") == "assistant":
+        return 40
+    return 0

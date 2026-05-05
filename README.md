@@ -95,3 +95,22 @@ Backend verification used in this stage:
 cd backend
 python -m pytest tests/test_simulator.py tests/test_mvp.py -q
 ```
+
+## Stage 4 Tavily Search
+
+Implemented surface:
+
+- `GET/PUT /api/tavily/config` stores Tavily API key and default search settings.
+- `GET /api/tavily/usage` reports calls, cache hits, and estimated credits.
+- LLM tools `tavily_search` and `tavily_extract` expose Tavily search and webpage extraction.
+- Search/extract responses are cached in SQLite and rendered in the Chat timeline.
+
+Environment variables:
+
+```bash
+AUTOSTOCK_TAVILY_API_KEY=
+AUTOSTOCK_TAVILY_DEFAULT_SEARCH_DEPTH=basic
+AUTOSTOCK_TAVILY_DEFAULT_TOPIC=finance
+AUTOSTOCK_TAVILY_DEFAULT_MAX_RESULTS=5
+AUTOSTOCK_TAVILY_CACHE_TTL_SECONDS=1800
+```

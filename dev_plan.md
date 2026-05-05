@@ -122,7 +122,7 @@ Single Docker Container
 ├─ Session-bound Trigger Scheduler      ← 未实现
 ├─ AKShare Market Provider              ← 已实现
 ├─ Market Cache / Data Warehouse        ← 已实现 (DuckDB)
-├─ Tavily Search Provider               ← 未实现
+├─ Tavily Search Provider               ← 已实现
 ├─ A股 Simulator                        ← 未实现
 ├─ SQLite
 │  ├─ 配置 (llm_providers, llm_accounts)
@@ -813,7 +813,7 @@ data.*            ← 部分实现 (data_fetch_history)
 portfolio.*       ← 已实现 (portfolio_get_state, portfolio_get_positions, portfolio_get_orders)
 order.*           ← 已实现 (order_buy, order_sell, order_cancel)
 simulator.*       ← 未实现
-tavily.*          ← 未实现
+tavily.*          ← 已实现
 journal.*         ← 未实现
 report.*          ← 未实现
 ```
@@ -1153,7 +1153,7 @@ replay_clock.current_time
 
 ---
 
-## 16. Tavily 搜索设计 ← 未实现
+## 16. Tavily 搜索设计 ← 已实现
 
 ### 16.1 用途
 
@@ -1770,7 +1770,7 @@ LLM 可以通过 tool call 卖出
 
 ---
 
-## 阶段 4：Tavily 搜索 ← 未实现
+## 阶段 4：Tavily 搜索 ← 已实现
 
 目标：让 LLM 能搜索实时网页信息。
 
@@ -1925,7 +1925,7 @@ replay 模式下 LLM 只能看到当前回放时间之前的数据
 | DeepSeek | 独立 DeepSeek Provider (继承 OpenAI-Compatible) | 已实现 |
 | A股模拟器 | app/simulator/ (engine + rules) | 已实现 |
 | 数据源 | AKShare | 已实现 |
-| 搜索 | Tavily Python SDK | 未使用 (Tavily tool 未实现) |
+| 搜索 | Tavily Python SDK | 已实现 |
 | 配置管理 | Python 数据类 + 环境变量 | 已实现 |
 | 业务数据库 | SQLite | 已实现 |
 | 行情数据库 | DuckDB | 已实现 |
@@ -1965,7 +1965,8 @@ backend/app/
 │  ├─ __init__.py
 │  ├─ registry.py
 │  ├─ executor.py
-│  └─ market_tools.py
+│  ├─ market_tools.py
+│  └─ tavily_tools.py
 ├─ market/
 │  ├─ __init__.py
 │  ├─ akshare_provider.py
@@ -1991,7 +1992,7 @@ app/scheduler/                ← 未创建（定时触发器）
 app/skills/                   ← 未创建（Skill 系统）
 app/tools/order_tools.py      ← 已创建
 app/tools/portfolio_tools.py  ← 已创建
-app/tools/tavily_tools.py     ← 未创建
+app/tools/tavily_tools.py     ← 已创建
 app/tools/data_tools.py       ← 未创建
 app/tools/journal_tools.py    ← 未创建
 app/market/cache.py           ← 未创建（缓存逻辑在 storage/duckdb.py）
