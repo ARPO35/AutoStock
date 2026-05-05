@@ -10,6 +10,13 @@ from uuid import uuid4
 from starlette.concurrency import run_in_threadpool
 
 
+def _pad_date_if_needed(value: str, pad: str) -> str:
+    text = value.strip()
+    if " " in text:
+        return text
+    return text + pad
+
+
 class MarketDuckDBStore:
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -115,7 +122,7 @@ class MarketDuckDBStore:
             params.append(start)
         if end:
             sql += " AND datetime <= ?"
-            params.append(end)
+            params.append(_pad_date_if_needed(end, pad=" 23:59:59"))
         sql += " ORDER BY datetime ASC"
         return self._rows(sql, params)
 
@@ -189,6 +196,67 @@ class MarketDuckDBStore:
         status: str,
     ) -> dict[str, Any] | None:
         return await run_in_threadpool(self.resolve_conflict, conflict_id, status)
+
+    def insert_announcements(self, announcements: list[dict[str, Any]]) -> dict[str, int]:
+        stats = {"inserted": 0, "skipped": 0, "conflicted": 0}
+        if not announcements:
+            return stats
+
+        with self._lock:
+            self.connection.execute("BEGIN TRANSACTION")
+            try:
+                for ann in announcements:
+                    existing = self._fetch_announcement_key(ann)
+                    if existing is None:
+                        self._insert_announcement(ann)
+                        stats["inserted"] += 1
+                    elif existing["raw_hash"] == ann["raw_hash"]:
+                        stats["skipped"] += 1
+                    else:
+                        self._insert_announcement_conflict(existing=existing, new_value=ann)
+                        stats["conflicted"] += 1
+                self.connection.execute("COMMIT")
+            except Exception:
+                self.connection.execute("ROLLBACK")
+                raise
+        return stats
+
+    async def insert_announcements_async(self, announcements: list[dict[str, Any]]) -> dict[str, int]:
+        return await run_in_threadpool(self.insert_announcements, announcements)
+
+    def query_announcements(
+        self,
+        symbol: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT *
+            FROM market_announcements
+            WHERE symbol = ?
+        """
+        params: list[Any] = [symbol]
+        if start:
+            sql += " AND published_at >= ?"
+            params.append(start)
+        if end:
+            sql += " AND published_at <= ?"
+            params.append(end)
+        sql += " ORDER BY published_at DESC, title ASC"
+        return self._rows(sql, params)
+
+    async def query_announcements_async(
+        self,
+        symbol: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await run_in_threadpool(
+            self.query_announcements,
+            symbol,
+            start,
+            end,
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -280,6 +348,66 @@ class MarketDuckDBStore:
             """
         )
 
+    def _fetch_announcement_key(self, ann: dict[str, Any]) -> dict[str, Any] | None:
+        return self._row(
+            """
+            SELECT *
+            FROM market_announcements
+            WHERE symbol = ?
+              AND published_at = ?
+              AND title = ?
+            """,
+            [ann["symbol"], ann.get("published_at"), ann.get("title")],
+        )
+
+    def _insert_announcement(self, ann: dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO market_announcements (
+                symbol, name, title, type, published_at, url,
+                source, fetch_time, raw_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ann.get("symbol"),
+                ann.get("name"),
+                ann.get("title"),
+                ann.get("type"),
+                ann.get("published_at"),
+                ann.get("url"),
+                ann.get("source"),
+                ann.get("fetch_time"),
+                ann.get("raw_hash"),
+            ],
+        )
+
+    def _insert_announcement_conflict(
+        self,
+        existing: dict[str, Any],
+        new_value: dict[str, Any],
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO data_conflicts (
+                id, symbol, interval, datetime, adjust, existing_value_json,
+                new_value_json, source, fetch_time, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+            """,
+            [
+                uuid4().hex,
+                new_value.get("symbol"),
+                "announcement",
+                new_value.get("published_at", ""),
+                "",
+                json.dumps(existing, ensure_ascii=False, sort_keys=True, default=str),
+                json.dumps(new_value, ensure_ascii=False, sort_keys=True, default=str),
+                new_value.get("source"),
+                new_value.get("fetch_time"),
+            ],
+        )
+
     def _row(self, sql: str, params: Iterable[Any]) -> dict[str, Any] | None:
         cursor = self.connection.execute(sql, list(params))
         columns = [column[0] for column in cursor.description]
@@ -351,5 +479,18 @@ CREATE TABLE IF NOT EXISTS market_cache_status (
     bar_count BIGINT NOT NULL,
     updated_at VARCHAR NOT NULL,
     PRIMARY KEY (symbol, interval, adjust)
+);
+
+CREATE TABLE IF NOT EXISTS market_announcements (
+    symbol VARCHAR NOT NULL,
+    name VARCHAR,
+    title VARCHAR NOT NULL,
+    type VARCHAR,
+    published_at VARCHAR NOT NULL,
+    url VARCHAR,
+    source VARCHAR NOT NULL,
+    fetch_time VARCHAR NOT NULL,
+    raw_hash VARCHAR NOT NULL,
+    PRIMARY KEY (symbol, published_at, title)
 );
 """

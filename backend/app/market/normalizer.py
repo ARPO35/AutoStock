@@ -105,6 +105,73 @@ def normalize_bid_ask_quote(
     return quote
 
 
+def normalize_minute_rows(
+    rows: Any,
+    symbol: str,
+    period: str = "1",
+    adjust: str = "",
+    name: str | None = None,
+    source: str = "akshare.stock_zh_a_hist_min_em",
+    fetch_time: str | None = None,
+) -> list[dict[str, Any]]:
+    fetched_at = fetch_time or utc_now()
+    normalized_symbol = normalize_symbol(symbol)
+    interval = f"{period}m"
+    result: list[dict[str, Any]] = []
+    for row in _records(rows):
+        bar = {
+            "symbol": normalized_symbol,
+            "name": name,
+            "interval": interval,
+            "datetime": _datetime_string(
+                row.get("时间") or row.get("time") or row.get("datetime")
+            ),
+            "open": _number(row.get("开盘") or row.get("open")),
+            "high": _number(row.get("最高") or row.get("high")),
+            "low": _number(row.get("最低") or row.get("low")),
+            "close": _number(row.get("收盘") or row.get("close")),
+            "volume": _number(row.get("成交量") or row.get("volume")),
+            "amount": _number(row.get("成交额") or row.get("amount")),
+            "adjust": adjust or "",
+            "source": source,
+            "fetch_time": fetched_at,
+        }
+        bar["raw_hash"] = raw_hash(bar)
+        result.append(bar)
+    return result
+
+
+def normalize_announcement_rows(
+    rows: Any,
+    symbol: str,
+    source: str = "akshare.stock_individual_notice_report",
+    fetch_time: str | None = None,
+) -> list[dict[str, Any]]:
+    fetched_at = fetch_time or utc_now()
+    normalized_symbol = normalize_symbol(symbol)
+    result: list[dict[str, Any]] = []
+    for row in _records(rows):
+        pub_date = row.get("公告日期") or row.get("date")
+        if hasattr(pub_date, "isoformat"):
+            pub_date = pub_date.isoformat()
+        elif pub_date is not None:
+            pub_date = str(pub_date).strip()
+
+        announcement = {
+            "symbol": normalized_symbol,
+            "name": _text(row.get("名称") or row.get("name")),
+            "title": _text(row.get("公告标题") or row.get("title")),
+            "type": _text(row.get("公告类型") or row.get("type")),
+            "published_at": pub_date,
+            "url": _text(row.get("网址") or row.get("url")),
+            "source": source,
+            "fetch_time": fetched_at,
+        }
+        announcement["raw_hash"] = raw_hash(announcement)
+        result.append(announcement)
+    return result
+
+
 def raw_hash(payload: dict[str, Any]) -> str:
     stable = {
         key: value
@@ -128,6 +195,14 @@ def _date_string(value: Any) -> str:
         raise ValueError("Market bar row is missing datetime/date.")
     if hasattr(value, "strftime"):
         return value.strftime("%Y-%m-%d")
+    return str(value).strip()
+
+
+def _datetime_string(value: Any) -> str:
+    if value is None:
+        raise ValueError("Market bar row is missing datetime.")
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
     return str(value).strip()
 
 

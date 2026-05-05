@@ -825,7 +825,7 @@ report.*          ← 未实现
 <details>
 <summary>未来工具详情（点击展开）</summary>
 
-**Market Tools (待实现: stock_list, minute, announcement, index_quote)**
+**Market Tools (待实现: stock_list, index_quote)**
 
 ```text
 market.stock_list
@@ -1444,7 +1444,6 @@ data_conflicts       ← 数据冲突记录
 **未实现的表：**
 
 ```text
-market_announcements  ← 未实现
 replay_datasets       ← 未实现
 performance_snapshots ← 未实现
 analysis_reports      ← 未实现

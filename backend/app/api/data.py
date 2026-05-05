@@ -91,3 +91,91 @@ async def resolve_conflict(
     if conflict is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conflict not found")
     return conflict
+
+
+class FetchMinuteRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    period: str = "1"
+
+
+class FetchMinuteResponse(BaseModel):
+    symbol: str
+    interval: str
+    adjust: str
+    fetched: int
+    inserted: int
+    skipped: int
+    conflicted: int
+
+
+class FetchAnnouncementRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    start: str = Field(min_length=8)
+    end: str = Field(min_length=8)
+
+
+class FetchAnnouncementResponse(BaseModel):
+    symbol: str
+    fetched: int
+    inserted: int
+    skipped: int
+    conflicted: int
+
+
+@router.post("/fetch-minute", response_model=FetchMinuteResponse)
+async def fetch_minute(
+    payload: FetchMinuteRequest,
+    market_store=Depends(get_market_store),
+    market_provider=Depends(get_market_provider),
+) -> dict[str, object]:
+    try:
+        bars = await market_provider.minute(
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            period=payload.period,
+        )
+        stats = await market_store.insert_bars_async(bars)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "symbol": payload.symbol,
+        "interval": f"{payload.period}m",
+        "adjust": "",
+        "fetched": len(bars),
+        **stats,
+    }
+
+
+@router.post("/fetch-announcement", response_model=FetchAnnouncementResponse)
+async def fetch_announcement(
+    payload: FetchAnnouncementRequest,
+    market_store=Depends(get_market_store),
+    market_provider=Depends(get_market_provider),
+) -> dict[str, object]:
+    try:
+        announcements = await market_provider.announcement(
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+        )
+        stats = await market_store.insert_announcements_async(announcements)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "symbol": payload.symbol,
+        "fetched": len(announcements),
+        **stats,
+    }

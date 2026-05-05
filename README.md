@@ -58,7 +58,11 @@ npm run build
 Backend-only market data endpoints:
 
 - `POST /api/data/fetch-history` fetches daily A-share history through AKShare and writes it to DuckDB.
+- `POST /api/data/fetch-minute` fetches minute A-share bars (`period`: `1/5/15/30/60`) through AKShare and writes them to DuckDB.
+- `POST /api/data/fetch-announcement` fetches A-share company announcements through AKShare and writes them to DuckDB.
 - `GET /api/market/history` reads from the local cache first; pass `allow_fetch_missing=true` with `start` and `end` to fetch missing rows.
+- `GET /api/market/minute` reads minute bars from the local cache first; requires `symbol`, `start`, and `end`, and supports `period=1|5|15|30|60`.
+- `GET /api/market/announcement` reads company announcements from the local cache first; pass `allow_fetch_missing=true` with `start` and `end` to fetch missing rows.
 - `GET /api/market/quote` reads the latest AKShare quote and stores a quote snapshot.
 - `GET /api/data/cache-status` shows cached symbol/date coverage.
 - `GET /api/data/conflicts` and `POST /api/data/conflicts/{id}/resolve` expose data conflicts.
@@ -67,9 +71,11 @@ LLM tool names use OpenAI-compatible identifiers:
 
 - `market_quote`
 - `market_history`
+- `market_minute`
+- `market_announcement`
 - `data_fetch_history`
 
-The displayed names remain `market.quote`, `market.history`, and `data.fetch_history`.
+The displayed names remain `market.quote`, `market.history`, `market.minute`, `market.announcement`, and `data.fetch_history`.
 
 ## Stage 3 Simulator Closure (A-share rules)
 

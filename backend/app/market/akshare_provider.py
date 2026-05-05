@@ -72,11 +72,89 @@ class AKShareMarketProvider:
             adjust=adjust or "",
         )
 
-    async def minute(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        raise NotImplementedError("Minute history is reserved for a later phase.")
+    _MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
 
-    async def announcement(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        raise NotImplementedError("Announcement data is reserved for a later phase.")
+    async def minute(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        period: str = "1",
+        adjust: str = "",
+    ) -> list[dict[str, Any]]:
+        from app.market.normalizer import normalize_minute_rows
+
+        return await run_in_threadpool(self._minute_sync, symbol, start, end, period, adjust, normalize_minute_rows)
+
+    def _minute_sync(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        period: str,
+        adjust: str,
+        normalizer_func: Any,
+    ) -> list[dict[str, Any]]:
+        period = str(period).strip()
+        if period not in self._MINUTE_PERIODS:
+            raise ValueError(
+                f"Unsupported minute period: {period!r}. Choose from {sorted(self._MINUTE_PERIODS)}."
+            )
+
+        ak = self._akshare()
+        normalized_symbol = normalize_symbol(symbol)
+
+        start_dt = self._minute_datetime(start)
+        end_dt = self._minute_datetime(end)
+
+        frame = ak.stock_zh_a_hist_min_em(
+            symbol=normalized_symbol,
+            start_date=start_dt,
+            end_date=end_dt,
+            period=period,
+            adjust=adjust or "",
+        )
+        return normalizer_func(
+            frame,
+            symbol=normalized_symbol,
+            period=period,
+            adjust=adjust or "",
+        )
+
+    async def announcement(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+    ) -> list[dict[str, Any]]:
+        from app.market.normalizer import normalize_announcement_rows
+
+        return await run_in_threadpool(self._announcement_sync, symbol, start, end, normalize_announcement_rows)
+
+    def _announcement_sync(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        normalizer_func: Any,
+    ) -> list[dict[str, Any]]:
+        ak = self._akshare()
+        normalized_symbol = normalize_symbol(symbol)
+
+        frame = ak.stock_individual_notice_report(
+            security=normalized_symbol,
+            symbol="全部",
+            begin_date=self._ak_date(start),
+            end_date=self._ak_date(end),
+        )
+        return normalizer_func(frame, symbol=normalized_symbol)
+
+    @staticmethod
+    def _minute_datetime(value: str) -> str:
+        text = value.strip()
+        if " " in text:
+            return text
+        return f"{text} 09:30:00"
 
     def _akshare(self) -> Any:
         try:

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.main import create_app
 from app.market.akshare_provider import AKShareMarketProvider
-from app.market.normalizer import normalize_bid_ask_quote, normalize_history_rows, normalize_spot_rows
+from app.market.normalizer import normalize_announcement_rows, normalize_bid_ask_quote, normalize_history_rows, normalize_minute_rows, normalize_spot_rows
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
 
@@ -29,6 +29,8 @@ class FakeMarketProvider:
     def __init__(self) -> None:
         self.history_calls = 0
         self.quote_calls = 0
+        self.minute_calls = 0
+        self.announcement_calls = 0
 
     async def history(self, symbol, start, end, interval="daily", adjust=""):
         self.history_calls += 1
@@ -73,6 +75,65 @@ class FakeMarketProvider:
             ),
             fetch_time="2026-04-27T09:35:00+00:00",
         )[0]
+
+    async def minute(self, symbol, start, end, period="1", adjust=""):
+        self.minute_calls += 1
+        return normalize_minute_rows(
+            FakeFrame(
+                [
+                    {
+                        "时间": "2026-04-27 09:35:00",
+                        "开盘": 10.0,
+                        "收盘": 10.2,
+                        "最高": 10.3,
+                        "最低": 9.9,
+                        "成交量": 500,
+                        "成交额": 5100,
+                    },
+                    {
+                        "时间": "2026-04-27 09:40:00",
+                        "开盘": 10.2,
+                        "收盘": 10.5,
+                        "最高": 10.6,
+                        "最低": 10.1,
+                        "成交量": 800,
+                        "成交额": 8400,
+                    },
+                ]
+            ),
+            symbol=symbol,
+            period=period,
+            adjust=adjust,
+            name="浦发银行",
+            fetch_time="2026-04-27T08:00:00+00:00",
+        )
+
+    async def announcement(self, symbol, start, end):
+        self.announcement_calls += 1
+        return normalize_announcement_rows(
+            FakeFrame(
+                [
+                    {
+                        "代码": symbol,
+                        "名称": "浦发银行",
+                        "公告标题": "浦发银行:2026年第一季度报告",
+                        "公告类型": "一季度报告全文",
+                        "公告日期": "2026-04-30",
+                        "网址": "https://example.com/notice/1",
+                    },
+                    {
+                        "代码": symbol,
+                        "名称": "浦发银行",
+                        "公告标题": "浦发银行:董事会决议公告",
+                        "公告类型": "董事会决议",
+                        "公告日期": "2026-04-28",
+                        "网址": "https://example.com/notice/2",
+                    },
+                ]
+            ),
+            symbol=symbol,
+            fetch_time="2026-04-27T08:00:00+00:00",
+        )
 
 
 class BlockingFakeAKShare:
@@ -350,3 +411,213 @@ def test_market_tools_return_json(monkeypatch) -> None:
     assert len(history.result["bars"]) == 1
     assert provider.quote_calls == 1
     assert provider.history_calls == 1
+
+
+def test_minute_normalizer_accepts_chinese_columns() -> None:
+    bars = normalize_minute_rows(
+        FakeFrame(
+            [
+                {
+                    "时间": "2026-04-27 09:35:00",
+                    "开盘": "10.0",
+                    "最高": "10.3",
+                    "最低": "9.9",
+                    "收盘": "10.2",
+                    "成交量": "500",
+                    "成交额": "5100",
+                }
+            ]
+        ),
+        symbol="1",
+        period="5",
+        adjust="qfq",
+        fetch_time="2026-04-27T08:00:00+00:00",
+    )
+    assert bars[0]["symbol"] == "000001"
+    assert bars[0]["open"] == 10.0
+    assert bars[0]["close"] == 10.2
+    assert bars[0]["interval"] == "5m"
+    assert bars[0]["adjust"] == "qfq"
+    assert bars[0]["datetime"] == "2026-04-27 09:35:00"
+
+
+def test_announcement_normalizer_accepts_chinese_columns() -> None:
+    announcements = normalize_announcement_rows(
+        FakeFrame(
+            [
+                {
+                    "代码": "600000",
+                    "名称": "浦发银行",
+                    "公告标题": "浦发银行:2026年一季度报告",
+                    "公告类型": "一季度报告全文",
+                    "公告日期": "2026-04-30",
+                    "网址": "https://example.com/notice/1",
+                }
+            ]
+        ),
+        symbol="600000",
+        fetch_time="2026-04-27T08:00:00+00:00",
+    )
+    assert announcements[0]["symbol"] == "600000"
+    assert announcements[0]["name"] == "浦发银行"
+    assert announcements[0]["title"] == "浦发银行:2026年一季度报告"
+    assert announcements[0]["type"] == "一季度报告全文"
+    assert "raw_hash" in announcements[0]
+
+
+def test_minute_tool_returns_json(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+    executor = ToolExecutor(client.app.state.tool_registry)
+
+    import asyncio
+
+    result = asyncio.run(
+        executor.execute(
+            "market_minute",
+            (
+                '{"symbol": "600000", "start": "2026-04-27", '
+                '"end": "2026-04-27", "period": "5", '
+                '"allow_fetch_missing": true}'
+            ),
+        )
+    )
+    assert result.ok is True
+    assert result.result["symbol"] == "600000"
+    assert result.result["interval"] == "5m"
+    assert len(result.result["bars"]) == 2
+    assert provider.minute_calls == 1
+
+
+def test_announcement_tool_returns_json(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+    executor = ToolExecutor(client.app.state.tool_registry)
+
+    import asyncio
+
+    result = asyncio.run(
+        executor.execute(
+            "market_announcement",
+            (
+                '{"symbol": "600000", "start": "2026-04-01", '
+                '"end": "2026-05-01", "allow_fetch_missing": true}'
+            ),
+        )
+    )
+    assert result.ok is True
+    assert result.result["symbol"] == "600000"
+    assert len(result.result["announcements"]) == 2
+    assert result.result["announcements"][0]["published_at"] == "2026-04-30"
+    assert provider.announcement_calls == 1
+
+
+def test_announcement_cache_hit_and_dedup(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+    store = client.app.state.market_store
+
+    announcements = [
+        {
+            "symbol": "600000",
+            "name": "浦发银行",
+            "title": "公告A",
+            "type": "test",
+            "published_at": "2026-04-30",
+            "url": "https://example.com/a",
+            "source": "test",
+            "fetch_time": "2026-04-27T08:00:00+00:00",
+            "raw_hash": "abc123",
+        },
+        {
+            "symbol": "600000",
+            "name": "浦发银行",
+            "title": "公告B",
+            "type": "test",
+            "published_at": "2026-04-29",
+            "url": "https://example.com/b",
+            "source": "test",
+            "fetch_time": "2026-04-27T08:00:00+00:00",
+            "raw_hash": "def456",
+        },
+    ]
+
+    stats = store.insert_announcements(announcements)
+    assert stats == {"inserted": 2, "skipped": 0, "conflicted": 0}
+
+    stats = store.insert_announcements(announcements)
+    assert stats == {"inserted": 0, "skipped": 2, "conflicted": 0}
+
+    fetched = store.query_announcements(symbol="600000")
+    assert len(fetched) == 2
+    assert fetched[0]["published_at"] == "2026-04-30"
+
+    fetched_range = store.query_announcements(symbol="600000", start="2026-04-30", end="2026-04-30")
+    assert len(fetched_range) == 1
+    assert fetched_range[0]["title"] == "公告A"
+
+
+def test_minute_api_endpoint(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+
+    resp = client.get(
+        "/api/market/minute",
+        params={
+            "symbol": "600000",
+            "start": "2026-04-27",
+            "end": "2026-04-27",
+            "period": "5",
+            "allow_fetch_missing": "true",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["symbol"] == "600000"
+    assert data["interval"] == "5m"
+    assert len(data["bars"]) == 2
+    assert provider.minute_calls == 1
+
+
+def test_announcement_api_endpoint(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+
+    resp = client.get(
+        "/api/market/announcement",
+        params={
+            "symbol": "600000",
+            "start": "2026-04-01",
+            "end": "2026-05-01",
+            "allow_fetch_missing": "true",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["symbol"] == "600000"
+    assert len(data["announcements"]) == 2
+    assert provider.announcement_calls == 1
+
+
+def test_minute_rejects_invalid_period(monkeypatch) -> None:
+    client, _ = make_client(monkeypatch)
+
+    resp = client.get(
+        "/api/market/minute",
+        params={
+            "symbol": "600000",
+            "start": "2026-04-27",
+            "end": "2026-04-27",
+            "period": "99",
+        },
+    )
+    assert resp.status_code == 400
+    assert "Unsupported period" in resp.json()["detail"]
+
+
+def test_minute_requires_start_and_end(monkeypatch) -> None:
+    client, _ = make_client(monkeypatch)
+    executor = ToolExecutor(client.app.state.tool_registry)
+
+    import asyncio
+
+    result = asyncio.run(
+        executor.execute("market_minute", '{"symbol": "600000"}')
+    )
+    assert result.ok is False
+    assert "start" in (result.error or "").lower()
