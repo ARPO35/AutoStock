@@ -11,7 +11,7 @@ import { useTradeStore } from "@/stores/tradeStore";
 import { useUIStore } from "@/stores/uiStore";
 import { EmptyState } from "@/components/ui/Shared";
 import { normalizeStatus, formatMoney } from "@/lib/utils";
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 
 export function AccountSessionSidebar() {
   const accounts = useDataStore((s) => s.accounts);
@@ -21,8 +21,6 @@ export function AccountSessionSidebar() {
   const leftCollapsed = useUIStore((s) => s.leftCollapsed);
   const setLeftCollapsed = useUIStore((s) => s.setLeftCollapsed);
 
-  const [sessionName, setSessionName] = useState("");
-  const [sessionAccountId, setSessionAccountId] = useState("");
   const createSession = useDataStore((s) => s.createSession);
   const deleteSession = useDataStore((s) => s.deleteSession);
 
@@ -39,18 +37,6 @@ export function AccountSessionSidebar() {
         }))
     }));
   }, [accounts, sessions]);
-
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!sessionAccountId || !sessionName.trim()) return;
-    try {
-      const created = await createSession({ name: sessionName.trim(), simulator_account_id: sessionAccountId });
-      setSelectedSessionId(created.id as string);
-      setSessionName("");
-    } catch {
-      // handled by store
-    }
-  };
 
   if (leftCollapsed) {
     return (
@@ -102,35 +88,6 @@ export function AccountSessionSidebar() {
         />
       </div>
 
-      {/* Create Session */}
-      <form className="grid grid-cols-[1fr_1fr_36px] gap-2" onSubmit={handleCreate}>
-        <select
-          className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-sm"
-          value={sessionAccountId}
-          onChange={(e) => setSessionAccountId(e.target.value)}
-          disabled={accounts.length === 0}
-        >
-          <option value="">选择账户</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-        <input
-          className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-sm placeholder:text-text-muted"
-          value={sessionName}
-          onChange={(e) => setSessionName(e.target.value)}
-          placeholder="Session 名称"
-        />
-        <button
-          className="h-8 w-8 grid place-items-center rounded-lg bg-brand-primary/20 border border-brand-primary/30 text-brand-primary hover:bg-brand-primary/30 disabled:opacity-40"
-          type="submit"
-          disabled={!sessionAccountId || !sessionName.trim()}
-          title="新建 Session"
-        >
-          <Plus size={15} />
-        </button>
-      </form>
-
       {/* Account Tree */}
       <div className="flex-1 min-h-0 overflow-auto">
         {grouped.length === 0 ? (
@@ -143,7 +100,23 @@ export function AccountSessionSidebar() {
                   <Wallet size={14} />
                   {account.name}
                 </span>
-                <span className="text-text-muted text-xs">{account.sessions.length} 会话</span>
+                <span className="inline-flex items-center gap-1.5 text-text-muted text-xs">
+                  {account.sessions.length} 会话
+                  <button
+                    type="button"
+                    className="grid place-items-center w-5 h-5 rounded border border-hairline text-text-muted hover:text-brand-primary hover:border-brand-primary/30 transition-colors"
+                    title="新建 Session"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const created = await createSession({ name: "新会话", llm_account_id: account.id });
+                        setSelectedSessionId(created.id as string);
+                      } catch { /* store 处理 */ }
+                    }}
+                  >
+                    <Plus size={11} />
+                  </button>
+                </span>
               </summary>
               <div className="text-text-muted text-[11px] my-1.5">
                 初始 {formatMoney(account.initial_cash)}

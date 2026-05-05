@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   RefreshCw,
   Pause,
@@ -8,7 +8,8 @@ import {
   MessageSquare,
   History,
   Wallet,
-  Activity
+  Activity,
+  Trash2
 } from "lucide-react";
 import { useDataStore } from "@/stores/dataStore";
 import { useMarketStore } from "@/stores/marketStore";
@@ -253,6 +254,9 @@ function AccountDetailPanel({
   sessions: import("@/api").Session[];
   providers: import("@/api").Provider[];
 }) {
+  const deleteSession = useDataStore((s) => s.deleteSession);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const providerName = useMemo(
     () => {
       const map = new Map(providers.map((p) => [p.id, p.name]));
@@ -332,7 +336,7 @@ function AccountDetailPanel({
       </section>
 
       {/* Session table */}
-      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+      <section className="relative border border-hairline rounded-xl bg-surface-card p-4">
         <PanelHeader icon={<MessageSquare size={16} />} title="Session 列表" />
         {sessions.length === 0 ? (
           <EmptyState
@@ -350,11 +354,12 @@ function AccountDetailPanel({
                   <th className="pb-2 font-medium">Provider</th>
                   <th className="pb-2 font-medium">状态</th>
                   <th className="pb-2 font-medium">更新时间</th>
+                  <th className="pb-2 font-medium w-12">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {sessionRows.map((row) => (
-                  <tr key={row.id} className="border-b border-hairline/50">
+                  <tr key={row.id} className="border-b border-hairline/50 group">
                     <td className="py-2 text-text-on-dark">{row.name}</td>
                     <td className="py-2 text-text-muted">{row.accountName}</td>
                     <td className="py-2 text-text-muted">{row.model}</td>
@@ -365,10 +370,52 @@ function AccountDetailPanel({
                     <td className="py-2 text-text-muted">
                       {humanTime(row.lastRunAt)}
                     </td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-trading-rise"
+                        title="删除 Session"
+                        onClick={() => setConfirmDeleteId(row.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 删除确认弹窗 */}
+        {confirmDeleteId && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-canvas/80 backdrop-blur-sm">
+            <div className="w-[260px] rounded-xl border border-hairline bg-surface-card p-4 shadow-lg">
+              <p className="text-sm text-text-on-dark mb-1 font-semibold">确认删除</p>
+              <p className="text-xs text-text-muted mb-4">确定要删除此 Session 吗？关联消息和执行记录将被一并清理。</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  className="px-3 py-1.5 text-xs rounded-lg border border-hairline text-text-muted hover:text-text-on-dark hover:bg-surface-elevated transition-colors"
+                  type="button"
+                  onClick={() => setConfirmDeleteId(null)}
+                >
+                  取消
+                </button>
+                <button
+                  className="px-3 py-1.5 text-xs rounded-lg bg-trading-rise text-white hover:bg-trading-rise/80 transition-colors"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmDeleteId) return;
+                    try {
+                      await deleteSession(confirmDeleteId);
+                    } catch { /* store 处理 */ }
+                    setConfirmDeleteId(null);
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </section>

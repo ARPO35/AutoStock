@@ -14,6 +14,8 @@ interface UIState {
   leftCollapsed: boolean;
   inspectorWidth: number;
   error: string | null;
+  systemProviderId: string | null;
+  systemModel: string | null;
 
   setRoute: (route: RouteKey) => void;
   setViewTab: (tab: string) => void;
@@ -23,6 +25,8 @@ interface UIState {
   setLeftCollapsed: (value: boolean) => void;
   setInspectorWidth: (value: number) => void;
   setError: (error: string | null) => void;
+  setSystemProviderId: (id: string | null) => void;
+  setSystemModel: (model: string | null) => void;
 }
 
 function routeFromPath(pathname: string): RouteKey {
@@ -42,6 +46,8 @@ export const useUIStore = create<UIState>((set) => ({
     return Number.isFinite(stored) && stored >= 420 ? stored : 460;
   })(),
   error: null,
+  systemProviderId: (() => window.localStorage.getItem("autostock.systemProviderId") || null)(),
+  systemModel: (() => window.localStorage.getItem("autostock.systemModel") || null)(),
 
   setRoute: (route) => set({ route }),
   setViewTab: (viewTab) => set({ viewTab }),
@@ -53,7 +59,17 @@ export const useUIStore = create<UIState>((set) => ({
     set({ inspectorWidth: value });
     window.localStorage.setItem("autostock.inspectorWidth", String(value));
   },
-  setError: (error) => set({ error })
+  setError: (error) => set({ error }),
+  setSystemProviderId: (id) => {
+    set({ systemProviderId: id });
+    if (id) window.localStorage.setItem("autostock.systemProviderId", id);
+    else window.localStorage.removeItem("autostock.systemProviderId");
+  },
+  setSystemModel: (model) => {
+    set({ systemModel: model });
+    if (model) window.localStorage.setItem("autostock.systemModel", model);
+    else window.localStorage.removeItem("autostock.systemModel");
+  }
 }));
 
 export { viewTabs, editTabs, manageSections };

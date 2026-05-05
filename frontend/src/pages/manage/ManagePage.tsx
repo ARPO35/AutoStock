@@ -75,7 +75,13 @@ export function ManagePage() {
         }
       />
 
-      <div className="grid grid-cols-[190px_1fr_360px] gap-3 min-h-0 flex-1 overflow-hidden">
+      <div
+        className={`grid gap-3 min-h-0 flex-1 overflow-hidden ${
+          manageSection === "Tools"
+            ? "grid-cols-[190px_1fr_360px]"
+            : "grid-cols-[190px_1fr]"
+        }`}
+      >
         {/* Left Sidebar */}
         <aside className="border border-hairline rounded-xl bg-surface-card p-2 min-h-0 overflow-auto">
           {manageSections.map((section) => (
@@ -103,39 +109,41 @@ export function ManagePage() {
           {manageSection === "数据管理" && <DataManagement />}
           {manageSection === "Skills" && <SkillsPlaceholder />}
           {manageSection === "触发器" && <TriggersPlaceholder />}
-          {manageSection === "系统设置" && <SystemPlaceholder />}
+          {manageSection === "系统设置" && <SystemSettings />}
         </section>
 
-        {/* Right Tool Catalog */}
-        <aside className="border border-hairline rounded-xl bg-surface-card p-3 min-h-0 overflow-auto">
-          <PanelHeader icon={<Wrench size={16} />} title="Tools（工具目录）" />
-          {tools.length === 0 ? (
-            <EmptyState
-              title="暂无工具"
-              description="后端 /api/tools 未返回工具。"
-            />
-          ) : (
-            <div className="grid gap-1 mt-2">
-              {tools.map((tool) => (
-                <div
-                  key={tool.name}
-                  className="px-3 py-2 rounded-lg border border-hairline bg-surface-canvas/50 text-sm cursor-pointer hover:border-brand-primary/30 hover:bg-brand-primary/5 transition-colors"
-                  onClick={() => {
-                    setManageSection("Tools");
-                    setSelectedTool(tool.name);
-                  }}
-                >
-                  <strong className="block text-text-on-dark text-xs">
-                    {tool.display_name || tool.name}
-                  </strong>
-                  <small className="text-text-muted text-xs truncate block">
-                    {tool.description}
-                  </small>
-                </div>
-              ))}
-            </div>
-          )}
-        </aside>
+        {/* Right Tool Catalog — only visible when Tools section is active */}
+        {manageSection === "Tools" && (
+          <aside className="border border-hairline rounded-xl bg-surface-card p-3 min-h-0 overflow-auto">
+            <PanelHeader icon={<Wrench size={16} />} title="Tools（工具目录）" />
+            {tools.length === 0 ? (
+              <EmptyState
+                title="暂无工具"
+                description="后端 /api/tools 未返回工具。"
+              />
+            ) : (
+              <div className="grid gap-1 mt-2">
+                {tools.map((tool) => (
+                  <div
+                    key={tool.name}
+                    className="px-3 py-2 rounded-lg border border-hairline bg-surface-canvas/50 text-sm cursor-pointer hover:border-brand-primary/30 hover:bg-brand-primary/5 transition-colors"
+                    onClick={() => {
+                      setManageSection("Tools");
+                      setSelectedTool(tool.name);
+                    }}
+                  >
+                    <strong className="block text-text-on-dark text-xs">
+                      {tool.display_name || tool.name}
+                    </strong>
+                    <small className="text-text-muted text-xs truncate block">
+                      {tool.description}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
     </section>
   );
@@ -1151,13 +1159,99 @@ function TriggersPlaceholder() {
   );
 }
 
-function SystemPlaceholder() {
+function SystemSettings() {
+  const providers = useDataStore((s) => s.providers);
+  const systemProviderId = useUIStore((s) => s.systemProviderId);
+  const systemModel = useUIStore((s) => s.systemModel);
+  const setSystemProviderId = useUIStore((s) => s.setSystemProviderId);
+  const setSystemModel = useUIStore((s) => s.setSystemModel);
+
+  const [providerId, setProviderId] = useState(systemProviderId ?? "");
+  const [model, setModel] = useState(systemModel ?? "");
+  const [models, setModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!providerId) {
+      setModels([]);
+      setModel("");
+      return;
+    }
+    let cancelled = false;
+    setLoadingModels(true);
+    api
+      .providerModels(providerId)
+      .then((res) => {
+        if (!cancelled) {
+          setModels(res.models);
+          if (model && !res.models.includes(model)) setModel("");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingModels(false);
+      });
+    return () => { cancelled = true; };
+  }, [providerId]);
+
+  const handleSave = (e: FormEvent) => {
+    e.preventDefault();
+    setSystemProviderId(providerId || null);
+    setSystemModel(model || null);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <section>
       <PanelHeader icon={<Settings size={16} />} title="系统设置" />
+      <div className="mt-3 p-4 border border-hairline rounded-lg">
+        <form className="grid gap-3" onSubmit={handleSave}>
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            系统模型 Provider
+            <Select
+              value={providerId}
+              onChange={(e) => {
+                setProviderId(e.target.value);
+                setModel("");
+              }}
+            >
+              <option value="">不指定</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </Select>
+          </label>
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            系统模型
+            <Select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={!providerId || loadingModels}
+            >
+              <option value="">
+                {loadingModels ? "加载中..." : providerId ? "选择模型" : "请先选择 Provider"}
+              </option>
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </Select>
+          </label>
+          <div className="flex gap-2 items-center">
+            <Button variant="primary" type="submit">
+              {saved ? "已保存" : "保存设置"}
+            </Button>
+            {saved && <CheckCircle2 size={14} className="text-trading-fall" />}
+          </div>
+        </form>
+      </div>
+
       <div className="mt-3 p-4 border border-hairline rounded-lg bg-surface-canvas/30">
         <p className="text-text-muted text-xs mb-4">
-          后端尚未提供系统设置读写接口。以下为前端预留表单示意：
+          以下设置依赖后端 API，当前为占位示意：
         </p>
         <form className="grid gap-3" onSubmit={(e) => e.preventDefault()}>
           <label className="grid gap-1.5 text-xs text-text-muted">
@@ -1196,7 +1290,7 @@ function SystemPlaceholder() {
         </form>
       </div>
       <EmptyState
-        title="等待后端接入"
+        title="后端接入后可启用完整设置"
         description="系统设置读写、日志查询、数据备份、全局参数配置等能力依赖后端 API。"
       />
     </section>
