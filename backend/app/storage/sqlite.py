@@ -355,4 +355,50 @@ CREATE TABLE IF NOT EXISTS chat_tool_results (
     result_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tavily_config (
+    id TEXT PRIMARY KEY,
+    api_key TEXT NOT NULL DEFAULT '',
+    default_search_depth TEXT NOT NULL DEFAULT 'basic',
+    default_topic TEXT NOT NULL DEFAULT 'finance',
+    default_max_results INTEGER NOT NULL DEFAULT 5,
+    cache_ttl_seconds INTEGER NOT NULL DEFAULT 1800,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tavily_cache (
+    cache_key TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,
+    arguments_json TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavily_cache_operation
+    ON tavily_cache(operation, created_at);
+
+CREATE TABLE IF NOT EXISTS tavily_usage_records (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    run_id TEXT,
+    tool_call_id TEXT,
+    operation TEXT NOT NULL,
+    cache_hit INTEGER NOT NULL DEFAULT 0,
+    request_json TEXT NOT NULL,
+    response_json TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    latency_ms REAL,
+    result_count INTEGER NOT NULL DEFAULT 0,
+    credits_estimated REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tavily_usage_created
+    ON tavily_usage_records(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_tavily_usage_session
+    ON tavily_usage_records(session_id, created_at);
 """

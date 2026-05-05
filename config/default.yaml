@@ -3,5 +3,9 @@ data_dir: data
 sqlite_path: data/app.db
 market_duckdb_path: data/market.duckdb
 frontend_dist_path: frontend_dist
+tavily_default_search_depth: basic
+tavily_default_topic: finance
+tavily_default_max_results: 5
+tavily_cache_ttl_seconds: 1800
 cors_origins:
   - http://localhost:5173

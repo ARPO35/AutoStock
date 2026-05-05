@@ -13,6 +13,11 @@ class Settings:
     frontend_dist_path: str = "frontend_dist"
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:5173"])
     simulator_enforce_trading_hours: bool = True
+    tavily_api_key: str = ""
+    tavily_default_search_depth: str = "basic"
+    tavily_default_topic: str = "finance"
+    tavily_default_max_results: int = 5
+    tavily_cache_ttl_seconds: int = 1800
 
 
 @lru_cache
@@ -35,4 +40,19 @@ def get_settings() -> Settings:
             else ["http://localhost:5173"]
         ),
         simulator_enforce_trading_hours=simulator_enforce_trading_hours,
+        tavily_api_key=os.getenv("AUTOSTOCK_TAVILY_API_KEY", ""),
+        tavily_default_search_depth=os.getenv("AUTOSTOCK_TAVILY_DEFAULT_SEARCH_DEPTH", "basic"),
+        tavily_default_topic=os.getenv("AUTOSTOCK_TAVILY_DEFAULT_TOPIC", "finance"),
+        tavily_default_max_results=_int_env("AUTOSTOCK_TAVILY_DEFAULT_MAX_RESULTS", 5),
+        tavily_cache_ttl_seconds=_int_env("AUTOSTOCK_TAVILY_CACHE_TTL_SECONDS", 1800),
     )
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
