@@ -1770,7 +1770,30 @@ LLM 可以通过 tool call 卖出
 
 ---
 
-## 阶段 4：Skill 管理 ← 未实现
+## 阶段 4：Tavily 搜索 ← 未实现
+
+目标：让 LLM 能搜索实时网页信息。
+
+任务：
+
+- Tavily 配置页。
+- `tavily.search`。
+- `tavily.extract`。
+- 搜索结果缓存。
+- 搜索结果写入日志。
+- Tavily 成本 / 调用次数记录。
+
+验收：
+
+```text
+LLM 可以调用 tavily.search
+LLM 可以基于搜索结果继续调用 tavily.extract
+搜索过程显示在 Chat 中
+```
+
+---
+
+## 阶段 5：Skill 管理 ← 未实现
 
 目标：让用户通过 WebUI 上传和编辑 skill。
 
@@ -1797,7 +1820,7 @@ LLM 运行时加载对应 skill
 
 ---
 
-## 阶段 5：定时触发器 ← 未实现
+## 阶段 6：定时触发器 ← 未实现
 
 目标：让 Session 支持带 prompt 的定时事件。
 
@@ -1820,29 +1843,6 @@ LLM 运行时加载对应 skill
 到时间后自动向 Session 注入事件消息
 LLM 自动运行并调用工具
 完整过程显示在 WebChat 中
-```
-
----
-
-## 阶段 6：Tavily 搜索 ← 未实现
-
-目标：让 LLM 能搜索实时网页信息。
-
-任务：
-
-- Tavily 配置页。
-- `tavily.search`。
-- `tavily.extract`。
-- 搜索结果缓存。
-- 搜索结果写入日志。
-- Tavily 成本 / 调用次数记录。
-
-验收：
-
-```text
-LLM 可以调用 tavily.search
-LLM 可以基于搜索结果继续调用 tavily.extract
-搜索过程显示在 Chat 中
 ```
 
 ---
