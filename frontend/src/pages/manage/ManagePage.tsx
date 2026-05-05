@@ -78,7 +78,7 @@ export function ManagePage() {
       <div
         className={`grid gap-3 min-h-0 flex-1 overflow-hidden ${
           manageSection === "Tools"
-            ? "grid-cols-[190px_1fr_360px]"
+            ? "grid-cols-[190px_1fr_1fr]"
             : "grid-cols-[190px_1fr]"
         }`}
       >
