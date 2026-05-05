@@ -76,6 +76,35 @@ def normalize_spot_rows(
     return result
 
 
+def normalize_bid_ask_quote(
+    rows: Any,
+    symbol: str,
+    source: str = "akshare.stock_bid_ask_em",
+    fetch_time: str | None = None,
+) -> dict[str, Any]:
+    fetched_at = fetch_time or utc_now()
+    values = {
+        _text(row.get("item")): row.get("value")
+        for row in _records(rows)
+        if _text(row.get("item")) is not None
+    }
+    quote = {
+        "symbol": normalize_symbol(symbol),
+        "name": None,
+        "price": _number(values.get("最新")),
+        "open": _number(values.get("今开")),
+        "high": _number(values.get("最高")),
+        "low": _number(values.get("最低")),
+        "previous_close": _number(values.get("昨收")),
+        "volume": _number(values.get("总手")),
+        "amount": _number(values.get("金额")),
+        "source": source,
+        "fetch_time": fetched_at,
+    }
+    quote["raw_hash"] = raw_hash(quote)
+    return quote
+
+
 def raw_hash(payload: dict[str, Any]) -> str:
     stable = {
         key: value

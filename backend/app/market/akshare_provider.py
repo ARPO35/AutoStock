@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
-from app.market.normalizer import normalize_history_rows, normalize_spot_rows, normalize_symbol
+from app.market.normalizer import normalize_bid_ask_quote, normalize_history_rows, normalize_symbol
 
 
 class AKShareMarketProvider:
@@ -15,13 +16,24 @@ class AKShareMarketProvider:
 
     def quote_sync(self, symbol: str) -> dict[str, Any]:
         ak = self._akshare()
-        frame = ak.stock_zh_a_spot_em()
-        quotes = normalize_spot_rows(frame)
         normalized_symbol = normalize_symbol(symbol)
-        for quote in quotes:
-            if quote["symbol"] == normalized_symbol:
-                return quote
-        raise LookupError(f"Symbol not found in AKShare spot data: {normalized_symbol}")
+        frame = ak.stock_bid_ask_em(symbol=normalized_symbol)
+        quote = normalize_bid_ask_quote(frame, symbol=normalized_symbol)
+        if quote["price"] is None:
+            raise LookupError(f"Symbol not found in AKShare quote data: {normalized_symbol}")
+        return quote
+
+    async def quotes_batch(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        unique_symbols = list(dict.fromkeys(normalize_symbol(symbol) for symbol in symbols))
+        results = await asyncio.gather(
+            *(self.quote(symbol) for symbol in unique_symbols),
+            return_exceptions=True,
+        )
+        return {
+            symbol: quote
+            for symbol, quote in zip(unique_symbols, results, strict=False)
+            if isinstance(quote, dict)
+        }
 
     async def history(
         self,

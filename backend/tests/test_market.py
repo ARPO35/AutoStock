@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.main import create_app
 from app.market.akshare_provider import AKShareMarketProvider
-from app.market.normalizer import normalize_history_rows, normalize_spot_rows
+from app.market.normalizer import normalize_bid_ask_quote, normalize_history_rows, normalize_spot_rows
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
 
@@ -98,6 +98,32 @@ class BlockingFakeAKShare:
         )
 
 
+class SingleQuoteFakeAKShare:
+    def __init__(self) -> None:
+        self.bid_ask_calls: list[str] = []
+        self.spot_calls = 0
+
+    def stock_bid_ask_em(self, symbol):
+        self.bid_ask_calls.append(symbol)
+        if symbol == "000002":
+            raise RuntimeError("quote unavailable")
+        return FakeFrame(
+            [
+                {"item": "最新", "value": "10.8"},
+                {"item": "今开", "value": "10.1"},
+                {"item": "最高", "value": "10.9"},
+                {"item": "最低", "value": "10.0"},
+                {"item": "昨收", "value": "10.2"},
+                {"item": "总手", "value": "2000"},
+                {"item": "金额", "value": "21600"},
+            ]
+        )
+
+    def stock_zh_a_spot_em(self):
+        self.spot_calls += 1
+        raise AssertionError("market_quote must not fetch full-market spot data")
+
+
 class BlockingCacheStatusStore(MarketDuckDBStore):
     def __init__(self, release_event: threading.Event) -> None:
         super().__init__(":memory:")
@@ -175,6 +201,28 @@ def test_normalizers_accept_chinese_columns() -> None:
     assert quotes[0]["name"] == "浦发银行"
     assert quotes[0]["price"] == 10.8
 
+    quote = normalize_bid_ask_quote(
+        FakeFrame(
+            [
+                {"item": "最新", "value": "10.8"},
+                {"item": "今开", "value": "10.1"},
+                {"item": "最高", "value": "10.9"},
+                {"item": "最低", "value": "10.0"},
+                {"item": "昨收", "value": "10.2"},
+                {"item": "总手", "value": "2,000"},
+                {"item": "金额", "value": "21,600"},
+            ]
+        ),
+        symbol="600000",
+        fetch_time="2026-04-27T09:35:00+00:00",
+    )
+    assert quote["symbol"] == "600000"
+    assert quote["price"] == 10.8
+    assert quote["previous_close"] == 10.2
+    assert quote["volume"] == 2000.0
+    assert quote["amount"] == 21600.0
+    assert quote["source"] == "akshare.stock_bid_ask_em"
+
 
 def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
     provider = AKShareMarketProvider()
@@ -199,6 +247,32 @@ def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
 
     assert fake_ak.timed_out is False
     assert history[0]["symbol"] == "600000"
+
+
+def test_akshare_quote_uses_single_symbol_lookup(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = SingleQuoteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    quote = asyncio.run(provider.quote("600000"))
+
+    assert quote["symbol"] == "600000"
+    assert quote["price"] == 10.8
+    assert fake_ak.bid_ask_calls == ["600000"]
+    assert fake_ak.spot_calls == 0
+
+
+def test_akshare_quotes_batch_skips_failed_symbols(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = SingleQuoteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    quotes = asyncio.run(provider.quotes_batch(["600000", "000002", "600000"]))
+
+    assert list(quotes) == ["600000"]
+    assert quotes["600000"]["price"] == 10.8
+    assert fake_ak.bid_ask_calls.count("600000") == 1
+    assert fake_ak.bid_ask_calls.count("000002") == 1
 
 
 def test_market_store_async_methods_do_not_block_event_loop() -> None:
