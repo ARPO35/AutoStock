@@ -187,6 +187,46 @@ export interface ProviderUsageResponse {
   model: string;
 }
 
+export interface TavilyConfig {
+  configured: boolean;
+  api_key_masked: string | null;
+  default_search_depth: "basic" | "advanced";
+  default_topic: "general" | "news" | "finance";
+  default_max_results: number;
+  cache_ttl_seconds: number;
+  updated_at: string | null;
+}
+
+export interface TavilyUsageRecord {
+  id: string;
+  session_id: string | null;
+  run_id: string | null;
+  tool_call_id: string | null;
+  operation: string;
+  cache_hit: number;
+  status: string;
+  error: string | null;
+  latency_ms: number | null;
+  result_count: number;
+  credits_estimated: number;
+  created_at: string;
+}
+
+export interface TavilyUsageResponse {
+  total_calls: number;
+  cache_hits: number;
+  credits_estimated: number;
+  recent: TavilyUsageRecord[];
+}
+
+export interface TavilyTestResponse {
+  ok: boolean;
+  result_count: number;
+  credits_estimated: number;
+  latency_ms: number | null;
+  error: string | null;
+}
+
 export interface StopRunResponse {
   status: "cancelled" | "not_running";
   run_id: string | null;
@@ -333,6 +373,17 @@ export const api = {
     }),
   providerUsage: (providerId: string) =>
     request<ProviderUsageResponse>(`/api/providers/${providerId}/usage`),
+  tavilyConfig: () => request<TavilyConfig>("/api/tavily/config"),
+  updateTavilyConfig: (payload: Record<string, unknown>) =>
+    request<TavilyConfig>("/api/tavily/config", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  tavilyUsage: () => request<TavilyUsageResponse>("/api/tavily/usage"),
+  testTavily: () =>
+    request<TavilyTestResponse>("/api/tavily/test", {
+      method: "POST"
+    }),
   // --- Session 管理 ---
   deleteSession: (sessionId: string) =>
     request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" })

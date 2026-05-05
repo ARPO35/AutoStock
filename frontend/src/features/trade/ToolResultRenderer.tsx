@@ -51,6 +51,10 @@ export function ToolResultRenderer({
     return <PortfolioStateRenderer data={payload.data} />;
   }
 
+  if (payload.kind === "tavily") {
+    return <TavilySearchRenderer data={payload.data} />;
+  }
+
   const name = (toolName ?? "").toLowerCase();
 
   if (name === "tavily_search" || name.includes("tavily")) {

@@ -60,6 +60,7 @@ export type ToolResultPayload =
   | { kind: "portfolio-positions"; data: Record<string, unknown> }
   | { kind: "portfolio-orders"; data: Record<string, unknown> }
   | { kind: "portfolio-trades"; data: Record<string, unknown> }
+  | { kind: "tavily"; data: Record<string, unknown> }
   | { kind: "json"; title: string; data: Record<string, unknown> };
 
 export interface ProviderCard {

@@ -13,9 +13,10 @@ import {
   Plus,
   Trash2,
   Plug,
-  Zap
+  Zap,
+  Search
 } from "lucide-react";
-import type { ToolSchema, DataConflict, CacheStatusRow, ProviderModelsResponse, ProviderChatTestResponse, ProviderUsageResponse } from "@/api";
+import type { ToolSchema, DataConflict, CacheStatusRow, ProviderModelsResponse, ProviderChatTestResponse, ProviderUsageResponse, TavilyConfig, TavilyUsageResponse, TavilyTestResponse } from "@/api";
 import { api } from "@/api";
 import { useDataStore } from "@/stores/dataStore";
 import { useMarketStore } from "@/stores/marketStore";
@@ -105,6 +106,7 @@ export function ManagePage() {
         <section className="border border-hairline rounded-xl bg-surface-card p-4 min-h-0 overflow-auto">
           {manageSection === "模型与API" && <ProviderManagement />}
           {manageSection === "提示词" && <PromptManagement />}
+          {manageSection === "Tavily" && <TavilyManagement />}
           {manageSection === "Tools" && <ToolManagement />}
           {manageSection === "数据管理" && <DataManagement />}
           {manageSection === "Skills" && <SkillsPlaceholder />}
@@ -680,6 +682,232 @@ function EditableRow({
         双击编辑
       </span>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TavilyManagement                                                  */
+/* ------------------------------------------------------------------ */
+
+const defaultTavilyForm = {
+  api_key: "",
+  default_search_depth: "basic",
+  default_topic: "finance",
+  default_max_results: "5",
+  cache_ttl_seconds: "1800"
+};
+
+function TavilyManagement() {
+  const [config, setConfig] = useState<TavilyConfig | null>(null);
+  const [usage, setUsage] = useState<TavilyUsageResponse | null>(null);
+  const [form, setForm] = useState({ ...defaultTavilyForm });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TavilyTestResponse | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [loadedConfig, loadedUsage] = await Promise.all([
+        api.tavilyConfig(),
+        api.tavilyUsage()
+      ]);
+      setConfig(loadedConfig);
+      setUsage(loadedUsage);
+      setForm({
+        api_key: "",
+        default_search_depth: loadedConfig.default_search_depth,
+        default_topic: loadedConfig.default_topic,
+        default_max_results: String(loadedConfig.default_max_results),
+        cache_ttl_seconds: String(loadedConfig.cache_ttl_seconds)
+      });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载 Tavily 配置失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleSave = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        default_search_depth: form.default_search_depth,
+        default_topic: form.default_topic,
+        default_max_results: Number(form.default_max_results),
+        cache_ttl_seconds: Number(form.cache_ttl_seconds)
+      };
+      if (form.api_key.trim()) payload.api_key = form.api_key.trim();
+      const saved = await api.updateTavilyConfig(payload);
+      setConfig(saved);
+      setForm((current) => ({ ...current, api_key: "" }));
+      setStatus("已保存");
+      setTimeout(() => setStatus(null), 1800);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存 Tavily 配置失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api.testTavily();
+      setTestResult(result);
+      const loadedUsage = await api.tavilyUsage();
+      setUsage(loadedUsage);
+      setError(result.ok ? null : result.error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Tavily 测试失败");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <section className="grid gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <PanelHeader icon={<Search size={16} />} title="Tavily 搜索配置" />
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<RefreshCw size={14} />}
+          onClick={() => void load()}
+        >
+          刷新
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-trading-rise/40 bg-trading-rise/10 px-3 py-2 text-xs text-trading-rise">
+          {error}
+        </div>
+      )}
+
+      <form className="grid gap-3 rounded-lg border border-hairline bg-surface-canvas/35 p-3" onSubmit={handleSave}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <Input
+            label={config?.configured ? `API Key（${config.api_key_masked ?? "已配置"}）` : "API Key"}
+            value={form.api_key}
+            onChange={(event) => setForm({ ...form, api_key: event.target.value })}
+            placeholder={config?.configured ? "留空则保留现有 Key" : "输入 Tavily API Key"}
+          />
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            搜索深度
+            <Select
+              value={form.default_search_depth}
+              onChange={(event) => setForm({ ...form, default_search_depth: event.target.value })}
+            >
+              <option value="basic">basic（1 credit）</option>
+              <option value="advanced">advanced（2 credits）</option>
+            </Select>
+          </label>
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            默认主题
+            <Select
+              value={form.default_topic}
+              onChange={(event) => setForm({ ...form, default_topic: event.target.value })}
+            >
+              <option value="finance">finance</option>
+              <option value="news">news</option>
+              <option value="general">general</option>
+            </Select>
+          </label>
+          <Input
+            label="最大结果数"
+            type="number"
+            min={1}
+            max={20}
+            value={form.default_max_results}
+            onChange={(event) => setForm({ ...form, default_max_results: event.target.value })}
+          />
+          <Input
+            label="缓存 TTL（秒）"
+            type="number"
+            min={0}
+            max={604800}
+            value={form.cache_ttl_seconds}
+            onChange={(event) => setForm({ ...form, cache_ttl_seconds: event.target.value })}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary" type="submit" disabled={saving || loading}>
+            {saving ? "保存中" : "保存配置"}
+          </Button>
+          <Button
+            variant="secondary"
+            type="button"
+            icon={<Search size={14} />}
+            onClick={() => void handleTest()}
+            disabled={testing || !config?.configured}
+          >
+            {testing ? "测试中" : "测试搜索"}
+          </Button>
+          {status && <span className="text-xs text-trading-fall">{status}</span>}
+          {testResult && (
+            <span className={`text-xs ${testResult.ok ? "text-trading-fall" : "text-trading-rise"}`}>
+              {testResult.ok
+                ? `测试成功：${testResult.result_count} 条 / ${testResult.credits_estimated} credit / ${testResult.latency_ms ?? "--"}ms`
+                : testResult.error}
+            </span>
+          )}
+        </div>
+      </form>
+
+      <section className="grid gap-3">
+        <PanelHeader icon={<Zap size={16} />} title="调用统计" />
+        <InfoGrid
+          items={[
+            ["总调用", String(usage?.total_calls ?? 0)],
+            ["缓存命中", String(usage?.cache_hits ?? 0)],
+            ["估算 Credits", String(usage?.credits_estimated ?? 0)],
+            ["配置更新时间", config?.updated_at ? humanTime(config.updated_at) : "--"]
+          ]}
+        />
+        {!usage || usage.recent.length === 0 ? (
+          <EmptyState title="暂无 Tavily 调用" description="LLM 调用 Tavily 工具后这里会显示最近记录。" />
+        ) : (
+          <div className="max-h-[260px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-text-muted text-xs border-b border-hairline">
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">时间</th>
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">操作</th>
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">状态</th>
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">结果</th>
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">Credits</th>
+                  <th className="pb-2 font-medium sticky top-0 bg-surface-card">缓存</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usage.recent.map((row) => (
+                  <tr key={row.id} className="border-b border-hairline/50">
+                    <td className="py-1.5 text-text-muted text-xs">{humanTime(row.created_at)}</td>
+                    <td className="py-1.5 text-text-on-dark text-xs">{row.operation}</td>
+                    <td className="py-1.5 text-text-muted text-xs">{row.status}</td>
+                    <td className="py-1.5 text-text-muted text-xs">{row.result_count}</td>
+                    <td className="py-1.5 text-text-muted text-xs">{row.credits_estimated}</td>
+                    <td className="py-1.5 text-text-muted text-xs">{row.cache_hit ? "命中" : "未命中"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </section>
   );
 }
 
@@ -1305,6 +1533,7 @@ function sectionIcon(section: string) {
   const size = 15;
   if (section === "模型与API") return <KeyRound size={size} />;
   if (section === "提示词") return <Code2 size={size} />;
+  if (section === "Tavily") return <Search size={size} />;
   if (section === "Skills") return <Bot size={size} />;
   if (section === "Tools") return <Wrench size={size} />;
   if (section === "触发器") return <Bell size={size} />;

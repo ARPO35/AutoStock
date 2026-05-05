@@ -94,6 +94,10 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   "portfolio.get_positions": "持仓查询",
   "portfolio.get_orders": "订单查询",
   "portfolio.get_trades": "成交查询",
+  "tavily.search": "Tavily 搜索",
+  "tavily.extract": "Tavily 抽取",
+  tavily_search: "Tavily 搜索",
+  tavily_extract: "Tavily 抽取",
 };
 
 export function toolDisplayName(name: string | null | undefined): string {
@@ -287,6 +291,9 @@ function classifyToolResult(
   }
   if (name === "portfolio_get_trades" || kind === "portfolio_trades") {
     return { kind: "portfolio-trades", data: result };
+  }
+  if (name.startsWith("tavily_") || kind.startsWith("tavily_")) {
+    return { kind: "tavily", data: result };
   }
   return { kind: "json", title: toolName ? `${toolName} 结果` : "工具结果", data: envelope };
 }
