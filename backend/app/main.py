@@ -20,6 +20,7 @@ from app.sessions.runtime import SessionRunManager
 from app.simulator.engine import SimulatorEngine
 from app.storage.duckdb import MarketDuckDBStore
 from app.storage.sqlite import SQLiteStore
+from app.tavily_service import TavilyService
 from app.tools.registry import create_default_registry
 
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.state.market_store = market_store
     app.state.market_provider = AKShareMarketProvider()
     app.state.websocket_manager = WebSocketManager()
+    app.state.tavily_service = TavilyService(store=app.state.store, settings=settings)
     app.state.simulator_engine = SimulatorEngine(
         store=app.state.store,
         market_provider=app.state.market_provider,
@@ -57,6 +59,7 @@ def create_app() -> FastAPI:
         market_store=app.state.market_store,
         market_provider=app.state.market_provider,
         simulator_engine=app.state.simulator_engine,
+        tavily_service=app.state.tavily_service,
     )
     app.state.run_manager = SessionRunManager(
         store=app.state.store,

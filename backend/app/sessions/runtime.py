@@ -301,6 +301,8 @@ class SessionRunManager:
                     call.arguments,
                     runtime_context={
                         "session_id": session_id,
+                        "run_id": run_id,
+                        "tool_call_id": tool_call_id,
                         "simulator_account_id": simulator_account_id,
                     },
                 )

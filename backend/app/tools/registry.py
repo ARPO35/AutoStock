@@ -66,6 +66,7 @@ def create_default_registry(
     market_store: Any | None = None,
     market_provider: Any | None = None,
     simulator_engine: Any | None = None,
+    tavily_service: Any | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
@@ -100,5 +101,10 @@ def create_default_registry(
         for spec in create_order_tool_specs(simulator_engine):
             registry.register(spec)
         for spec in create_portfolio_tool_specs(simulator_engine):
+            registry.register(spec)
+    if tavily_service is not None:
+        from app.tools.tavily_tools import create_tavily_tool_specs
+
+        for spec in create_tavily_tool_specs(tavily_service):
             registry.register(spec)
     return registry
