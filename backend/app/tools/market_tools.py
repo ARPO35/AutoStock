@@ -9,7 +9,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
     async def market_quote(arguments: dict[str, Any]) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
         quote = await market_provider.quote(symbol)
-        market_store.insert_quote(quote)
+        await market_store.insert_quote_async(quote)
         return quote
 
     async def market_history(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -20,7 +20,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         adjust = str(arguments.get("adjust") or "")
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
 
-        bars = market_store.query_history(
+        bars = await market_store.query_history_async(
             symbol=symbol,
             start=start,
             end=end,
@@ -38,8 +38,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 interval=interval,
                 adjust=adjust,
             )
-            fetch_stats = market_store.insert_bars(fetched)
-            bars = market_store.query_history(
+            fetch_stats = await market_store.insert_bars_async(fetched)
+            bars = await market_store.query_history_async(
                 symbol=symbol,
                 start=start,
                 end=end,
@@ -69,7 +69,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             interval=interval,
             adjust=adjust,
         )
-        stats = market_store.insert_bars(fetched)
+        stats = await market_store.insert_bars_async(fetched)
         return {
             "symbol": symbol,
             "interval": interval,

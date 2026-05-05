@@ -20,7 +20,13 @@ async def history(
     market_store=Depends(get_market_store),
     market_provider=Depends(get_market_provider),
 ) -> dict[str, object]:
-    bars = market_store.query_history(symbol=symbol, start=start, end=end, interval=interval, adjust=adjust)
+    bars = await market_store.query_history_async(
+        symbol=symbol,
+        start=start,
+        end=end,
+        interval=interval,
+        adjust=adjust,
+    )
     fetch_stats: dict[str, int] | None = None
 
     if not bars and allow_fetch_missing:
@@ -37,8 +43,8 @@ async def history(
                 interval=interval,
                 adjust=adjust,
             )
-            fetch_stats = market_store.insert_bars(fetched)
-            bars = market_store.query_history(
+            fetch_stats = await market_store.insert_bars_async(fetched)
+            bars = await market_store.query_history_async(
                 symbol=symbol,
                 start=start,
                 end=end,
@@ -68,7 +74,7 @@ async def quote(
 ) -> dict[str, object]:
     try:
         result = await market_provider.quote(symbol)
-        market_store.insert_quote(result)
+        await market_store.insert_quote_async(result)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:

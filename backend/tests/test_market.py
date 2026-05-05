@@ -98,6 +98,18 @@ class BlockingFakeAKShare:
         )
 
 
+class BlockingCacheStatusStore(MarketDuckDBStore):
+    def __init__(self, release_event: threading.Event) -> None:
+        super().__init__(":memory:")
+        self.release_event = release_event
+        self.timed_out = False
+
+    def cache_status(self, symbol=None, interval=None):
+        if not self.release_event.wait(timeout=0.2):
+            self.timed_out = True
+        return []
+
+
 def _test_dir() -> Path:
     path = Path("pytemp") / uuid4().hex
     path.mkdir(parents=True, exist_ok=True)
@@ -187,6 +199,26 @@ def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
 
     assert fake_ak.timed_out is False
     assert history[0]["symbol"] == "600000"
+
+
+def test_market_store_async_methods_do_not_block_event_loop() -> None:
+    release_event = threading.Event()
+    store = BlockingCacheStatusStore(release_event)
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.01)
+        release_event.set()
+
+    async def run() -> list[dict[str, object]]:
+        started = time.perf_counter()
+        status, _ = await asyncio.gather(store.cache_status_async(), release_soon())
+        assert time.perf_counter() - started < 0.15
+        return status
+
+    status = asyncio.run(run())
+
+    assert store.timed_out is False
+    assert status == []
 
 
 def test_fetch_history_api_and_cache_hit(monkeypatch) -> None:

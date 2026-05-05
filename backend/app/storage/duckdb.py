@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from starlette.concurrency import run_in_threadpool
+
 
 class MarketDuckDBStore:
     def __init__(self, path: str) -> None:
@@ -58,6 +60,9 @@ class MarketDuckDBStore:
                 raise
         return stats
 
+    async def insert_bars_async(self, bars: list[dict[str, Any]]) -> dict[str, int]:
+        return await run_in_threadpool(self.insert_bars, bars)
+
     def insert_quote(self, quote: dict[str, Any]) -> None:
         with self._lock:
             self.connection.execute(
@@ -86,6 +91,9 @@ class MarketDuckDBStore:
                 ],
             )
 
+    async def insert_quote_async(self, quote: dict[str, Any]) -> None:
+        await run_in_threadpool(self.insert_quote, quote)
+
     def query_history(
         self,
         symbol: str,
@@ -111,6 +119,23 @@ class MarketDuckDBStore:
         sql += " ORDER BY datetime ASC"
         return self._rows(sql, params)
 
+    async def query_history_async(
+        self,
+        symbol: str,
+        start: str | None = None,
+        end: str | None = None,
+        interval: str = "daily",
+        adjust: str = "",
+    ) -> list[dict[str, Any]]:
+        return await run_in_threadpool(
+            self.query_history,
+            symbol,
+            start,
+            end,
+            interval,
+            adjust,
+        )
+
     def cache_status(
         self,
         symbol: str | None = None,
@@ -127,6 +152,13 @@ class MarketDuckDBStore:
         sql += " ORDER BY symbol, interval, adjust"
         return self._rows(sql, params)
 
+    async def cache_status_async(
+        self,
+        symbol: str | None = None,
+        interval: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await run_in_threadpool(self.cache_status, symbol, interval)
+
     def list_conflicts(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM data_conflicts"
         params: list[Any] = []
@@ -135,6 +167,9 @@ class MarketDuckDBStore:
             params.append(status)
         sql += " ORDER BY fetch_time DESC"
         return self._rows(sql, params)
+
+    async def list_conflicts_async(self, status: str | None = None) -> list[dict[str, Any]]:
+        return await run_in_threadpool(self.list_conflicts, status)
 
     def resolve_conflict(self, conflict_id: str, status: str) -> dict[str, Any] | None:
         with self._lock:
@@ -147,6 +182,13 @@ class MarketDuckDBStore:
                 [status, conflict_id],
             )
             return self._row("SELECT * FROM data_conflicts WHERE id = ?", [conflict_id])
+
+    async def resolve_conflict_async(
+        self,
+        conflict_id: str,
+        status: str,
+    ) -> dict[str, Any] | None:
+        return await run_in_threadpool(self.resolve_conflict, conflict_id, status)
 
     def close(self) -> None:
         with self._lock:

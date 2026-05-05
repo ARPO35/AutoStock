@@ -46,7 +46,7 @@ async def fetch_history(
             interval=payload.interval,
             adjust=payload.adjust,
         )
-        stats = market_store.insert_bars(bars)
+        stats = await market_store.insert_bars_async(bars)
     except NotImplementedError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
@@ -67,7 +67,7 @@ async def cache_status(
     interval: str | None = None,
     market_store=Depends(get_market_store),
 ) -> list[dict[str, object]]:
-    return market_store.cache_status(symbol=symbol, interval=interval)
+    return await market_store.cache_status_async(symbol=symbol, interval=interval)
 
 
 @router.get("/conflicts")
@@ -75,7 +75,7 @@ async def list_conflicts(
     status_filter: str | None = None,
     market_store=Depends(get_market_store),
 ) -> list[dict[str, object]]:
-    return market_store.list_conflicts(status=status_filter)
+    return await market_store.list_conflicts_async(status=status_filter)
 
 
 @router.post("/conflicts/{conflict_id}/resolve")
@@ -84,7 +84,10 @@ async def resolve_conflict(
     payload: ConflictResolveRequest,
     market_store=Depends(get_market_store),
 ) -> dict[str, object]:
-    conflict = market_store.resolve_conflict(conflict_id=conflict_id, status=payload.status)
+    conflict = await market_store.resolve_conflict_async(
+        conflict_id=conflict_id,
+        status=payload.status,
+    )
     if conflict is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conflict not found")
     return conflict
