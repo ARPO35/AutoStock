@@ -665,3 +665,126 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
     assert trade_result.result["trade_count"] == 1
     assert trade_result.result["trades"][0]["session_id"] == session["id"]
     assert trade_result.result["trades"][0]["name"] == "平安银行"
+
+
+def test_session_auto_title_after_first_user_message(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class TitleProvider:
+        async def chat(self, config, messages, tools):
+            return ChatResponse(content="平安银行短线策略")
+
+        async def chat_stream(self, config, messages, tools):
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: TitleProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post("/api/simulator/accounts", json={"name": "Account Under Test"}).json()
+    session = client.post(
+        "/api/sessions",
+        json={"name": "新会话", "simulator_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "分析平安银行短线机会"})
+    assert run.status_code == 200
+
+    updated = client.get(f"/api/sessions/{session['id']}")
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "平安银行短线策略"
+
+
+def test_session_auto_title_fallback_when_llm_failed(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class FailingTitleProvider:
+        async def chat(self, config, messages, tools):
+            raise RuntimeError("title generation failed")
+
+        async def chat_stream(self, config, messages, tools):
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: FailingTitleProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post("/api/simulator/accounts", json={"name": "Account Under Test"}).json()
+    session = client.post(
+        "/api/sessions",
+        json={"name": "新会话", "simulator_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "分析平安银行短线机会"})
+    assert run.status_code == 200
+
+    updated = client.get(f"/api/sessions/{session['id']}")
+    assert updated.status_code == 200
+    assert updated.json()["name"].startswith("新会话 ")
+
+
+def test_session_auto_title_not_override_custom_name(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class TitleProvider:
+        async def chat(self, config, messages, tools):
+            return ChatResponse(content="不应该覆盖")
+
+        async def chat_stream(self, config, messages, tools):
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: TitleProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post("/api/simulator/accounts", json={"name": "Account Under Test"}).json()
+    session = client.post(
+        "/api/sessions",
+        json={"name": "我的自定义会话", "simulator_account_id": account["id"], "provider_id": provider["id"], "model": "deepseek-v4-flash"},
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "分析平安银行短线机会"})
+    assert run.status_code == 200
+
+    updated = client.get(f"/api/sessions/{session['id']}")
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "我的自定义会话"

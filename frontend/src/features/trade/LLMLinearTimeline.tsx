@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTradeStore } from "@/stores/tradeStore";
 import { EmptyState, LoadingDots, Spinner } from "@/components/ui/Shared";
 import { MessageBubble } from "@/features/trade/MessageBubble";
@@ -27,6 +27,40 @@ export function LLMLinearTimeline() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastScrollTopRef = useRef(0);
+  const manuallyUnlockedRef = useRef(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
+  const RELOCK_THRESHOLD_PX = 48;
+
+  const getDistanceToBottom = (el: HTMLDivElement) => (
+    el.scrollHeight - el.scrollTop - el.clientHeight
+  );
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const wasScrollingDown = el.scrollTop > lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    const distance = getDistanceToBottom(el);
+    if (wasScrollingDown && distance <= RELOCK_THRESHOLD_PX) {
+      manuallyUnlockedRef.current = false;
+      setAutoScrollEnabled(true);
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) {
+      manuallyUnlockedRef.current = true;
+      setAutoScrollEnabled(false);
+    }
+  };
+
+  const scrollToBottom = () => {
+    manuallyUnlockedRef.current = false;
+    setAutoScrollEnabled(true);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  };
 
   useEffect(() => {
     if (selectedSessionId) {
@@ -35,8 +69,15 @@ export function LLMLinearTimeline() {
   }, [selectedSessionId, loadTimeline]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [timeline.length, busy, currentContent]);
+    const el = scrollRef.current;
+    if (!el) return;
+    lastScrollTopRef.current = el.scrollTop;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [timeline.length, busy, currentContent, autoScrollEnabled]);
 
   if (!selectedSessionId) {
     return (
@@ -69,14 +110,25 @@ export function LLMLinearTimeline() {
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto" ref={scrollRef}>
-      <div className="flex flex-col gap-3 p-4 min-h-full">
-        {timeline.map((item) => (
-          <MessageBubble key={item.id} item={item} />
-        ))}
-        {busy && !loadingTimeline && !currentContent && !currentReasoning && <LoadingDots />}
-        <div ref={bottomRef} />
+    <div className="flex-1 min-h-0 relative">
+      <div className="h-full overflow-y-auto" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
+        <div className="flex flex-col gap-3 p-4 min-h-full">
+          {timeline.map((item) => (
+            <MessageBubble key={item.id} item={item} />
+          ))}
+          {busy && !loadingTimeline && !currentContent && !currentReasoning && <LoadingDots />}
+          <div ref={bottomRef} />
+        </div>
       </div>
+      {!autoScrollEnabled && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="absolute right-4 bottom-4 z-10 rounded-full border border-hairline bg-surface-elevated px-3 py-1.5 text-xs text-text-muted-strong shadow-lg hover:bg-surface-card transition-colors"
+        >
+          回到底部
+        </button>
+      )}
     </div>
   );
 }

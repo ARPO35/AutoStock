@@ -3,6 +3,7 @@ import type { SessionTimelineItem, RuntimeEvent } from "@/api";
 import type { TimelineItem } from "@/types";
 import { api } from "@/api";
 import { buildTimeline, humanTime, syntheticToolCallItem } from "@/lib/utils";
+import { useDataStore } from "@/stores/dataStore";
 
 const RUN_TIMEOUT_MS = 120_000;
 
@@ -268,12 +269,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
           };
         });
         get()._disconnectWs();
+        void useDataStore.getState().loadSessions();
         get().loadTimeline(sessionId);
       }
 
       if (event.type === "error") {
         get()._disconnectWs();
         set({ busy: false });
+        void useDataStore.getState().loadSessions();
         get().loadTimeline(sessionId);
       }
     };

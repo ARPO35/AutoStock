@@ -76,12 +76,6 @@ class SessionRunManager:
             )
             if rendered_prompts.system_content:
                 self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
-            if message:
-                user_content = rendered_prompts.user_content
-                if user_content is None:
-                    user_content = message
-                if user_content.strip():
-                    self._create_message(session_id=session_id, role="user", content=user_content)
 
             simulator_account_id = (
                 str(session["simulator_account_id"])
@@ -95,6 +89,22 @@ class SessionRunManager:
             model = session.get("model") or provider_row["model"]
             config = self._provider_config(provider_row)
             provider = self.provider_factory(config)
+
+            if message:
+                user_content = rendered_prompts.user_content
+                if user_content is None:
+                    user_content = message
+                if user_content.strip():
+                    should_auto_title = self._should_auto_title(session_id, session)
+                    self._create_message(session_id=session_id, role="user", content=user_content)
+                    if should_auto_title:
+                        await self._auto_title_from_first_message(
+                            session_id=session_id,
+                            placeholder_name=str(session.get("name") or ""),
+                            provider=provider,
+                            config=config,
+                            user_message=user_content,
+                        )
 
             run_id = uuid4().hex
             cancel_event = asyncio.Event()
@@ -476,6 +486,79 @@ class SessionRunManager:
         message = self.store.fetch_one("SELECT * FROM chat_messages WHERE id = ?", (message_id,))
         assert message is not None
         return message
+
+    def _should_auto_title(self, session_id: str, session: dict[str, Any]) -> bool:
+        name = str(session.get("name") or "").strip()
+        if name != "新会话":
+            return False
+        existing_user = self.store.fetch_one(
+            """
+            SELECT id
+            FROM chat_messages
+            WHERE session_id = ?
+              AND role = 'user'
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        return existing_user is None
+
+    async def _auto_title_from_first_message(
+        self,
+        session_id: str,
+        placeholder_name: str,
+        provider: ChatProvider,
+        config: LLMProviderConfig,
+        user_message: str,
+    ) -> None:
+        title = self._fallback_title()
+        prompt = (
+            "请根据用户的第一条消息生成一个简洁会话标题。"
+            "只输出标题本身，不加引号，不加句号，不加前缀。"
+            "长度控制在8到20个中文字符，尽量准确概括主题。"
+        )
+        try:
+            response = await provider.chat(
+                config,
+                [
+                    ChatMessage(role="system", content=prompt),
+                    ChatMessage(role="user", content=user_message),
+                ],
+                [],
+            )
+            candidate = self._normalize_title(response.content)
+            if candidate:
+                title = candidate
+        except Exception:
+            title = self._fallback_title()
+
+        now = utc_now()
+        self.store.execute(
+            """
+            UPDATE chat_sessions
+            SET name = ?, updated_at = ?
+            WHERE id = ?
+              AND name = ?
+            """,
+            (title, now, session_id, placeholder_name),
+        )
+
+    def _normalize_title(self, raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        title = raw.strip()
+        if not title:
+            return None
+        title = title.replace("\n", " ").replace("\r", " ").strip()
+        title = re.sub(r"^标题[:：]\s*", "", title)
+        title = title.strip("\"'“”‘’。.!！?？ ")
+        title = re.sub(r"\s+", " ", title)
+        if not title:
+            return None
+        return title[:32]
+
+    def _fallback_title(self) -> str:
+        return f"新会话 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
     def _save_tool_result(
         self,
