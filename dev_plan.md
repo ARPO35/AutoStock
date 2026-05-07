@@ -1823,7 +1823,63 @@ LLM 可以基于搜索结果继续调用 tavily.extract
 
 ---
 
-## 阶段 6：Skill 管理 ← 未实现
+## 阶段 6：成本记录与分析 ← 未实现
+
+目标：记录不同模型的运行成本。
+
+任务：
+
+- usage parser。
+- 不同 Provider usage normalizer。
+- llm_usage_records。
+- 成本配置。
+- 成本面板。
+- Session 成本统计。
+- 每次 run 的 token、耗时、provider、model 与估算成本记录。
+- 每笔交易成本统计，优先通过 session / run / tool call 归因，避免仅按时间窗口粗算。
+- 单次运行成本上限与后续自动化实验的成本基线。
+
+验收：
+
+```text
+每次 LLM 调用都记录 token、耗时、模型、provider、估算成本
+WebUI 可查看 Session 总成本和单次运行成本
+交易记录可以追溯到触发它的 Session / run / tool call 成本上下文
+```
+
+---
+
+## 阶段 7：历史回放一致性基础 ← 未实现
+
+目标：先统一实时模式与 replay 模式的时间语义，避免后续实验出现未来数据泄露。
+
+任务：
+
+- Replay Clock。
+- replay mode。
+- market tools 按 replay time 返回数据。
+- 禁止未来数据泄露。
+- 交易日历与回放时间边界。
+- 实时模式与 replay 模式共用同一套 tool 接口。
+- 模拟盘时间来源可注入，避免订单、成交、T+1 与交易时段校验直接依赖真实当前时间。
+
+暂不作为本阶段硬验收：
+
+- replay dataset。
+- replay session。
+- replay 报告。
+
+验收：
+
+```text
+同一套 tool 在实时模式和 replay 模式都可用
+replay 模式下 LLM 只能看到当前回放时间之前的数据
+实时模式仍按当前市场时间工作，不被 replay mode 污染
+```
+
+---
+
+## 阶段 8：Skill 管理 ← 未实现
 
 目标：让用户通过 WebUI 上传和编辑 skill。
 
@@ -1850,7 +1906,7 @@ LLM 运行时加载对应 skill
 
 ---
 
-## 阶段 7：定时触发器 ← 未实现
+## 阶段 9：定时触发器 ← 未实现
 
 目标：让 Session 支持带 prompt 的定时事件。
 
@@ -1873,52 +1929,6 @@ LLM 运行时加载对应 skill
 到时间后自动向 Session 注入事件消息
 LLM 自动运行并调用工具
 完整过程显示在 WebChat 中
-```
-
----
-
-## 阶段 8：成本记录与分析 ← 未实现
-
-目标：记录不同模型的运行成本。
-
-任务：
-
-- usage parser。
-- 不同 Provider usage normalizer。
-- llm_usage_records。
-- 成本配置。
-- 成本面板。
-- Session 成本统计。
-- 每笔交易成本统计。
-
-验收：
-
-```text
-每次 LLM 调用都记录 token、耗时、模型、provider、估算成本
-WebUI 可查看 Session 总成本和单次运行成本
-```
-
----
-
-## 阶段 9：历史回放一致性 ← 未实现
-
-目标：为历史 replay 做架构统一。
-
-任务：
-
-- Replay Clock。
-- replay mode。
-- market tools 按 replay time 返回数据。
-- 禁止未来数据泄露。
-- replay dataset。
-- replay session。
-- replay 报告。
-
-验收：
-
-```text
-同一套 tool 在实时模式和 replay 模式都可用
-replay 模式下 LLM 只能看到当前回放时间之前的数据
 ```
 
 ---
@@ -2085,8 +2095,10 @@ LLM 可调用下单 tool
 | 定时触发重叠 | Session active run 锁 + 队列策略 |
 | LLM 误用工具 | 保留市场规则校验，不做投资风控 |
 | 历史回放泄露未来数据 | Replay Clock 强制过滤 |
+| Replay 污染实时路径 | live / replay 模式隔离，统一 Clock 注入，禁止在业务逻辑中直接读取真实当前时间 |
 | Skill 上传风险 | 第一阶段不支持任意代码 |
 | 成本不可控 | token / 费用记录 + 单次运行限制 |
+| 交易成本归因不准确 | 按 session / run / tool call 建立成本归因，避免仅按时间窗口估算 |
 | WebChat 上下文过长 | 历史摘要 + 最近消息窗口 + journal 查询工具 |
 
 ---
@@ -2110,12 +2122,18 @@ LLM 可调用下单 tool
 接入 Tavily 搜索和 extract。
 
 第六阶段：
-实现 Skill WebUI 上传编辑和 Trigger 定时注入消息。
+补齐成本记录与分析，建立 Session、run、tool call 和交易成本归因。
 
 第七阶段：
-补齐成本记录、交易日历、历史回放一致性。
+补齐交易日历与历史回放一致性基础，先解决 Replay Clock、防未来数据泄露和 market tools 回放模式。
 
 第八阶段：
+实现 Skill WebUI 上传编辑。
+
+第九阶段：
+实现 Trigger 定时注入消息。
+
+第十阶段：
 做多模型实验和自动对比报告。
 ```
 
