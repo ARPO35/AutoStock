@@ -1,652 +1,449 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  RefreshCw,
-  Pause,
-  Gauge,
+  Activity,
   Database,
+  History,
   LineChart,
   MessageSquare,
-  History,
-  Wallet,
-  Activity,
-  Trash2
+  RefreshCw,
+  Search,
+  Table2,
+  Wallet
 } from "lucide-react";
-import { useDataStore } from "@/stores/dataStore";
-import { useMarketStore } from "@/stores/marketStore";
-import { useUIStore, viewTabs } from "@/stores/uiStore";
-import { Metric, InfoGrid, EmptyState, PanelHeader, SubTabs } from "@/components/ui/Shared";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
-import {
-  formatMoney,
-  normalizeStatus,
-  statusLabel,
-  humanTime,
-  barClose,
-  barTime,
-  linePoints,
-  formatValue,
-  objectEntries
-} from "@/lib/utils";
-
-/* ------------------------------------------------------------------ */
-/*  Page shell                                                        */
-/* ------------------------------------------------------------------ */
+import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
+import { useDataStore } from "@/stores/dataStore";
+import { useMarketStore } from "@/stores/marketStore";
+import { useViewStore, type ViewSection, viewSections } from "@/stores/viewStore";
+import type { AccountSnapshot, AssetPoint, TradeRow, ViewLogRow, ViewTimelineRow } from "@/api";
+import { barClose, barTime, formatMoney, formatValue, humanTime, linePoints } from "@/lib/utils";
 
 export function ViewPage() {
-  const viewTab = useUIStore((s) => s.viewTab);
-  const setViewTab = useUIStore((s) => s.setViewTab);
-  const accounts = useDataStore((s) => s.accounts);
-  const sessions = useDataStore((s) => s.sessions);
-  const providers = useDataStore((s) => s.providers);
-  const refreshAll = useDataStore((s) => s.refreshAll);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const section = sectionFromPath(location.pathname);
+  const filters = useViewStore((s) => s.filters);
+  const loading = useViewStore((s) => s.loading);
+  const error = useViewStore((s) => s.error);
+  const refreshCurrent = useViewStore((s) => s.refreshCurrent);
+  const loadOverview = useViewStore((s) => s.loadOverview);
+  const loadAccounts = useViewStore((s) => s.loadAccounts);
+  const loadTrades = useViewStore((s) => s.loadTrades);
+  const loadAssets = useViewStore((s) => s.loadAssets);
+  const loadLogs = useViewStore((s) => s.loadLogs);
+  const loadTimeline = useViewStore((s) => s.loadTimeline);
+
+  useEffect(() => {
+    if (section === "overview") void loadOverview();
+    if (section === "account-detail") void loadAccounts();
+    if (section === "trades") void loadTrades();
+    if (section === "assets") void loadAssets();
+    if (section === "logs") void loadLogs();
+    if (section === "timeline") void loadTimeline();
+  }, [
+    section,
+    filters.account_id,
+    filters.start,
+    filters.end,
+    filters.symbol,
+    loadOverview,
+    loadAccounts,
+    loadTrades,
+    loadAssets,
+    loadLogs,
+    loadTimeline
+  ]);
+
+  const active = viewSections.find((item) => item.key === section) ?? viewSections[0];
 
   return (
-    <section className="flex flex-col min-h-0 overflow-auto p-4 gap-3">
-      <PageHeader
-        eyebrow={`查看 - ${viewTab}`}
-        title="全局观察、对比分析、行情浏览、模拟时间线控制"
-        actions={
-          <>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<RefreshCw size={14} />}
-              onClick={() => void refreshAll()}
-            >
-              刷新
-            </Button>
-            <Button variant="secondary" size="sm" icon={<Pause size={14} />} disabled>
-              暂停同步
-            </Button>
-          </>
-        }
-      />
+    <section className="h-full min-h-0 overflow-hidden grid grid-rows-[auto_auto_minmax(0,1fr)] bg-surface-canvas">
+      <header className="px-4 pt-4 pb-2 border-b border-hairline/70">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-brand-primary text-xs font-bold tracking-wide mb-1">查看 / {active.label}</p>
+            <h1 className="text-xl font-semibold text-text-on-dark">全局观察与复盘分析</h1>
+            <p className="mt-1 text-sm text-text-muted">同一套账户、时间、股票筛选驱动所有查看页面，避免交易页和复盘页口径分叉。</p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<RefreshCw size={14} />}
+            onClick={() => void refreshCurrent(section)}
+            disabled={loading || section === "stock"}
+          >
+            刷新
+          </Button>
+        </div>
+      </header>
 
-      <SubTabs tabs={viewTabs} active={viewTab} onChange={setViewTab} />
+      <div className="px-4 py-3 border-b border-hairline/70">
+        <ViewNav active={section} onChange={(key) => navigate(`/view/${key}`)} />
+        <ViewFilters />
+      </div>
 
-      {viewTab === "总览" && (
-        <ViewOverview
-          accounts={accounts}
-          sessions={sessions}
-          providers={providers}
-        />
-      )}
-      {viewTab === "账号详情" && (
-        <AccountDetailPanel
-          accounts={accounts}
-          sessions={sessions}
-          providers={providers}
-        />
-      )}
-      {viewTab === "股票信息" && <MarketDataPanel />}
-      {!["总览", "账号详情", "股票信息"].includes(viewTab) && (
-        <PlaceholderSection
-          title={viewTab}
-          description={viewTabDesc(viewTab)}
-        />
-      )}
+      <main className="min-h-0 overflow-auto p-4">
+        {error && (
+          <div className="mb-3 rounded-lg border border-trading-rise/40 bg-trading-rise/10 px-3 py-2 text-sm text-trading-rise">
+            {error}
+          </div>
+        )}
+        {loading && section !== "stock" ? <Spinner /> : <ViewSectionPanel section={section} />}
+      </main>
     </section>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  PageHeader                                                        */
-/* ------------------------------------------------------------------ */
-
-function PageHeader({
-  eyebrow,
-  title,
-  actions
+function ViewNav({
+  active,
+  onChange
 }: {
-  eyebrow: string;
-  title: string;
-  actions?: ReactNode;
+  active: ViewSection;
+  onChange: (key: ViewSection) => void;
 }) {
   return (
-    <header className="flex items-center justify-between gap-3.5 mb-1">
-      <div className="min-w-0">
-        <p className="text-brand-primary text-xs font-bold tracking-wide mb-1">
-          {eyebrow}
-        </p>
-        <h1 className="text-lg font-semibold text-text-on-dark truncate">
-          {title}
-        </h1>
-      </div>
-      {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
-    </header>
+    <nav className="mb-3 flex gap-1.5 overflow-x-auto">
+      {viewSections.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          onClick={() => onChange(item.key)}
+          className={`min-w-[112px] rounded-lg border px-3 py-2 text-left transition-colors ${
+            active === item.key
+              ? "border-brand-primary/60 bg-brand-primary/10 text-text-on-dark"
+              : "border-hairline bg-surface-card/60 text-text-muted hover:text-text-on-dark hover:bg-surface-card"
+          }`}
+        >
+          <strong className="block text-sm">{item.label}</strong>
+          <span className="text-[11px] text-text-muted">{item.sub}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  ViewOverview                                                      */
-/* ------------------------------------------------------------------ */
-
-function ViewOverview({
-  accounts,
-  sessions,
-  providers
-}: {
-  accounts: import("@/api").Account[];
-  sessions: import("@/api").Session[];
-  providers: import("@/api").Provider[];
-}) {
-  const cacheRows = useMarketStore((s) => s.cacheRows);
-
-  const runningCount = sessions.filter((s) =>
-    (s.status ?? "").includes("run")
-  ).length;
-
-  const cacheBars = cacheRows.reduce(
-    (sum, row) => sum + Number(row.bar_count ?? 0),
-    0
-  );
+function ViewFilters() {
+  const accounts = useDataStore((s) => s.accounts);
+  const filters = useViewStore((s) => s.filters);
+  const patchFilters = useViewStore((s) => s.patchFilters);
 
   return (
-    <>
-      {/* Account cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {accounts.length === 0 ? (
-          <EmptyState
-            title="暂无账户"
-            description="创建账户后这里会展示真实账户列表。"
-          />
-        ) : (
-          accounts.map((a) => (
-            <AccountSummaryCard
-              key={a.id}
-              account={a}
-              sessions={sessions.filter((s) => s.simulator_account_id === a.id)}
-            />
-          ))
-        )}
-      </div>
-
-      {/* Metrics grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        <section className="border border-hairline rounded-xl bg-surface-card p-4">
-          <PanelHeader icon={<Gauge size={16} />} title="当前对象统计" />
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <Metric label="Provider" value={String(providers.length)} />
-            <Metric label="账户" value={String(accounts.length)} />
-            <Metric label="Session" value={String(sessions.length)} />
-            <Metric label="运行中" value={String(runningCount)} />
-          </div>
-        </section>
-
-        <section className="border border-hairline rounded-xl bg-surface-card p-4">
-          <PanelHeader icon={<Database size={16} />} title="行情缓存" />
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <Metric label="缓存标的" value={String(cacheRows.length)} />
-            <Metric label="缓存记录" value={String(cacheBars)} />
-          </div>
-        </section>
-
-        <section className="border border-hairline rounded-xl bg-surface-card p-4">
-          <PanelHeader icon={<LineChart size={16} />} title="资产曲线" />
-          <EmptyState
-            title="暂无数据"
-            description="后端尚未接入模拟交易账本，无法展示资产曲线。"
-          />
-        </section>
-
-        <section className="border border-hairline rounded-xl bg-surface-card p-4">
-          <PanelHeader icon={<MessageSquare size={16} />} title="最近 LLM 决策" />
-          <EmptyState
-            title="暂无数据"
-            description="后端尚未提供决策日志聚合接口。"
-          />
-        </section>
-
-        <section className="border border-hairline rounded-xl bg-surface-card p-4">
-          <PanelHeader icon={<History size={16} />} title="最近交易" />
-          <EmptyState
-            title="暂无数据"
-            description="后端尚未提供交易历史接口。"
-          />
-        </section>
-      </div>
-    </>
+    <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr_1fr_auto] gap-2 items-end">
+      <label className="grid gap-1.5 text-xs text-text-muted">
+        账户
+        <Select value={filters.account_id ?? ""} onChange={(e) => patchFilters({ account_id: e.target.value || undefined })}>
+          <option value="">全部账户</option>
+          {accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </Select>
+      </label>
+      <Input label="开始日期" type="date" value={filters.start ?? ""} onChange={(e) => patchFilters({ start: e.target.value || undefined })} />
+      <Input label="结束日期" type="date" value={filters.end ?? ""} onChange={(e) => patchFilters({ end: e.target.value || undefined })} />
+      <Input
+        label="股票代码"
+        value={filters.symbol ?? ""}
+        onChange={(e) => patchFilters({ symbol: e.target.value.trim() || undefined })}
+        placeholder="000001"
+        icon={<Search size={14} />}
+      />
+      <Button variant="secondary" size="sm" onClick={() => patchFilters({ account_id: "", start: "", end: "", symbol: "" })}>
+        清空
+      </Button>
+    </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  AccountSummaryCard                                                */
-/* ------------------------------------------------------------------ */
+function ViewSectionPanel({ section }: { section: ViewSection }) {
+  if (section === "overview") return <OverviewPanel />;
+  if (section === "account-detail") return <AccountDetailPanel />;
+  if (section === "trades") return <TradesPanel />;
+  if (section === "assets") return <AssetsPanel />;
+  if (section === "stock") return <StockPanel />;
+  if (section === "logs") return <LogsPanel />;
+  return <TimelinePanel />;
+}
 
-function AccountSummaryCard({
-  account,
-  sessions
-}: {
-  account: import("@/api").Account;
-  sessions: import("@/api").Session[];
-}) {
-  const running = sessions.filter((s) => (s.status ?? "").includes("run")).length;
-
+function OverviewPanel() {
+  const data = useViewStore((s) => s.overview);
+  if (!data) return <EmptyState title="暂无总览数据" description="点击刷新或调整筛选后加载账户总览。" />;
   return (
-    <div className="border border-hairline rounded-xl bg-surface-card p-4">
-      <header className="flex items-center justify-between gap-2 mb-2">
-        <span className="text-sm font-semibold text-text-on-dark truncate">
-          {account.name}
-        </span>
-      </header>
-      <strong className="block text-lg text-text-on-dark">
-        {formatMoney(account.initial_cash)}
-      </strong>
-      <div className="flex gap-3 mt-2 text-xs text-text-muted">
-        <span>Session {sessions.length}</span>
-        <span>运行中 {running}</span>
+    <div className="grid gap-3">
+      <MetricStrip summary={data.summary} />
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-3">
+        <section className="border border-hairline rounded-xl bg-surface-card p-4">
+          <PanelHeader icon={<Wallet size={16} />} title="账户矩阵" />
+          <AccountSnapshotGrid snapshots={data.accounts} />
+        </section>
+        <section className="border border-hairline rounded-xl bg-surface-card p-4">
+          <PanelHeader icon={<History size={16} />} title="最近成交" />
+          <TradeList trades={data.recent_trades} compact />
+        </section>
       </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  AccountDetailPanel                                                */
-/* ------------------------------------------------------------------ */
-
-function AccountDetailPanel({
-  accounts,
-  sessions,
-  providers
-}: {
-  accounts: import("@/api").Account[];
-  sessions: import("@/api").Session[];
-  providers: import("@/api").Provider[];
-}) {
-  const deleteSession = useDataStore((s) => s.deleteSession);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const providerName = useMemo(
-    () => {
-      const map = new Map(providers.map((p) => [p.id, p.name]));
-      return (id: string | null | undefined) => (id ? map.get(id) ?? id : "--");
-    },
-    [providers]
-  );
-
-  const accountRows = useMemo(
-    () =>
-      accounts.map((a) => {
-        const related = sessions.filter((s) => s.simulator_account_id === a.id);
-        return {
-          ...a,
-          sessionCount: related.length,
-          runningSessions: related.filter((r) =>
-            (r.status ?? "").includes("run")
-          ).length
-        };
-      }),
-    [accounts, sessions]
-  );
-
-  const sessionRows = useMemo(
-    () =>
-      sessions.map((s) => {
-        const acc = accountRows.find((a) => a.id === s.simulator_account_id);
-        return {
-          id: s.id,
-          name: s.name,
-          accountName: acc?.name ?? "--",
-          model: s.model ?? "--",
-          providerId: s.provider_id ?? "--",
-          status: normalizeStatus(s.status),
-          lastRunAt: s.updated_at
-        };
-      }),
-    [sessions, accountRows]
-  );
-
+function AccountDetailPanel() {
+  const data = useViewStore((s) => s.accounts);
+  if (!data) return <EmptyState title="暂无账号详情" description="账号详情会展示资金、持仓和绑定会话。" />;
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      {/* Account table */}
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+      {data.accounts.length === 0 ? (
+        <EmptyState title="暂无账户" description="创建模拟账户后这里会展示账户详情。" />
+      ) : (
+        data.accounts.map((snapshot) => <AccountDetailCard key={snapshot.account.id} snapshot={snapshot} />)
+      )}
+    </div>
+  );
+}
+
+function TradesPanel() {
+  const data = useViewStore((s) => s.trades);
+  if (!data) return <EmptyState title="暂无交易历史" description="成交后这里会按筛选条件展示交易记录。" />;
+  return (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-3 gap-2 max-w-[680px]">
+        <Metric label="成交数" value={String(data.summary.trade_count ?? 0)} />
+        <Metric label="成交额" value={formatMoney(data.summary.turnover)} />
+        <Metric label="费用" value={formatMoney(data.summary.fees)} />
+      </div>
       <section className="border border-hairline rounded-xl bg-surface-card p-4">
-        <PanelHeader icon={<Wallet size={16} />} title="账户详情" />
-        {accounts.length === 0 ? (
-          <EmptyState
-            title="暂无账户"
-            description="创建账户后展示账户与 Provider 绑定。"
-          />
-        ) : (
-          <div className="mt-2 max-h-[400px] overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-text-muted text-xs border-b border-hairline">
-                  <th className="pb-2 font-medium">账户</th>
-                  <th className="pb-2 font-medium">初始资金</th>
-                  <th className="pb-2 font-medium">Session</th>
-                  <th className="pb-2 font-medium">运行中</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accountRows.map((row) => (
-                  <tr key={row.id} className="border-b border-hairline/50">
-                    <td className="py-2 text-text-on-dark">{row.name}</td>
-                    <td className="py-2 text-text-on-dark">
-                      {formatMoney(row.initial_cash)}
-                    </td>
-                    <td className="py-2 text-text-muted">{row.sessionCount}</td>
-                    <td className="py-2 text-text-muted">{row.runningSessions}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Session table */}
-      <section className="relative border border-hairline rounded-xl bg-surface-card p-4">
-        <PanelHeader icon={<MessageSquare size={16} />} title="Session 列表" />
-        {sessions.length === 0 ? (
-          <EmptyState
-            title="暂无 Session"
-            description="创建 Session 后展示真实会话状态。"
-          />
-        ) : (
-          <div className="mt-2 max-h-[400px] overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-text-muted text-xs border-b border-hairline">
-                  <th className="pb-2 font-medium">Session</th>
-                  <th className="pb-2 font-medium">账户</th>
-                  <th className="pb-2 font-medium">模型</th>
-                  <th className="pb-2 font-medium">Provider</th>
-                  <th className="pb-2 font-medium">状态</th>
-                  <th className="pb-2 font-medium">更新时间</th>
-                  <th className="pb-2 font-medium w-12">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessionRows.map((row) => (
-                  <tr key={row.id} className="border-b border-hairline/50 group">
-                    <td className="py-2 text-text-on-dark">{row.name}</td>
-                    <td className="py-2 text-text-muted">{row.accountName}</td>
-                    <td className="py-2 text-text-muted">{row.model}</td>
-                    <td className="py-2 text-text-muted">{providerName(row.providerId)}</td>
-                    <td className="py-2 text-text-muted">
-                      {statusLabel(row.status)}
-                    </td>
-                    <td className="py-2 text-text-muted">
-                      {humanTime(row.lastRunAt)}
-                    </td>
-                    <td className="py-2">
-                      <button
-                        type="button"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-trading-rise"
-                        title="删除 Session"
-                        onClick={() => setConfirmDeleteId(row.id)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* 删除确认弹窗 */}
-        {confirmDeleteId && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-canvas/80 backdrop-blur-sm">
-            <div className="w-[260px] rounded-xl border border-hairline bg-surface-card p-4 shadow-lg">
-              <p className="text-sm text-text-on-dark mb-1 font-semibold">确认删除</p>
-              <p className="text-xs text-text-muted mb-4">确定要删除此 Session 吗？关联消息和执行记录将被一并清理。</p>
-              <div className="flex justify-end gap-2">
-                <button
-                  className="px-3 py-1.5 text-xs rounded-lg border border-hairline text-text-muted hover:text-text-on-dark hover:bg-surface-elevated transition-colors"
-                  type="button"
-                  onClick={() => setConfirmDeleteId(null)}
-                >
-                  取消
-                </button>
-                <button
-                  className="px-3 py-1.5 text-xs rounded-lg bg-trading-rise text-white hover:bg-trading-rise/80 transition-colors"
-                  type="button"
-                  onClick={async () => {
-                    if (!confirmDeleteId) return;
-                    try {
-                      await deleteSession(confirmDeleteId);
-                    } catch { /* store 处理 */ }
-                    setConfirmDeleteId(null);
-                  }}
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <PanelHeader icon={<Table2 size={16} />} title="成交明细" />
+        <TradeTable trades={data.trades} />
       </section>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  MarketDataPanel                                                   */
-/* ------------------------------------------------------------------ */
+function AssetsPanel() {
+  const data = useViewStore((s) => s.assets);
+  if (!data) return <EmptyState title="暂无资产曲线" description="账户创建后会生成初始点，成交后会生成交易点。" />;
+  return (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-w-[860px]">
+        <Metric label="账户数" value={String(data.summary.account_count ?? 0)} />
+        <Metric label="最新总资产" value={formatMoney(data.summary.latest_total_asset)} />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        {data.series.map((series) => (
+          <section key={series.account_id} className="border border-hairline rounded-xl bg-surface-card p-4">
+            <PanelHeader icon={<LineChart size={16} />} title={series.account_name} />
+            <AssetChart points={series.points} />
+            <AssetPointTable points={series.points} />
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-function MarketDataPanel() {
+function StockPanel() {
   const marketForm = useMarketStore((s) => s.marketForm);
   const setMarketForm = useMarketStore((s) => s.setMarketForm);
   const marketQuote = useMarketStore((s) => s.marketQuote);
   const marketHistory = useMarketStore((s) => s.marketHistory);
   const queryQuote = useMarketStore((s) => s.queryQuote);
   const queryHistory = useMarketStore((s) => s.queryHistory);
-
-  const closeValues = useMemo(
-    () =>
-      marketHistory?.bars
-        .map(barClose)
-        .filter((v): v is number => v != null) ?? [],
-    [marketHistory]
-  );
-
-  const handleQueryQuote = () => {
-    if (!marketForm.symbol.trim()) return;
-    void queryQuote(marketForm.symbol.trim());
-  };
-
-  const handleQueryHistory = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!marketForm.symbol.trim()) return;
-    void queryHistory(
-      marketForm.symbol.trim(),
-      marketForm.start || undefined,
-      marketForm.end || undefined,
-      marketForm.adjust || undefined,
-      marketForm.allowFetchMissing
-    );
-  };
+  const values = useMemo(() => marketHistory?.bars.map(barClose).filter((v): v is number => v != null) ?? [], [marketHistory]);
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-      {/* Query Form */}
-      <section className="border border-hairline rounded-xl bg-surface-card p-4 xl:col-span-2">
-        <PanelHeader icon={<LineChart size={16} />} title="行情查询" />
-        <form className="flex flex-wrap items-end gap-3 mt-2" onSubmit={handleQueryHistory}>
-          <div className="flex-1 min-w-[120px]">
-            <Input
-              label="股票代码"
-              value={marketForm.symbol}
-              onChange={(e) =>
-                setMarketForm({ ...marketForm, symbol: e.target.value })
-              }
-              placeholder="输入股票代码"
-            />
-          </div>
-          <Input
-            label="起始日期"
-            type="date"
-            value={marketForm.start}
-            onChange={(e) =>
-              setMarketForm({ ...marketForm, start: e.target.value })
+      <section className="xl:col-span-2 border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<Search size={16} />} title="行情查询" />
+        <form
+          className="grid grid-cols-1 md:grid-cols-[1fr_160px_160px_120px_auto_auto] gap-2 items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (marketForm.symbol.trim()) {
+              void queryHistory(marketForm.symbol.trim(), marketForm.start || undefined, marketForm.end || undefined, marketForm.adjust || undefined, marketForm.allowFetchMissing);
             }
-          />
-          <Input
-            label="结束日期"
-            type="date"
-            value={marketForm.end}
-            onChange={(e) =>
-              setMarketForm({ ...marketForm, end: e.target.value })
-            }
-          />
-          <div className="min-w-[110px]">
-            <label className="grid gap-1.5 text-xs text-text-muted">
-              复权
-              <Select
-                value={marketForm.adjust}
-                onChange={(e) =>
-                  setMarketForm({ ...marketForm, adjust: e.target.value })
-                }
-              >
-                <option value="">不复权</option>
-                <option value="qfq">前复权</option>
-                <option value="hfq">后复权</option>
-              </Select>
-            </label>
-          </div>
-          <label className="flex items-center gap-2 h-10 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={marketForm.allowFetchMissing}
-              onChange={(e) =>
-                setMarketForm({
-                  ...marketForm,
-                  allowFetchMissing: e.target.checked
-                })
-              }
-              className="accent-brand-primary"
-            />
-            允许缺失拉取
+          }}
+        >
+          <Input label="股票代码" value={marketForm.symbol} onChange={(e) => setMarketForm({ ...marketForm, symbol: e.target.value })} placeholder="000001" />
+          <Input label="开始日期" type="date" value={marketForm.start} onChange={(e) => setMarketForm({ ...marketForm, start: e.target.value })} />
+          <Input label="结束日期" type="date" value={marketForm.end} onChange={(e) => setMarketForm({ ...marketForm, end: e.target.value })} />
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            复权
+            <Select value={marketForm.adjust} onChange={(e) => setMarketForm({ ...marketForm, adjust: e.target.value })}>
+              <option value="">不复权</option>
+              <option value="qfq">前复权</option>
+              <option value="hfq">后复权</option>
+            </Select>
           </label>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Activity size={14} />}
-              type="button"
-              disabled={!marketForm.symbol.trim()}
-              onClick={handleQueryQuote}
-            >
-              查询行情
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<LineChart size={14} />}
-              type="submit"
-              disabled={!marketForm.symbol.trim()}
-            >
-              查询历史
-            </Button>
-          </div>
+          <Button variant="secondary" size="sm" type="button" disabled={!marketForm.symbol.trim()} onClick={() => void queryQuote(marketForm.symbol.trim())}>
+            查报价
+          </Button>
+          <Button variant="primary" size="sm" type="submit" disabled={!marketForm.symbol.trim()}>
+            查历史
+          </Button>
         </form>
       </section>
-
-      {/* Quote Snapshot */}
       <section className="border border-hairline rounded-xl bg-surface-card p-4">
-        <PanelHeader icon={<Activity size={16} />} title="行情快照" />
-        {marketQuote ? (
-          <div className="mt-2">
-            <InfoGrid items={objectEntries(marketQuote).slice(0, 10)} />
-          </div>
-        ) : (
-          <EmptyState
-            title="暂无行情"
-            description="输入股票代码后调用 /api/market/quote。"
-          />
-        )}
+        <PanelHeader icon={<Activity size={16} />} title="实时报价" />
+        {marketQuote ? <KeyValueGrid data={marketQuote} /> : <EmptyState title="暂无报价" description="输入股票代码后查询当前行情。" />}
       </section>
-
-      {/* History */}
       <section className="border border-hairline rounded-xl bg-surface-card p-4">
         <PanelHeader icon={<LineChart size={16} />} title="历史行情" />
         {marketHistory ? (
-          <div className="mt-2">
-            <InfoGrid
-              items={[
-                ["股票代码", marketHistory.symbol],
-                ["周期", marketHistory.interval],
-                ["复权", marketHistory.adjust || "不复权"],
-                ["缓存命中", String(marketHistory.cache_hit)],
-                ["记录数", String(marketHistory.bars.length)]
-              ]}
-            />
-            {closeValues.length > 1 && <MiniLineChart values={closeValues} />}
-            <MarketBarsTable bars={marketHistory.bars} />
-          </div>
+          <>
+            <MiniChart values={values} />
+            <div className="mt-3 max-h-[360px] overflow-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-text-muted border-b border-hairline">
+                    <th className="py-2 font-medium">时间</th>
+                    <th className="py-2 font-medium">开</th>
+                    <th className="py-2 font-medium">高</th>
+                    <th className="py-2 font-medium">低</th>
+                    <th className="py-2 font-medium">收</th>
+                    <th className="py-2 font-medium">量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {marketHistory.bars.slice(0, 80).map((bar, index) => (
+                    <tr key={`${barTime(bar)}-${index}`} className="border-b border-hairline/50">
+                      <td className="py-1.5 font-mono text-xs text-text-on-dark">{barTime(bar)}</td>
+                      <td className="py-1.5 text-text-muted">{formatValue(bar.open)}</td>
+                      <td className="py-1.5 text-text-muted">{formatValue(bar.high)}</td>
+                      <td className="py-1.5 text-text-muted">{formatValue(bar.low)}</td>
+                      <td className="py-1.5 text-text-on-dark">{formatValue(bar.close)}</td>
+                      <td className="py-1.5 text-text-muted">{formatValue(bar.volume)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : (
-          <EmptyState
-            title="暂无历史"
-            description="查询历史行情后展示 K 线数据。"
-          />
+          <EmptyState title="暂无历史行情" description="查询历史后显示 K 线数据和收盘价走势。" />
         )}
       </section>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  MiniLineChart                                                     */
-/* ------------------------------------------------------------------ */
-
-function MiniLineChart({ values }: { values: number[] }) {
-  const points = linePoints(values, 100, 52);
-
+function LogsPanel() {
+  const data = useViewStore((s) => s.logs);
+  if (!data) return <EmptyState title="暂无交易理由" description="买入或卖出时传入的交易理由会在这里聚合。" />;
   return (
-    <svg
-      className="w-full max-w-[360px] h-[52px] mt-2"
-      viewBox="0 0 100 52"
-      role="img"
-      aria-label="数据曲线"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="var(--color-trading-rise)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <section className="border border-hairline rounded-xl bg-surface-card p-4">
+      <PanelHeader icon={<MessageSquare size={16} />} title="交易决策日志" />
+      {data.logs.length === 0 ? <EmptyState title="没有匹配交易理由" description="只有 order.buy / order.sell 工具调用会进入决策日志。" /> : <LogList logs={data.logs} />}
+    </section>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  MarketBarsTable                                                   */
-/* ------------------------------------------------------------------ */
-
-function MarketBarsTable({ bars }: { bars: Record<string, unknown>[] }) {
-  if (bars.length === 0) return null;
-
+function TimelinePanel() {
+  const data = useViewStore((s) => s.timeline);
+  if (!data) return <EmptyState title="暂无时间线" description="消息、运行、工具和成交会合并为全局事件流。" />;
   return (
-    <div className="mt-3 max-h-[300px] overflow-auto">
+    <section className="border border-hairline rounded-xl bg-surface-card p-4">
+      <PanelHeader icon={<Activity size={16} />} title="全局时间线" />
+      {data.items.length === 0 ? <EmptyState title="没有匹配事件" description="调整筛选条件后重试。" /> : <TimelineList items={data.items} />}
+    </section>
+  );
+}
+
+function MetricStrip({ summary }: { summary: Record<string, number> }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+      <Metric label="现金" value={formatMoney(summary.cash)} />
+      <Metric label="总资产" value={formatMoney(summary.total_asset)} />
+      <Metric label="持仓市值" value={formatMoney(summary.market_value)} />
+      <Metric label="浮盈亏" value={formatMoney(summary.floating_pnl)} tone={tone(summary.floating_pnl)} />
+      <Metric label="总盈亏" value={formatMoney(summary.total_pnl)} tone={tone(summary.total_pnl)} />
+      <Metric label="持仓数" value={String(summary.position_count ?? 0)} />
+      <Metric label="运行中" value={String(summary.running_sessions ?? 0)} />
+    </div>
+  );
+}
+
+function AccountSnapshotGrid({ snapshots }: { snapshots: AccountSnapshot[] }) {
+  if (snapshots.length === 0) return <EmptyState title="暂无账户" description="创建模拟账户后这里会出现账户矩阵。" />;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {snapshots.map((snapshot) => (
+        <AccountMini key={snapshot.account.id} snapshot={snapshot} />
+      ))}
+    </div>
+  );
+}
+
+function AccountMini({ snapshot }: { snapshot: AccountSnapshot }) {
+  return (
+    <div className="rounded-xl border border-hairline bg-surface-canvas/50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <strong className="text-text-on-dark">{snapshot.account.name}</strong>
+        <span className="text-xs text-text-muted">{snapshot.metrics.session_count} Session</span>
+      </div>
+      <AssetChart points={snapshot.asset_points} compact />
+      <div className="grid grid-cols-3 gap-2 mt-2">
+        <Metric label="现金" value={formatMoney(snapshot.metrics.cash)} />
+        <Metric label="总资产" value={formatMoney(snapshot.metrics.total_asset)} />
+        <Metric label="仓位" value={`${(snapshot.metrics.position_ratio * 100).toFixed(1)}%`} />
+      </div>
+    </div>
+  );
+}
+
+function AccountDetailCard({ snapshot }: { snapshot: AccountSnapshot }) {
+  return (
+    <section className="border border-hairline rounded-xl bg-surface-card p-4">
+      <PanelHeader icon={<Wallet size={16} />} title={snapshot.account.name} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+        <Metric label="现金" value={formatMoney(snapshot.metrics.cash)} />
+        <Metric label="总资产" value={formatMoney(snapshot.metrics.total_asset)} />
+        <Metric label="浮盈亏" value={formatMoney(snapshot.metrics.floating_pnl)} tone={tone(snapshot.metrics.floating_pnl)} />
+        <Metric label="仓位" value={`${(snapshot.metrics.position_ratio * 100).toFixed(1)}%`} />
+      </div>
+      <AssetChart points={snapshot.asset_points} />
+      <PositionTable positions={snapshot.positions} />
+      <div className="mt-3 border-t border-hairline pt-3">
+        <PanelHeader icon={<MessageSquare size={15} />} title="绑定会话" />
+        {snapshot.sessions.length === 0 ? (
+          <p className="text-sm text-text-muted">暂无绑定 Session。</p>
+        ) : (
+          <div className="grid gap-1.5 text-sm">
+            {snapshot.sessions.map((session) => (
+              <div key={session.id} className="flex items-center justify-between gap-3 border-b border-hairline/50 py-1.5">
+                <span className="text-text-on-dark truncate">{session.name}</span>
+                <span className="text-xs text-text-muted">{session.model ?? session.provider_name ?? "--"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PositionTable({ positions }: { positions: AccountSnapshot["positions"] }) {
+  if (positions.length === 0) return <EmptyState title="暂无持仓" description="成交买入后显示持仓。" />;
+  return (
+    <div className="mt-3 max-h-[220px] overflow-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-text-muted text-xs border-b border-hairline">
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">时间</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">开</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">高</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">低</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">收</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">量</th>
-            <th className="pb-2 font-medium sticky top-0 bg-surface-card">额</th>
+          <tr className="text-left text-xs text-text-muted border-b border-hairline">
+            <th className="py-2 font-medium">代码</th>
+            <th className="py-2 font-medium">数量</th>
+            <th className="py-2 font-medium">可用</th>
+            <th className="py-2 font-medium">成本</th>
+            <th className="py-2 font-medium">市值</th>
+            <th className="py-2 font-medium">浮盈亏</th>
           </tr>
         </thead>
         <tbody>
-          {bars.slice(0, 16).map((bar, i) => (
-            <tr key={`${barTime(bar)}-${i}`} className="border-b border-hairline/50">
-              <td className="py-1.5 text-text-on-dark font-mono text-xs">
-                {barTime(bar)}
-              </td>
-              <td className="py-1.5 text-text-muted">{formatValue(bar.open)}</td>
-              <td className="py-1.5 text-text-muted">{formatValue(bar.high)}</td>
-              <td className="py-1.5 text-text-muted">{formatValue(bar.low)}</td>
-              <td className="py-1.5 text-text-on-dark">{formatValue(bar.close)}</td>
-              <td className="py-1.5 text-text-muted">{formatValue(bar.volume)}</td>
-              <td className="py-1.5 text-text-muted">{formatValue(bar.amount)}</td>
+          {positions.map((row) => (
+            <tr key={row.id} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-on-dark">{row.symbol}</td>
+              <td className="py-1.5 text-text-muted">{row.quantity}</td>
+              <td className="py-1.5 text-text-muted">{row.available_quantity}</td>
+              <td className="py-1.5 text-text-muted">{row.avg_cost}</td>
+              <td className="py-1.5 text-text-on-dark">{formatMoney(row.market_value)}</td>
+              <td className={`py-1.5 ${toneClass(row.unrealized_pnl)}`}>{formatMoney(row.unrealized_pnl)}</td>
             </tr>
           ))}
         </tbody>
@@ -655,32 +452,187 @@ function MarketBarsTable({ bars }: { bars: Record<string, unknown>[] }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  PlaceholderSection                                                */
-/* ------------------------------------------------------------------ */
-
-function PlaceholderSection({
-  title,
-  description
-}: {
-  title: string;
-  description: string;
-}) {
+function TradeList({ trades, compact = false }: { trades: TradeRow[]; compact?: boolean }) {
+  if (trades.length === 0) return <EmptyState title="暂无成交" description="成交后会显示最近记录。" />;
   return (
-    <section className="border border-hairline rounded-xl bg-surface-card p-4">
-      <PanelHeader title={title} icon={<Activity size={16} />} />
-      <EmptyState title="功能占位" description={description} />
-    </section>
+    <div className="grid gap-2">
+      {trades.slice(0, compact ? 8 : 20).map((trade) => (
+        <div key={trade.id} className="flex items-center justify-between gap-3 border-b border-hairline/60 pb-2">
+          <div>
+            <strong className="block text-sm text-text-on-dark">{trade.side === "buy" ? "买入" : "卖出"} {trade.symbol}</strong>
+            <span className="text-xs text-text-muted">{humanTime(trade.traded_at)} / {trade.account_name ?? "--"}</span>
+          </div>
+          <span className="text-sm text-text-on-dark">{trade.quantity} @ {trade.price}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
-function viewTabDesc(tab: string): string {
+function TradeTable({ trades }: { trades: TradeRow[] }) {
+  if (trades.length === 0) return <EmptyState title="暂无成交" description="没有匹配当前筛选条件的成交。" />;
   return (
-    {
-      交易历史: "后端尚未提供交易历史接口。",
-      资产曲线: "后端尚未接入模拟交易账本和资产曲线接口。",
-      决策日志: "后端尚未提供决策日志聚合接口。",
-      时间线控制: "后端尚未提供模拟时间线控制接口。"
-    }[tab] ?? "查看子页面"
+    <div className="max-h-[560px] overflow-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-text-muted border-b border-hairline">
+            <th className="py-2 font-medium">时间</th>
+            <th className="py-2 font-medium">账户</th>
+            <th className="py-2 font-medium">代码</th>
+            <th className="py-2 font-medium">方向</th>
+            <th className="py-2 font-medium">价格</th>
+            <th className="py-2 font-medium">数量</th>
+            <th className="py-2 font-medium">成交额</th>
+            <th className="py-2 font-medium">费用</th>
+            <th className="py-2 font-medium">Session</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map((trade) => (
+            <tr key={trade.id} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-muted">{humanTime(trade.traded_at)}</td>
+              <td className="py-1.5 text-text-on-dark">{trade.account_name ?? "--"}</td>
+              <td className="py-1.5 font-mono text-text-on-dark">{trade.symbol}</td>
+              <td className={`py-1.5 ${trade.side === "buy" ? "rise" : "fall"}`}>{trade.side === "buy" ? "买入" : "卖出"}</td>
+              <td className="py-1.5 text-text-muted">{trade.price}</td>
+              <td className="py-1.5 text-text-muted">{trade.quantity}</td>
+              <td className="py-1.5 text-text-on-dark">{formatMoney(trade.turnover)}</td>
+              <td className="py-1.5 text-text-muted">{formatMoney(trade.total_fee)}</td>
+              <td className="py-1.5 text-text-muted">{trade.session_name ?? "--"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+function AssetChart({ points, compact = false }: { points: AssetPoint[]; compact?: boolean }) {
+  if (points.length < 2) return <EmptyState title="曲线点不足" description="至少需要两个资产点。" />;
+  const values = points.map((point) => Number(point.total_asset)).filter(Number.isFinite);
+  return (
+    <svg className={`w-full ${compact ? "h-[72px]" : "h-[150px]"} mt-2`} viewBox="0 0 100 60" role="img" aria-label="资产曲线">
+      <defs>
+        <linearGradient id="assetLine" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0%" stopColor="var(--color-brand-primary)" />
+          <stop offset="100%" stopColor="var(--color-accent-turquoise)" />
+        </linearGradient>
+      </defs>
+      <polyline points={linePoints(values, 96, 46, 2, 7)} fill="none" stroke="url(#assetLine)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AssetPointTable({ points }: { points: AssetPoint[] }) {
+  if (points.length === 0) return null;
+  return (
+    <div className="mt-3 max-h-[260px] overflow-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-text-muted border-b border-hairline">
+            <th className="py-2 font-medium">时间</th>
+            <th className="py-2 font-medium">现金</th>
+            <th className="py-2 font-medium">持仓市值</th>
+            <th className="py-2 font-medium">总资产</th>
+            <th className="py-2 font-medium">来源</th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.slice().reverse().map((point, index) => (
+            <tr key={`${point.time}-${index}`} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-muted">{humanTime(point.time)}</td>
+              <td className="py-1.5 text-text-muted">{formatMoney(point.cash)}</td>
+              <td className="py-1.5 text-text-muted">{formatMoney(point.market_value)}</td>
+              <td className="py-1.5 text-text-on-dark">{formatMoney(point.total_asset)}</td>
+              <td className="py-1.5 text-text-muted">{point.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MiniChart({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  return (
+    <svg className="w-full h-[120px]" viewBox="0 0 100 52" role="img" aria-label="收盘价走势">
+      <polyline points={linePoints(values, 96, 42, 2, 5)} fill="none" stroke="var(--color-trading-rise)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {Object.entries(data).slice(0, 12).map(([key, value]) => (
+        <div key={key} className="rounded-lg border border-hairline bg-surface-canvas/50 p-2">
+          <span className="block text-xs text-text-muted">{key}</span>
+          <strong className="block mt-1 truncate text-text-on-dark">{formatValue(value)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LogList({ logs }: { logs: ViewLogRow[] }) {
+  return (
+    <div className="grid gap-2">
+      {logs.map((log) => (
+        <article key={log.id} className="rounded-lg border border-hairline bg-surface-canvas/50 p-3">
+          <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
+            <span>{log.account_name ?? "未绑定账户"} / {log.session_name ?? log.session_id}</span>
+            <span>{humanTime(log.created_at)}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-text-on-dark">
+              {log.side === "buy" ? "买入" : "卖出"} {log.symbol ?? "--"}
+            </h3>
+            <span className="rounded-full border border-hairline px-2 py-0.5 text-xs text-text-muted">
+              {log.quantity ?? "--"} 股
+            </span>
+            <span className="rounded-full border border-hairline px-2 py-0.5 text-xs text-text-muted">
+              {log.price ? `成交价 ${log.price}` : log.status ?? "--"}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-text-body">{log.trade_reason || "未记录交易理由"}</p>
+          {log.error && <p className="mt-2 text-xs text-trading-rise">{log.error}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function TimelineList({ items }: { items: ViewTimelineRow[] }) {
+  return (
+    <div className="relative grid gap-2 pl-4 before:absolute before:left-1 before:top-1 before:bottom-1 before:w-px before:bg-hairline">
+      {items.map((item) => (
+        <article key={`${item.type}-${item.id}`} className="relative rounded-lg border border-hairline bg-surface-canvas/50 p-3 before:absolute before:-left-[15px] before:top-4 before:w-2 before:h-2 before:rounded-full before:bg-brand-primary">
+          <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
+            <span>{item.type} / {item.account_name ?? "未绑定账户"}</span>
+            <span>{humanTime(item.time)}</span>
+          </div>
+          <h3 className="mt-1 text-sm font-semibold text-text-on-dark">{item.title}</h3>
+          <p className="mt-1 text-sm text-text-body">{item.summary || "--"}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function sectionFromPath(pathname: string): ViewSection {
+  const value = pathname.split("/").filter(Boolean)[1] as ViewSection | undefined;
+  return viewSections.some((item) => item.key === value) ? value as ViewSection : "overview";
+}
+
+function tone(value: number | undefined): "rise" | "fall" | "flat" {
+  const num = Number(value ?? 0);
+  if (num > 0) return "rise";
+  if (num < 0) return "fall";
+  return "flat";
+}
+
+function toneClass(value: number | undefined): string {
+  const t = tone(value);
+  return t === "rise" ? "rise" : t === "fall" ? "fall" : "text-text-muted";
 }

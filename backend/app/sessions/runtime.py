@@ -340,6 +340,17 @@ class SessionRunManager:
                         "error": tool_result.error,
                     },
                 )
+                if call.name.startswith(("order_", "portfolio_")) and simulator_account_id:
+                    await self._send(
+                        session_id,
+                        "portfolio_updated",
+                        {
+                            "run_id": run_id,
+                            "account_id": simulator_account_id,
+                            "tool_call_id": tool_call_id,
+                            "tool_name": call.name,
+                        },
+                    )
 
         self._finish_run(run_id, status="max_tool_rounds_reached", token_usage=usage)
         await self._send(

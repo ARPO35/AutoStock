@@ -14,6 +14,7 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
         side_label: str,
         symbol: str,
         quantity: int,
+        trade_reason: str,
     ) -> dict[str, Any]:
         order = result.get("order") or {}
         trade = result.get("trade") or {}
@@ -40,6 +41,7 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             "tax": tax,
             "fee": total_fee,
             "turnover": turnover,
+            "trade_reason": trade_reason,
             "status": "已成交",
         }
         if side_label == "买入":
@@ -61,6 +63,9 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             raise TradingRuleError("缺少 simulator_account_id，且当前会话未绑定模拟账户。")
         symbol = str(arguments["symbol"]).strip()
         quantity = int(arguments["quantity"])
+        trade_reason = str(arguments["trade_reason"]).strip()
+        if not trade_reason:
+            raise TradingRuleError("trade_reason is required.")
         session_id = str((runtime_context or {}).get("session_id") or "")
 
         result = await engine.place_buy(
@@ -75,6 +80,7 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             side_label="买入",
             symbol=symbol,
             quantity=quantity,
+            trade_reason=trade_reason,
         )
 
     async def order_sell(
@@ -90,6 +96,9 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             raise TradingRuleError("缺少 simulator_account_id，且当前会话未绑定模拟账户。")
         symbol = str(arguments["symbol"]).strip()
         quantity = int(arguments["quantity"])
+        trade_reason = str(arguments["trade_reason"]).strip()
+        if not trade_reason:
+            raise TradingRuleError("trade_reason is required.")
         session_id = str((runtime_context or {}).get("session_id") or "")
 
         result = await engine.place_sell(
@@ -104,6 +113,7 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             side_label="卖出",
             symbol=symbol,
             quantity=quantity,
+            trade_reason=trade_reason,
         )
 
     async def order_cancel(
@@ -144,8 +154,13 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
                         "type": "integer",
                         "description": "买入股数，必须为100的整数倍。",
                     },
+                    "trade_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "本次买入的交易理由。必须是可展示给用户的简洁自然语言摘要，不要输出完整思维链。",
+                    },
                 },
-                "required": ["symbol", "quantity"],
+                "required": ["symbol", "quantity", "trade_reason"],
                 "additionalProperties": False,
             },
             handler=order_buy,
@@ -170,8 +185,13 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
                         "type": "integer",
                         "description": "卖出股数，不能超过可用持仓。",
                     },
+                    "trade_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "本次卖出的交易理由。必须是可展示给用户的简洁自然语言摘要，不要输出完整思维链。",
+                    },
                 },
-                "required": ["symbol", "quantity"],
+                "required": ["symbol", "quantity", "trade_reason"],
                 "additionalProperties": False,
             },
             handler=order_sell,

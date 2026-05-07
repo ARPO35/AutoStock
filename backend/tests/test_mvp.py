@@ -559,7 +559,7 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
                     ToolCall(
                         id="tool-call-order-buy",
                         name="order_buy",
-                        arguments='{"symbol":"000001","quantity":100}',
+                        arguments='{"symbol":"000001","quantity":100,"trade_reason":"测试会话归因买入"}',
                     )
                 ],
             )

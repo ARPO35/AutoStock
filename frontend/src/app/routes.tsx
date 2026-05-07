@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { TradePage } from "@/pages/trade/TradePage";
 import { ViewPage } from "@/pages/view/ViewPage";
@@ -12,7 +12,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <TradePage /> },
       { path: "trade", element: <TradePage /> },
-      { path: "view", element: <ViewPage /> },
+      { path: "view", element: <Navigate to="/view/overview" replace /> },
+      { path: "view/*", element: <ViewPage /> },
       { path: "edit", element: <EditPage /> },
       { path: "manage", element: <ManagePage /> }
     ]

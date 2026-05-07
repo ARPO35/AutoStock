@@ -38,7 +38,7 @@ export function TradePage() {
   }, [setInspectorWidth]);
 
   return (
-    <section className={`flex min-h-0 overflow-hidden ${leftCollapsed ? "left-collapsed" : ""}`}>
+    <section className={`flex h-full min-h-0 overflow-hidden ${leftCollapsed ? "left-collapsed" : ""}`}>
       <AccountSessionSidebar />
 
       <div className="flex-1 min-w-[520px] flex flex-col min-h-0">
@@ -53,7 +53,7 @@ export function TradePage() {
       />
 
       <div
-        className="min-h-0 overflow-hidden flex-shrink-0"
+        className="h-full min-h-0 overflow-hidden flex-shrink-0"
         style={{ width: `${inspectorWidth}px` }}
       >
         <AccountInspectorPanel />

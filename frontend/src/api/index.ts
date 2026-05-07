@@ -80,6 +80,7 @@ export interface RuntimeEvent {
   type: string;
   session_id: string;
   run_id?: string;
+  account_id?: string;
   tool_call_id?: string;
   tool_name?: string;
   arguments_json?: string;
@@ -253,6 +254,174 @@ export interface PromptRole {
   entries: PromptEntry[];
 }
 
+export interface ViewFilters {
+  account_id?: string;
+  start?: string;
+  end?: string;
+  symbol?: string;
+}
+
+export interface AccountMetrics {
+  initial_cash: number;
+  cash: number;
+  frozen_cash: number;
+  total_asset: number;
+  market_value: number;
+  floating_pnl: number;
+  total_pnl: number;
+  total_return_pct: number;
+  position_ratio: number;
+  position_count: number;
+  session_count: number;
+  running_sessions: number;
+}
+
+export interface PositionRow {
+  id: string;
+  simulator_account_id: string;
+  symbol: string;
+  name: string;
+  quantity: number;
+  available_quantity: number;
+  avg_cost: number;
+  market_value: number;
+  unrealized_pnl: number;
+  updated_at: string;
+}
+
+export interface OrderRow {
+  id: string;
+  session_id: string | null;
+  simulator_account_id: string;
+  account_name?: string | null;
+  session_name?: string | null;
+  symbol: string;
+  name: string;
+  side: string;
+  order_type: string;
+  price: number;
+  quantity: number;
+  filled_quantity: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TradeRow {
+  id: string;
+  order_id: string;
+  session_id: string | null;
+  simulator_account_id: string;
+  account_name?: string | null;
+  session_name?: string | null;
+  symbol: string;
+  name?: string | null;
+  side: string;
+  price: number;
+  quantity: number;
+  fee: number;
+  tax: number;
+  total_fee?: number;
+  turnover?: number;
+  traded_at: string;
+}
+
+export interface AssetPoint {
+  time: string;
+  cash: number;
+  market_value: number;
+  total_asset: number;
+  source: "initial" | "trade" | "current" | string;
+  trade_id?: string;
+}
+
+export interface AccountSnapshot {
+  account: Account;
+  metrics: AccountMetrics;
+  positions: PositionRow[];
+  recent_orders: OrderRow[];
+  recent_trades: TradeRow[];
+  asset_points: AssetPoint[];
+  sessions: Array<Session & { provider_name?: string | null; provider_type?: string | null }>;
+}
+
+export interface ViewLogRow {
+  id: string;
+  run_id?: string | null;
+  session_id: string;
+  session_name?: string | null;
+  account_id?: string | null;
+  account_name?: string | null;
+  tool_name: "order_buy" | "order_sell" | string;
+  side: "buy" | "sell" | string;
+  symbol?: string | null;
+  quantity?: number | string | null;
+  price?: number | string | null;
+  status?: string | null;
+  trade_reason: string;
+  created_at: string;
+  finished_at?: string | null;
+  error?: string | null;
+  result?: Record<string, unknown>;
+}
+
+export interface ViewTimelineRow {
+  id: string;
+  type: string;
+  time: string;
+  account_id?: string | null;
+  account_name?: string | null;
+  session_id?: string | null;
+  session_name?: string | null;
+  symbol?: string | null;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ViewOverviewResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  summary: Record<string, number>;
+  accounts: AccountSnapshot[];
+  recent_trades: TradeRow[];
+  recent_logs: ViewLogRow[];
+}
+
+export interface ViewAccountsResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  accounts: AccountSnapshot[];
+}
+
+export interface ViewTradesResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  summary: Record<string, number>;
+  trades: TradeRow[];
+}
+
+export interface ViewAssetsResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  summary: Record<string, number>;
+  series: Array<{ account_id: string; account_name: string; points: AssetPoint[] }>;
+}
+
+export interface ViewLogsResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  summary: Record<string, number>;
+  logs: ViewLogRow[];
+}
+
+export interface ViewTimelineResponse {
+  generated_at: string;
+  filters: ViewFilters;
+  summary: Record<string, number>;
+  items: ViewTimelineRow[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -273,6 +442,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+function viewQuery(filters?: ViewFilters & { limit?: number }): string {
+  const query = new URLSearchParams();
+  if (filters?.account_id) query.set("account_id", filters.account_id);
+  if (filters?.start) query.set("start", filters.start);
+  if (filters?.end) query.set("end", filters.end);
+  if (filters?.symbol) query.set("symbol", filters.symbol);
+  if (filters?.limit) query.set("limit", String(filters.limit));
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
 }
 
 export const api = {
@@ -354,6 +534,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ status })
     }),
+  viewOverview: (filters?: ViewFilters) =>
+    request<ViewOverviewResponse>(`/api/view/overview${viewQuery(filters)}`),
+  viewAccounts: (filters?: ViewFilters) =>
+    request<ViewAccountsResponse>(`/api/view/accounts${viewQuery(filters)}`),
+  accountSnapshot: (accountId: string, filters?: Omit<ViewFilters, "account_id">) =>
+    request<AccountSnapshot>(`/api/view/accounts/${accountId}/snapshot${viewQuery(filters)}`),
+  viewTrades: (filters?: ViewFilters & { limit?: number }) =>
+    request<ViewTradesResponse>(`/api/view/trades${viewQuery(filters)}`),
+  viewAssets: (filters?: ViewFilters) =>
+    request<ViewAssetsResponse>(`/api/view/assets${viewQuery(filters)}`),
+  viewLogs: (filters?: ViewFilters & { limit?: number }) =>
+    request<ViewLogsResponse>(`/api/view/logs${viewQuery(filters)}`),
+  viewTimeline: (filters?: ViewFilters & { limit?: number }) =>
+    request<ViewTimelineResponse>(`/api/view/timeline${viewQuery(filters)}`),
   // --- Provider 管理 ---
   updateProvider: (providerId: string, payload: Record<string, unknown>) =>
     request<Provider>(`/api/providers/${providerId}`, {
