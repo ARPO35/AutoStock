@@ -50,6 +50,36 @@ class SQLiteStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE llm_providers ADD COLUMN run_token_limit INTEGER"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE orders ADD COLUMN run_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE orders ADD COLUMN tool_call_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE trades ADD COLUMN run_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE trades ADD COLUMN tool_call_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
             self._seed_default_prompt_role()
             self.connection.commit()
 
@@ -211,6 +241,7 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     supports_strict_schema INTEGER NOT NULL DEFAULT 0,
     thinking_mode TEXT,
     strict_tool_schema INTEGER NOT NULL DEFAULT 0,
+    run_token_limit INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -276,6 +307,8 @@ CREATE TABLE IF NOT EXISTS orders (
     quantity INTEGER NOT NULL,
     filled_quantity INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
+    run_id TEXT,
+    tool_call_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -300,6 +333,8 @@ CREATE TABLE IF NOT EXISTS trades (
     quantity INTEGER NOT NULL,
     fee REAL NOT NULL DEFAULT 0,
     tax REAL NOT NULL DEFAULT 0,
+    run_id TEXT,
+    tool_call_id TEXT,
     traded_at TEXT NOT NULL
 );
 
@@ -329,6 +364,36 @@ CREATE TABLE IF NOT EXISTS chat_runs (
 
 CREATE INDEX IF NOT EXISTS idx_chat_runs_session_started
     ON chat_runs(session_id, started_at);
+
+CREATE TABLE IF NOT EXISTS llm_usage_records (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES chat_runs(id) ON DELETE CASCADE,
+    provider_id TEXT,
+    provider_type TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    thinking_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_ms REAL NOT NULL DEFAULT 0,
+    call_index INTEGER NOT NULL DEFAULT 1,
+    purpose TEXT NOT NULL DEFAULT 'session_run',
+    raw_usage_json TEXT NOT NULL DEFAULT '{}',
+    token_cap INTEGER,
+    cap_exceeded INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_session_created
+    ON llm_usage_records(session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_run
+    ON llm_usage_records(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider_created
+    ON llm_usage_records(provider_id, created_at);
 
 CREATE TABLE IF NOT EXISTS chat_tool_calls (
     id TEXT PRIMARY KEY,

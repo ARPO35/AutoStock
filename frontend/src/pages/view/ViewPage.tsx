@@ -484,6 +484,7 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
             <th className="py-2 font-medium">数量</th>
             <th className="py-2 font-medium">成交额</th>
             <th className="py-2 font-medium">费用</th>
+            <th className="py-2 font-medium">Run Token</th>
             <th className="py-2 font-medium">Session</th>
           </tr>
         </thead>
@@ -498,6 +499,9 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
               <td className="py-1.5 text-text-muted">{trade.quantity}</td>
               <td className="py-1.5 text-text-on-dark">{formatMoney(trade.turnover)}</td>
               <td className="py-1.5 text-text-muted">{formatMoney(trade.total_fee)}</td>
+              <td className="py-1.5 text-text-muted font-mono">
+                {formatTokens(trade.run_total_tokens)}
+              </td>
               <td className="py-1.5 text-text-muted">{trade.session_name ?? "--"}</td>
             </tr>
           ))}
@@ -635,4 +639,10 @@ function tone(value: number | undefined): "rise" | "fall" | "flat" {
 function toneClass(value: number | undefined): string {
   const t = tone(value);
   return t === "rise" ? "rise" : t === "fall" ? "fall" : "text-text-muted";
+}
+
+function formatTokens(value: number | null | undefined): string {
+  if (value == null) return "--";
+  const num = Number(value);
+  return Number.isFinite(num) ? new Intl.NumberFormat("zh-CN").format(num) : "--";
 }

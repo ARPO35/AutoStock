@@ -103,6 +103,8 @@ class SimulatorEngine:
         account_id: str,
         symbol: str,
         quantity: int,
+        run_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> dict[str, object]:
         self.rules.check_trading_hours()
         self._rollover_t1_for_account(account_id)
@@ -143,6 +145,8 @@ class SimulatorEngine:
             tax=tax,
             total_fee=total_fee,
             total_cost=total_cost,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
         )
 
     async def place_sell(
@@ -151,6 +155,8 @@ class SimulatorEngine:
         account_id: str,
         symbol: str,
         quantity: int,
+        run_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> dict[str, object]:
         self.rules.check_trading_hours()
         self._rollover_t1_for_account(account_id)
@@ -201,6 +207,8 @@ class SimulatorEngine:
             tax=tax,
             total_fee=total_fee,
             total_cost=total_proceeds,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
         )
 
     async def _execute_trade(
@@ -216,6 +224,8 @@ class SimulatorEngine:
         tax: float,
         total_fee: float,
         total_cost: float,
+        run_id: str | None,
+        tool_call_id: str | None,
     ) -> dict[str, object]:
         now = utc_now()
         account = self.get_account(account_id)
@@ -226,11 +236,26 @@ class SimulatorEngine:
             """
             INSERT INTO orders (
                 id, session_id, simulator_account_id, symbol, name,
-                side, order_type, price, quantity, filled_quantity, status, created_at, updated_at
+                side, order_type, price, quantity, filled_quantity, status,
+                run_id, tool_call_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'market', ?, ?, ?, 'filled', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'market', ?, ?, ?, 'filled', ?, ?, ?, ?)
             """,
-            (order_id, session_id_val, account_id, symbol, name, side, price, quantity, quantity, now, now),
+            (
+                order_id,
+                session_id_val,
+                account_id,
+                symbol,
+                name,
+                side,
+                price,
+                quantity,
+                quantity,
+                run_id,
+                tool_call_id,
+                now,
+                now,
+            ),
         )
 
         trade_id = uuid4().hex
@@ -238,11 +263,25 @@ class SimulatorEngine:
             """
             INSERT INTO trades (
                 id, order_id, session_id, simulator_account_id,
-                symbol, side, price, quantity, fee, tax, traded_at
+                symbol, side, price, quantity, fee, tax, run_id, tool_call_id, traded_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (trade_id, order_id, session_id_val, account_id, symbol, side, price, quantity, commission, tax, now),
+            (
+                trade_id,
+                order_id,
+                session_id_val,
+                account_id,
+                symbol,
+                side,
+                price,
+                quantity,
+                commission,
+                tax,
+                run_id,
+                tool_call_id,
+                now,
+            ),
         )
 
         if side == "buy":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -14,6 +15,7 @@ from app.llm.registry import provider_from_config
 from app.storage.sqlite import SQLiteStore
 from app.tools.executor import ToolExecutor, ToolExecutionResult
 from app.tools.registry import ToolRegistry
+from app.usage import aggregate_usage, record_llm_usage
 
 ProviderFactory = Callable[[LLMProviderConfig], ChatProvider]
 PROMPT_REF_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
@@ -94,7 +96,7 @@ class SessionRunManager:
                 raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
             provider_row = self._get_provider(str(provider_id))
             model = session.get("model") or provider_row["model"]
-            config = self._provider_config(provider_row)
+            config = replace(self._provider_config(provider_row), model=str(model))
             provider = self.provider_factory(config)
 
             if message:
@@ -136,6 +138,7 @@ class SessionRunManager:
                     session_id=session_id,
                     simulator_account_id=simulator_account_id,
                     provider=provider,
+                    provider_id=str(provider_id),
                     config=config,
                     max_tool_rounds=max_tool_rounds,
                     system_prompt=rendered_prompts.system_content,
@@ -159,6 +162,7 @@ class SessionRunManager:
         session_id: str,
         simulator_account_id: str | None,
         provider: ChatProvider,
+        provider_id: str | None,
         config: LLMProviderConfig,
         max_tool_rounds: int,
         system_prompt: str | None,
@@ -169,6 +173,8 @@ class SessionRunManager:
         executor = ToolExecutor(self.tool_registry)
 
         usage: dict[str, Any] | None = None
+        usage_records: list[dict[str, Any]] = []
+        call_index = 0
 
         for _round in range(max_tool_rounds):
             if cancel_event.is_set():
@@ -182,6 +188,9 @@ class SessionRunManager:
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
             tool_calls_by_index: dict[int, dict[str, str]] = {}
+            call_index += 1
+            call_usage: dict[str, Any] | None = None
+            call_started = time.perf_counter()
 
             async for chunk in provider.chat_stream(config, messages, tools):  # type: ignore[attr-defined]
                 if cancel_event.is_set():
@@ -194,7 +203,7 @@ class SessionRunManager:
                     return {"run_id": run_id, "status": "cancelled"}
                 chunk_usage = chunk.get("usage")
                 if chunk_usage:
-                    usage = chunk_usage
+                    call_usage = chunk_usage
 
                 choices = chunk.get("choices") or []
                 if not choices:
@@ -229,6 +238,24 @@ class SessionRunManager:
                         tc["name"] = fn["name"]
                     if fn.get("arguments"):
                         tc["arguments"] += fn["arguments"]
+
+            usage_records.append(
+                record_llm_usage(
+                    self.store,
+                    session_id=session_id,
+                    run_id=run_id,
+                    provider_id=provider_id,
+                    provider_type=config.provider_type,
+                    provider_name=config.name,
+                    model=config.model,
+                    usage=call_usage,
+                    latency_ms=(time.perf_counter() - call_started) * 1000,
+                    call_index=call_index,
+                    purpose="session_run",
+                    token_cap=config.run_token_limit,
+                )
+            )
+            usage = aggregate_usage(usage_records)
 
             full_content = "".join(content_parts)
             full_reasoning = "".join(reasoning_parts) or None
@@ -636,6 +663,7 @@ class SessionRunManager:
             supports_strict_schema=bool(row["supports_strict_schema"]),
             thinking_mode=str(row["thinking_mode"]) if row["thinking_mode"] is not None else None,
             strict_tool_schema=bool(row["strict_tool_schema"]),
+            run_token_limit=int(row["run_token_limit"]) if row.get("run_token_limit") is not None else None,
         )
 
     def _format_run_error(self, exc: Exception) -> str:

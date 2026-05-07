@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_store
+from app.api.usage import _usage_clauses, _usage_runs, _usage_totals
 from app.sessions.runtime import SessionRunError
 from app.storage.sqlite import SQLiteStore
 
@@ -396,6 +397,20 @@ async def list_runs(
         """,
         (session_id,),
     )
+
+
+@router.get("/{session_id}/usage")
+async def get_session_usage(
+    session_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    _get_session_or_404(store, session_id)
+    clauses, params = _usage_clauses(None, session_id, None, None, None)
+    return {
+        "session_id": session_id,
+        "summary": _usage_totals(store, clauses, params),
+        "runs": _usage_runs(store, clauses, params, 100),
+    }
 
 
 @router.post("/{session_id}/run")

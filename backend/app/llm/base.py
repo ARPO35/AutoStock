@@ -20,6 +20,7 @@ class LLMProviderConfig:
     supports_strict_schema: bool = False
     thinking_mode: str | None = None
     strict_tool_schema: bool = False
+    run_token_limit: int | None = None
 
 
 @dataclass(frozen=True)

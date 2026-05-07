@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_store
+from app.api.usage import provider_usage_summary
 from app.llm.base import ChatMessage, LLMProviderConfig
 from app.llm.registry import provider_from_config
 from app.storage.sqlite import SQLiteStore
@@ -44,6 +45,7 @@ class ProviderCreate(BaseModel):
     supports_strict_schema: bool = False
     thinking_mode: Literal["thinking", "non_thinking"] | None = None
     strict_tool_schema: bool = False
+    run_token_limit: int | None = Field(default=None, ge=1)
 
 
 class ProviderRead(BaseModel):
@@ -62,6 +64,7 @@ class ProviderRead(BaseModel):
     supports_strict_schema: bool
     thinking_mode: str | None
     strict_tool_schema: bool
+    run_token_limit: int | None
     created_at: str
     updated_at: str
 
@@ -105,9 +108,10 @@ async def create_provider(
             INSERT INTO llm_providers (
                 id, provider_type, name, base_url, api_key, model, temperature,
                 max_tokens, timeout_seconds, supports_tools, supports_parallel_tool_calls,
-                supports_strict_schema, thinking_mode, strict_tool_schema, created_at, updated_at
+                supports_strict_schema, thinking_mode, strict_tool_schema, run_token_limit,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 provider_id,
@@ -124,6 +128,7 @@ async def create_provider(
                 int(payload.supports_strict_schema),
                 payload.thinking_mode,
                 int(payload.strict_tool_schema),
+                payload.run_token_limit,
                 now,
                 now,
             ),
@@ -178,6 +183,7 @@ class ProviderUpdate(BaseModel):
     supports_strict_schema: bool | None = None
     strict_tool_schema: bool | None = None
     thinking_mode: str | None = None
+    run_token_limit: int | None = Field(default=None, ge=1)
 
 
 class ProviderModelsResponse(BaseModel):
@@ -202,6 +208,13 @@ class ProviderUsageResponse(BaseModel):
     total_runs: int
     active_sessions: int
     model: str
+    llm_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    thinking_tokens: int = 0
+    total_tokens: int = 0
+    latency_ms: float = 0
+    cap_exceeded_count: int = 0
 
 
 @router.put("/api/providers/{provider_id}", response_model=ProviderRead)
@@ -248,6 +261,9 @@ async def update_provider(
     if payload.thinking_mode is not None:
         setters.append("thinking_mode = ?")
         params.append(payload.thinking_mode)
+    if payload.run_token_limit is not None:
+        setters.append("run_token_limit = ?")
+        params.append(payload.run_token_limit)
 
     if setters:
         setters.append("updated_at = ?")
@@ -364,15 +380,6 @@ async def provider_usage(
     """返回该 Provider 的使用统计。"""
     _get_provider_or_404(store, provider_id)
 
-    total_runs = store.fetch_one(
-        """
-        SELECT COUNT(*) AS cnt
-        FROM chat_runs
-        WHERE provider_id = ?
-        """,
-        (provider_id,),
-    )
-
     active_sessions = store.fetch_one(
         """
         SELECT COUNT(DISTINCT id) AS cnt
@@ -383,12 +390,20 @@ async def provider_usage(
     )
 
     provider = _get_provider_or_404(store, provider_id)
+    usage = provider_usage_summary(store, provider_id)
 
     return {
         "provider_id": provider_id,
-        "total_runs": int(total_runs["cnt"]) if total_runs else 0,
+        "total_runs": int(usage.get("total_runs") or 0),
         "active_sessions": int(active_sessions["cnt"]) if active_sessions else 0,
         "model": str(provider["model"]),
+        "llm_calls": int(usage.get("llm_calls") or 0),
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "thinking_tokens": int(usage.get("thinking_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+        "latency_ms": float(usage.get("latency_ms") or 0),
+        "cap_exceeded_count": int(usage.get("cap_exceeded_count") or 0),
     }
 
 
@@ -408,6 +423,7 @@ def _build_config(row: dict[str, object]) -> LLMProviderConfig:
         supports_strict_schema=bool(row["supports_strict_schema"]),
         thinking_mode=str(row["thinking_mode"]) if row["thinking_mode"] is not None else None,
         strict_tool_schema=bool(row["strict_tool_schema"]),
+        run_token_limit=int(row["run_token_limit"]) if row.get("run_token_limit") is not None else None,
     )
 
 

@@ -12,6 +12,7 @@ from app.api.sessions import router as sessions_router
 from app.api.simulator import router as simulator_router
 from app.api.tavily import router as tavily_router
 from app.api.tools import router as tools_router
+from app.api.usage import router as usage_router
 from app.api.view import router as view_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(market_router)
     app.include_router(simulator_router)
     app.include_router(tavily_router)
+    app.include_router(usage_router)
     app.include_router(view_router)
     app.include_router(ws_router)
 

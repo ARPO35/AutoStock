@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   RefreshCw,
   KeyRound,
   Bot,
@@ -14,9 +15,10 @@ import {
   Trash2,
   Plug,
   Zap,
-  Search
+  Search,
+  BarChart3
 } from "lucide-react";
-import type { ToolSchema, DataConflict, CacheStatusRow, ProviderModelsResponse, ProviderChatTestResponse, ProviderUsageResponse, TavilyConfig, TavilyUsageResponse, TavilyTestResponse } from "@/api";
+import type { ToolSchema, DataConflict, CacheStatusRow, ProviderModelsResponse, ProviderChatTestResponse, ProviderUsageResponse, TavilyConfig, TavilyUsageResponse, TavilyTestResponse, UsageSummaryResponse, UsageRunRow, UsageGroupRow } from "@/api";
 import { api } from "@/api";
 import { useDataStore } from "@/stores/dataStore";
 import { useMarketStore } from "@/stores/marketStore";
@@ -107,6 +109,7 @@ export function ManagePage() {
           {manageSection === "模型与API" && <ProviderManagement />}
           {manageSection === "提示词" && <PromptManagement />}
           {manageSection === "Tavily" && <TavilyManagement />}
+          {manageSection === "用量分析" && <UsageManagement />}
           {manageSection === "Tools" && <ToolManagement />}
           {manageSection === "数据管理" && <DataManagement />}
           {manageSection === "Skills" && <SkillsPlaceholder />}
@@ -442,10 +445,21 @@ function ProviderManagement() {
                   <span className="text-text-muted w-[72px] shrink-0">Token 用量</span>
                   <span className="text-text-body font-mono">
                     {usageData[p.id]
-                      ? `${usageData[p.id].total_runs} 次运行 / ${usageData[p.id].active_sessions} 活跃会话`
+                      ? `${formatTokens(usageData[p.id].total_tokens)} / ${usageData[p.id].total_runs} runs`
                       : "加载中..."}
                   </span>
                 </div>
+                <EditableRow
+                  label="单次上限"
+                  value={p.run_token_limit ? `${p.run_token_limit} tokens` : "未设置"}
+                  editing={isEditing(p.id, "run_token_limit")}
+                  editValue={editing[p.id]?.["run_token_limit"] ?? String(p.run_token_limit ?? "")}
+                  onDoubleClick={() => startEdit(p.id, "run_token_limit", String(p.run_token_limit ?? ""))}
+                  onChange={(v) => setEditing((prev) => ({ ...prev, [p.id]: { ...prev[p.id], run_token_limit: v } }))}
+                  onSave={() => saveEdit(p.id, "run_token_limit")}
+                  onCancel={() => cancelEdit(p.id, "run_token_limit")}
+                  placeholder="例如 200000"
+                />
               </div>
 
               {/* Connection / Chat Test / Model list */}
@@ -1010,6 +1024,182 @@ function ToolManagement() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  UsageManagement                                                   */
+/* ------------------------------------------------------------------ */
+
+function UsageManagement() {
+  const [usage, setUsage] = useState<UsageSummaryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadUsage = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setUsage(await api.usageSummary());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "用量数据加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
+
+  if (loading && !usage) {
+    return (
+      <section>
+        <PanelHeader icon={<BarChart3 size={16} />} title="Token 用量分析" />
+        <p className="mt-3 text-sm text-text-muted">加载中...</p>
+      </section>
+    );
+  }
+
+  const summary = usage?.summary;
+
+  return (
+    <section className="grid gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <PanelHeader icon={<BarChart3 size={16} />} title="Token 用量分析" />
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<RefreshCw size={14} />}
+          onClick={() => void loadUsage()}
+          disabled={loading}
+        >
+          刷新
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-trading-rise/40 bg-trading-rise/10 px-3 py-2 text-sm text-trading-rise">
+          {error}
+        </div>
+      )}
+
+      {!summary || summary.llm_calls === 0 ? (
+        <EmptyState
+          title="暂无 LLM 用量"
+          description="Session 运行后，这里会展示真实 token 消耗与超限记录。"
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2">
+            <MetricBox label="总 Token" value={formatTokens(summary.total_tokens)} />
+            <MetricBox label="Prompt" value={formatTokens(summary.prompt_tokens)} />
+            <MetricBox label="Completion" value={formatTokens(summary.completion_tokens)} />
+            <MetricBox label="Thinking" value={formatTokens(summary.thinking_tokens)} />
+            <MetricBox label="LLM 调用" value={String(summary.llm_calls)} />
+            <MetricBox label="超限" value={String(summary.cap_exceeded_count)} danger={summary.cap_exceeded_count > 0} />
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+            <UsageGroupTable title="Provider" rows={usage.by_provider} />
+            <UsageGroupTable title="模型" rows={usage.by_model} />
+            <UsageGroupTable title="Session" rows={usage.by_session} />
+          </div>
+
+          <section>
+            <PanelHeader icon={<Activity size={15} />} title="最近 Run" />
+            <UsageRunTable rows={usage.recent_runs} />
+          </section>
+        </>
+      )}
+    </section>
+  );
+}
+
+function MetricBox({
+  label,
+  value,
+  danger = false
+}: {
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface-canvas/50 p-3">
+      <span className="block text-xs text-text-muted">{label}</span>
+      <strong className={`mt-1 block text-lg ${danger ? "text-trading-rise" : "text-text-on-dark"}`}>
+        {value}
+      </strong>
+    </div>
+  );
+}
+
+function UsageGroupTable({ title, rows }: { title: string; rows: UsageGroupRow[] }) {
+  return (
+    <section className="rounded-lg border border-hairline bg-surface-canvas/40 p-3">
+      <PanelHeader icon={<BarChart3 size={15} />} title={title} />
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-text-muted">暂无数据。</p>
+      ) : (
+        <div className="mt-2 max-h-[260px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-text-muted text-xs border-b border-hairline">
+                <th className="pb-2 font-medium">名称</th>
+                <th className="pb-2 font-medium">Token</th>
+                <th className="pb-2 font-medium">调用</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${title}-${row.id ?? row.name}`} className="border-b border-hairline/50">
+                  <td className="py-1.5 text-text-on-dark">{row.name ?? row.id ?? "--"}</td>
+                  <td className="py-1.5 text-text-muted font-mono">{formatTokens(row.total_tokens)}</td>
+                  <td className="py-1.5 text-text-muted">{row.llm_calls}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UsageRunTable({ rows }: { rows: UsageRunRow[] }) {
+  if (rows.length === 0) {
+    return <EmptyState title="暂无 Run 用量" description="LLM 运行完成后会记录每次调用的 token。" />;
+  }
+  return (
+    <div className="mt-2 max-h-[360px] overflow-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-text-muted text-xs border-b border-hairline">
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">时间</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">Session</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">模型</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">Token</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">调用</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.run_id ?? `${row.session_id}-${row.created_at}`} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-muted">{humanTime(row.created_at)}</td>
+              <td className="py-1.5 text-text-on-dark">{row.session_name}</td>
+              <td className="py-1.5 text-text-muted">{row.model}</td>
+              <td className="py-1.5 text-text-on-dark font-mono">{formatTokens(row.total_tokens)}</td>
+              <td className="py-1.5 text-text-muted">{row.llm_calls}</td>
+              <td className={`py-1.5 ${row.cap_exceeded_count > 0 ? "text-trading-rise" : "text-text-muted"}`}>
+                {row.cap_exceeded_count > 0 ? "超限" : "正常"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  DataManagement                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -1534,9 +1724,16 @@ function sectionIcon(section: string) {
   if (section === "模型与API") return <KeyRound size={size} />;
   if (section === "提示词") return <Code2 size={size} />;
   if (section === "Tavily") return <Search size={size} />;
+  if (section === "用量分析") return <BarChart3 size={size} />;
   if (section === "Skills") return <Bot size={size} />;
   if (section === "Tools") return <Wrench size={size} />;
   if (section === "触发器") return <Bell size={size} />;
   if (section === "数据管理") return <Database size={size} />;
   return <Settings size={size} />;
+}
+
+function formatTokens(value: number | null | undefined): string {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "--";
+  return new Intl.NumberFormat("zh-CN").format(num);
 }

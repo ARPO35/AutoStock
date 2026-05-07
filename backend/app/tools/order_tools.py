@@ -73,6 +73,8 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             account_id=account_id,
             symbol=symbol,
             quantity=quantity,
+            run_id=str((runtime_context or {}).get("run_id") or "") or None,
+            tool_call_id=str((runtime_context or {}).get("tool_call_id") or "") or None,
         )
 
         return _filled_order_result(
@@ -106,6 +108,8 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             account_id=account_id,
             symbol=symbol,
             quantity=quantity,
+            run_id=str((runtime_context or {}).get("run_id") or "") or None,
+            tool_call_id=str((runtime_context or {}).get("tool_call_id") or "") or None,
         )
 
         return _filled_order_result(

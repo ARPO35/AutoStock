@@ -303,11 +303,30 @@ def _trades(
             a.name AS account_name,
             s.name AS session_name,
             o.name AS name,
+            u.total_tokens AS run_total_tokens,
+            u.prompt_tokens AS run_prompt_tokens,
+            u.completion_tokens AS run_completion_tokens,
+            u.thinking_tokens AS run_thinking_tokens,
+            u.llm_calls AS run_llm_calls,
+            u.cap_exceeded_count AS run_cap_exceeded_count,
             ROUND(t.price * t.quantity, 2) AS turnover
         FROM trades t
         JOIN simulator_accounts a ON a.id = t.simulator_account_id
         LEFT JOIN chat_sessions s ON s.id = t.session_id
         LEFT JOIN orders o ON o.id = t.order_id
+        LEFT JOIN (
+            SELECT
+                run_id,
+                COUNT(*) AS llm_calls,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(thinking_tokens) AS thinking_tokens,
+                SUM(total_tokens) AS total_tokens,
+                SUM(cap_exceeded) AS cap_exceeded_count
+            FROM llm_usage_records
+            WHERE run_id IS NOT NULL
+            GROUP BY run_id
+        ) u ON u.run_id = t.run_id
         WHERE {' AND '.join(clauses)}
         ORDER BY t.traded_at DESC
         LIMIT ?

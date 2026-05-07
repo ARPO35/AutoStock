@@ -16,6 +16,7 @@ export interface Provider {
   supports_strict_schema: boolean;
   thinking_mode: string | null;
   strict_tool_schema: boolean;
+  run_token_limit: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -186,6 +187,50 @@ export interface ProviderUsageResponse {
   total_runs: number;
   active_sessions: number;
   model: string;
+  llm_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  thinking_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  cap_exceeded_count: number;
+}
+
+export interface UsageSummary {
+  llm_calls: number;
+  run_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  thinking_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  cap_exceeded_count: number;
+}
+
+export interface UsageGroupRow extends UsageSummary {
+  id: string | null;
+  name: string | null;
+}
+
+export interface UsageRunRow extends UsageSummary {
+  run_id: string | null;
+  session_id: string;
+  session_name: string;
+  account_id?: string | null;
+  account_name?: string | null;
+  provider_id: string | null;
+  provider_name: string;
+  model: string;
+  created_at: string;
+}
+
+export interface UsageSummaryResponse {
+  filters: Record<string, string | null>;
+  summary: UsageSummary;
+  by_provider: UsageGroupRow[];
+  by_model: UsageGroupRow[];
+  by_session: UsageGroupRow[];
+  recent_runs: UsageRunRow[];
 }
 
 export interface TavilyConfig {
@@ -323,6 +368,14 @@ export interface TradeRow {
   tax: number;
   total_fee?: number;
   turnover?: number;
+  run_id?: string | null;
+  tool_call_id?: string | null;
+  run_total_tokens?: number | null;
+  run_prompt_tokens?: number | null;
+  run_completion_tokens?: number | null;
+  run_thinking_tokens?: number | null;
+  run_llm_calls?: number | null;
+  run_cap_exceeded_count?: number | null;
   traded_at: string;
 }
 
@@ -574,6 +627,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   tavilyUsage: () => request<TavilyUsageResponse>("/api/tavily/usage"),
+  usageSummary: () => request<UsageSummaryResponse>("/api/usage/summary"),
   testTavily: () =>
     request<TavilyTestResponse>("/api/tavily/test", {
       method: "POST"
