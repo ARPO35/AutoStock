@@ -325,10 +325,10 @@ tool result
 右侧固定展示当前账户观察信息：
 
 - 当前账户基本信息。
-- 资产变化折线图。
+- 资产变化折线图（当前右侧栏使用 SVG 折线，显示最高值 / 中位值 / 最低值三档纵向标尺）。
 - 数字指标面板（现金、总资产、浮盈亏、仓位等）。
 - 持仓列表。
-- 交易记录折叠栏。
+- 交易记录折叠栏（当前右侧栏显示 `买入/卖出 股票名（六位代码）`，价格为 `¥x.xx/股` 口径）。
 
 该区域需随 WebSocket 事件实时刷新。
 
@@ -532,7 +532,7 @@ trigger fires
 | `tool_call_finished` | S→C | 工具执行完成（ok/error） |
 | `assistant_message` | S→C | 最终助理消息已创建 |
 | `run_finished` | S→C | run 结束 |
-| `error` | S→C | 异常 |
+| `error` | S→C | 异常；携带 `error` 字段，前端写入 `runError` |
 
 ### 8.3 并发规则 ← 未实现
 
@@ -1503,6 +1503,8 @@ GET    /api/sessions/{session_id}/runs
 POST   /api/sessions/{session_id}/run              ← 触发 LLM 运行
 ```
 
+`POST /api/sessions/{session_id}/run` 在 LLM Provider 网络连接失败时返回 `502 Bad Gateway`，同时将对应 `chat_runs.status` 置为 `error` 并通过 WebSocket `error` 事件推送可读错误。
+
 ### 22.5 Tools API ← 已实现
 
 ```text
@@ -1770,7 +1772,7 @@ LLM 可以通过 tool call 卖出
 
 ---
 
-## 阶段 4：观察与分析页面（/trade 账户观察 + /view） ← 未实现
+## 阶段 4：观察与分析页面（/trade 账户观察 + /view） ← 部分实现
 
 目标：实现账户实时观察与全局分析视图，形成“交易执行 + 全局复盘”闭环。
 
@@ -1781,6 +1783,12 @@ LLM 可以通过 tool call 卖出
 - 查看页子路由：`/view/overview`、`/view/account-detail`、`/view/trades`、`/view/assets`、`/view/stock`、`/view/logs`、`/view/timeline`。
 - 支持账户/时间范围/股票维度筛选，并保持跨页面查询口径一致。
 - 为查看页提供账户、交易、资产、日志、时间线的聚合查询接口。
+
+已实现补充：
+
+- 交易页右侧账户观察栏已展示账户指标、持仓、最近成交和资产变化 SVG 折线。
+- 最近成交行显示股票名与六位代码，价格使用人民币每股单位。
+- 资产变化折线保留轻量 SVG 实现，增加高 / 中 / 低三档纵向标尺和辅助网格线。
 
 验收：
 

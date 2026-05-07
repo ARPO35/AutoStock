@@ -73,6 +73,10 @@ export function AccountInspectorPanel() {
   );
 }
 
+function formatStockCode(symbol: string): string {
+  return symbol.match(/\d{6}/)?.[0] ?? symbol;
+}
+
 function SnapshotContent({
   snapshot,
   events,
@@ -162,10 +166,26 @@ function SnapshotContent({
 
 function AssetSparkline({ points }: { points: AssetPoint[] }) {
   const values = useMemo(() => points.map((point) => Number(point.total_asset)).filter(Number.isFinite), [points]);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const mid = (min + max) / 2;
+  const scaleTicks = [
+    { value: max, y: 5 },
+    { value: mid, y: 26 },
+    { value: min, y: 47 }
+  ];
   if (values.length < 2) return <EmptyState title="曲线点不足" description="成交或估值更新后生成更多资产点。" />;
   return (
     <svg className="h-[120px] w-full" viewBox="0 0 100 52" role="img" aria-label="资产变化折线">
-      <polyline points={linePoints(values, 96, 42, 2, 5)} fill="none" stroke="var(--color-brand-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      {scaleTicks.map((tick) => (
+        <g key={`${tick.value}-${tick.y}`}>
+          <line x1="2" x2="70" y1={tick.y} y2={tick.y} stroke="var(--color-hairline)" strokeOpacity="0.5" strokeWidth="0.5" />
+          <text x="98" y={tick.y + 1.2} textAnchor="end" className="fill-text-muted" fontSize="4">
+            {formatMoney(tick.value)}
+          </text>
+        </g>
+      ))}
+      <polyline points={linePoints(values, 68, 42, 2, 5)} fill="none" stroke="var(--color-brand-primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -197,15 +217,23 @@ function TradeRows({ snapshot }: { snapshot: AccountSnapshot }) {
   if (snapshot.recent_trades.length === 0) return <EmptyState title="暂无成交" description="成交后显示最近交易记录。" />;
   return (
     <div className="grid gap-1.5">
-      {snapshot.recent_trades.slice(0, 10).map((trade) => (
-        <div key={trade.id} className="flex items-center justify-between gap-2 border-b border-hairline/50 py-1.5 text-sm">
-          <div>
-            <strong className={trade.side === "buy" ? "rise" : "fall"}>{trade.side === "buy" ? "买入" : "卖出"} {trade.symbol}</strong>
-            <p className="text-xs text-text-muted">{humanTime(trade.traded_at)}</p>
+      {snapshot.recent_trades.slice(0, 10).map((tradeRow) => {
+        const stockCode = formatStockCode(tradeRow.symbol);
+        const stockLabel = tradeRow.name ? `${tradeRow.name}（${stockCode}）` : stockCode;
+        const trade = { ...tradeRow, symbol: stockLabel };
+
+        return (
+          <div key={trade.id} className="flex items-center justify-between gap-2 border-b border-hairline/50 py-1.5 text-sm">
+            <div className="min-w-0">
+              <strong className={`${trade.side === "buy" ? "rise" : "fall"} block truncate`}>
+                {trade.side === "buy" ? "买入" : "卖出"} {trade.symbol}
+              </strong>
+              <p className="text-xs text-text-muted">{humanTime(trade.traded_at)}</p>
+            </div>
+            <span className="shrink-0 text-text-on-dark">{trade.quantity} 股 @ ¥{trade.price.toFixed(2)}/股</span>
           </div>
-          <span className="text-text-on-dark">{trade.quantity} @ {trade.price}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

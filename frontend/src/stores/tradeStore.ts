@@ -275,7 +275,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
       if (event.type === "error") {
         get()._disconnectWs();
-        set({ busy: false });
+        set({ busy: false, runError: event.error ?? "运行失败" });
         void useDataStore.getState().loadSessions();
         get().loadTimeline(sessionId);
       }

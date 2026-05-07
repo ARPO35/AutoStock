@@ -35,6 +35,13 @@ class ActiveRun:
     cancel_event: asyncio.Event
 
 
+class SessionRunError(Exception):
+    def __init__(self, run_id: str, error: str) -> None:
+        super().__init__(error)
+        self.run_id = run_id
+        self.error = error
+
+
 class SessionRunManager:
     def __init__(
         self,
@@ -135,10 +142,10 @@ class SessionRunManager:
                     cancel_event=cancel_event,
                 )
             except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
+                error = self._format_run_error(exc)
                 self._finish_run(run_id, status="error", error=error)
                 await self._send(session_id, "error", {"run_id": run_id, "error": error})
-                raise
+                raise SessionRunError(run_id=run_id, error=error) from exc
             finally:
                 current = self._active_runs.get(session_id)
                 if current is not None and active_run is not None and current.run_id == active_run.run_id:
@@ -630,6 +637,24 @@ class SessionRunManager:
             thinking_mode=str(row["thinking_mode"]) if row["thinking_mode"] is not None else None,
             strict_tool_schema=bool(row["strict_tool_schema"]),
         )
+
+    def _format_run_error(self, exc: Exception) -> str:
+        detail = f"{type(exc).__name__}: {exc}"
+        if self._is_connection_error(exc):
+            return (
+                "LLM Provider 连接失败：请检查 Provider Base URL、代理/网络和服务可用性。"
+                f"（{detail}）"
+            )
+        return detail
+
+    def _is_connection_error(self, exc: BaseException) -> bool:
+        current: BaseException | None = exc
+        while current is not None:
+            name = type(current).__name__.lower()
+            if "connection" in name or "connecterror" in name:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def _tool_call_payload(self, call: ToolCall) -> dict[str, Any]:
         return {

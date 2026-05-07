@@ -35,7 +35,7 @@ Implemented surface:
 - SQLite-backed provider, account, session, message, run, tool-call, and tool-result records.
 - OpenAI-compatible and DeepSeek chat adapters behind one provider interface.
 - `system_echo` tool for validating tool-call loops.
-- Session run endpoint with per-session locking and WebSocket runtime events.
+- Session run endpoint with per-session locking, WebSocket runtime events, and handled LLM provider connection failures.
 - React workbench for provider setup, account creation, session chat, tools, and runtime events.
 
 Verification:
@@ -114,3 +114,12 @@ AUTOSTOCK_TAVILY_DEFAULT_TOPIC=finance
 AUTOSTOCK_TAVILY_DEFAULT_MAX_RESULTS=5
 AUTOSTOCK_TAVILY_CACHE_TTL_SECONDS=1800
 ```
+
+## Trade Observation Updates
+
+Implemented surface:
+
+- The trade page account inspector shows account metrics, positions, recent trades, and the asset sparkline for the selected session account.
+- Recent trades display stock name plus six-digit code when the backend returns `trade.name`; prices use an explicit CNY per-share format such as `100 股 @ ¥12.34/股`.
+- The asset sparkline keeps the lightweight SVG implementation and adds high/mid/low y-axis labels with subtle grid lines.
+- LLM provider connection errors are stored on the run, sent over the `error` WebSocket event, and returned from `POST /api/sessions/{session_id}/run` as `502 Bad Gateway` with a readable detail.

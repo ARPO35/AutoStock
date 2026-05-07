@@ -306,6 +306,64 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
     ]
 
 
+def test_session_run_provider_connection_error_is_reported(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class APIConnectionError(Exception):
+        pass
+
+    class FailingProvider:
+        async def chat_stream(self, config, messages, tools):
+            raise APIConnectionError("Connection error.")
+            yield {}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: FailingProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post(
+        "/api/simulator/accounts",
+        json={"name": "Account Under Test"},
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Session Under Test",
+            "simulator_account_id": account["id"],
+            "provider_id": provider["id"],
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+
+    with client.websocket_connect(f"/ws/sessions/{session['id']}") as websocket:
+        run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+        assert run.status_code == 502
+        assert "LLM Provider 连接失败" in run.json()["detail"]
+
+        assert websocket.receive_json()["type"] == "run_started"
+        error_event = websocket.receive_json()
+        assert error_event["type"] == "error"
+        assert "APIConnectionError: Connection error." in error_event["error"]
+
+    runs = client.get(f"/api/sessions/{session['id']}/runs")
+    assert runs.status_code == 200
+    assert runs.json()[0]["status"] == "error"
+    assert "APIConnectionError: Connection error." in runs.json()[0]["error"]
+
+
 def test_session_run_applies_prompt_role_templates(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app
