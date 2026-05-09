@@ -84,6 +84,10 @@ export interface RuntimeEvent {
   account_id?: string;
   tool_call_id?: string;
   tool_name?: string;
+  order_id?: string;
+  trade_id?: string;
+  symbol?: string;
+  side?: string;
   arguments_json?: string;
   ok?: boolean;
   result?: Record<string, unknown> | null;

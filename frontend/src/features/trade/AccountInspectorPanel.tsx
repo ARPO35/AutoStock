@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, Eye, History, LineChart, RefreshCw, Table2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
@@ -14,10 +14,13 @@ export function AccountInspectorPanel() {
   const providers = useDataStore((s) => s.providers);
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const events = useTradeStore((s) => s.events);
+  const busy = useTradeStore((s) => s.busy);
+  const focusToolCall = useTradeStore((s) => s.focusToolCall);
   const snapshots = useViewStore((s) => s.snapshots);
   const loadSnapshot = useViewStore((s) => s.loadSnapshot);
   const loading = useViewStore((s) => s.loading);
   const [tradesOpen, setTradesOpen] = useState(true);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
   const accountId = selectedSession?.simulator_account_id ?? null;
@@ -31,9 +34,24 @@ export function AccountInspectorPanel() {
 
   useEffect(() => {
     const latest = events[0];
-    if (!accountId || latest?.type !== "portfolio_updated") return;
-    if (!latest.account_id || latest.account_id === accountId) void loadSnapshot(accountId);
+    if (!accountId || !latest) return;
+    const refreshEvents = new Set(["portfolio_updated", "order_created", "trade_created", "tool_call_finished", "run_finished"]);
+    if (!refreshEvents.has(latest.type)) return;
+    if (latest.account_id && latest.account_id !== accountId) return;
+    if (latest.type === "tool_call_finished" && !String(latest.tool_name ?? "").match(/^(order_|portfolio_)/)) return;
+    if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = window.setTimeout(() => {
+      void loadSnapshot(accountId);
+    }, 350);
   }, [events, accountId, loadSnapshot]);
+
+  useEffect(() => {
+    if (!accountId || !busy) return;
+    const timer = window.setInterval(() => {
+      void loadSnapshot(accountId);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [accountId, busy, loadSnapshot]);
 
   const displayName = snapshot?.account.name ?? selectedAccount?.name ?? "未选择账户";
 
@@ -64,6 +82,7 @@ export function AccountInspectorPanel() {
             tradesOpen={tradesOpen}
             onToggleTrades={() => setTradesOpen((value) => !value)}
             onRefresh={() => void loadSnapshot(accountId)}
+            onFocusToolCall={(toolCallId, sessionId) => focusToolCall(toolCallId, sessionId)}
           />
         ) : (
           <EmptyState title="暂无账户数据" description="账户聚合接口暂未返回数据。" />
@@ -82,16 +101,29 @@ function SnapshotContent({
   events,
   tradesOpen,
   onToggleTrades,
-  onRefresh
+  onRefresh,
+  onFocusToolCall
 }: {
   snapshot: AccountSnapshot;
   events: ReturnType<typeof useTradeStore.getState>["events"];
   tradesOpen: boolean;
   onToggleTrades: () => void;
   onRefresh: () => void;
+  onFocusToolCall: (toolCallId: string, sessionId?: string | null) => void;
 }) {
   const metrics = snapshot.metrics;
   const pnlTone = metrics.total_pnl > 0 ? "rise" : metrics.total_pnl < 0 ? "fall" : "flat";
+  const tradeStats = useMemo(() => {
+    const trades = snapshot.recent_trades;
+    const turnover = trades.reduce((sum, row) => sum + Number(row.turnover ?? Number(row.price) * Number(row.quantity)), 0);
+    const fees = trades.reduce((sum, row) => sum + Number(row.total_fee ?? Number(row.fee ?? 0) + Number(row.tax ?? 0)), 0);
+    return {
+      buyCount: trades.filter((row) => row.side === "buy").length,
+      sellCount: trades.filter((row) => row.side === "sell").length,
+      turnover,
+      fees,
+    };
+  }, [snapshot.recent_trades]);
 
   return (
     <div className="grid gap-3">
@@ -112,13 +144,25 @@ function SnapshotContent({
       </section>
 
       <div className="grid grid-cols-2 gap-2">
+        <Metric label="初始资金" value={formatMoney(metrics.initial_cash)} />
         <Metric label="现金" value={formatMoney(metrics.cash)} />
+        <Metric label="冻结资金" value={formatMoney(metrics.frozen_cash)} />
         <Metric label="持仓市值" value={formatMoney(metrics.market_value)} />
         <Metric label="浮盈亏" value={formatMoney(metrics.floating_pnl)} tone={metrics.floating_pnl > 0 ? "rise" : metrics.floating_pnl < 0 ? "fall" : "flat"} />
         <Metric label="仓位" value={`${(metrics.position_ratio * 100).toFixed(1)}%`} />
         <Metric label="持仓数" value={String(metrics.position_count)} />
         <Metric label="运行中" value={String(metrics.running_sessions)} />
       </div>
+
+      <section className="border-t border-hairline pt-3">
+        <PanelHeader icon={<Wallet size={16} />} title="交易统计" />
+        <div className="grid grid-cols-2 gap-2">
+          <Metric label="买入次数" value={String(tradeStats.buyCount)} />
+          <Metric label="卖出次数" value={String(tradeStats.sellCount)} />
+          <Metric label="最近成交额" value={formatMoney(tradeStats.turnover)} />
+          <Metric label="最近费用" value={formatMoney(tradeStats.fees)} />
+        </div>
+      </section>
 
       <section className="border-t border-hairline pt-3">
         <PanelHeader icon={<LineChart size={16} />} title="资产变化" />
@@ -142,7 +186,7 @@ function SnapshotContent({
           </span>
           <ChevronDown size={15} className={`transition-transform ${tradesOpen ? "rotate-180" : ""}`} />
         </button>
-        {tradesOpen && <TradeRows snapshot={snapshot} />}
+        {tradesOpen && <TradeRows snapshot={snapshot} onFocusToolCall={onFocusToolCall} />}
       </section>
 
       <section className="border-t border-hairline pt-3">
@@ -196,7 +240,7 @@ function PositionRows({ snapshot }: { snapshot: AccountSnapshot }) {
       {snapshot.positions.map((position) => (
         <div key={position.id} className="rounded-lg border border-hairline bg-surface-card p-2">
           <div className="flex items-center justify-between gap-2">
-            <strong className="text-sm text-text-on-dark">{position.symbol}</strong>
+            <strong className="text-sm text-text-on-dark">{position.name ? `${position.name}（${formatStockCode(position.symbol)}）` : position.symbol}</strong>
             <span className={position.unrealized_pnl > 0 ? "rise text-sm" : position.unrealized_pnl < 0 ? "fall text-sm" : "text-sm text-text-muted"}>
               {formatMoney(position.unrealized_pnl)}
             </span>
@@ -206,14 +250,26 @@ function PositionRows({ snapshot }: { snapshot: AccountSnapshot }) {
             <span>可用 {position.available_quantity}</span>
             <span>成本 {position.avg_cost}</span>
           </div>
-          <div className="mt-1 text-xs text-text-muted">市值 {formatMoney(position.market_value)}</div>
+          <div className="mt-1 grid grid-cols-3 gap-2 text-xs text-text-muted">
+            <span>现价 {currentPrice(position)}</span>
+            <span>市值 {formatMoney(position.market_value)}</span>
+            <span className={position.unrealized_pnl > 0 ? "rise" : position.unrealized_pnl < 0 ? "fall" : ""}>
+              盈亏率 {pnlPct(position)}
+            </span>
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-function TradeRows({ snapshot }: { snapshot: AccountSnapshot }) {
+function TradeRows({
+  snapshot,
+  onFocusToolCall
+}: {
+  snapshot: AccountSnapshot;
+  onFocusToolCall: (toolCallId: string, sessionId?: string | null) => void;
+}) {
   if (snapshot.recent_trades.length === 0) return <EmptyState title="暂无成交" description="成交后显示最近交易记录。" />;
   return (
     <div className="grid gap-1.5">
@@ -223,17 +279,38 @@ function TradeRows({ snapshot }: { snapshot: AccountSnapshot }) {
         const trade = { ...tradeRow, symbol: stockLabel };
 
         return (
-          <div key={trade.id} className="flex items-center justify-between gap-2 border-b border-hairline/50 py-1.5 text-sm">
+          <button
+            key={trade.id}
+            type="button"
+            disabled={!trade.tool_call_id}
+            onClick={() => trade.tool_call_id && onFocusToolCall(trade.tool_call_id, trade.session_id)}
+            className="flex w-full items-center justify-between gap-2 border-b border-hairline/50 py-1.5 text-left text-sm hover:bg-surface-card/70 disabled:hover:bg-transparent"
+            title={trade.tool_call_id ? "定位到对应工具调用" : "此成交没有工具调用归因"}
+          >
             <div className="min-w-0">
               <strong className={`${trade.side === "buy" ? "rise" : "fall"} block truncate`}>
                 {trade.side === "buy" ? "买入" : "卖出"} {trade.symbol}
               </strong>
-              <p className="text-xs text-text-muted">{humanTime(trade.traded_at)}</p>
+              <p className="text-xs text-text-muted">{humanTime(trade.traded_at)} / {trade.session_name ?? "未绑定 Session"}</p>
             </div>
             <span className="shrink-0 text-text-on-dark">{trade.quantity} 股 @ ¥{trade.price.toFixed(2)}/股</span>
-          </div>
+          </button>
         );
       })}
     </div>
   );
+}
+
+function currentPrice(position: AccountSnapshot["positions"][number]): string {
+  const quantity = Number(position.quantity);
+  const marketValue = Number(position.market_value);
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(marketValue)) return "--";
+  return `¥${(marketValue / quantity).toFixed(2)}`;
+}
+
+function pnlPct(position: AccountSnapshot["positions"][number]): string {
+  const cost = Number(position.avg_cost) * Number(position.quantity);
+  const pnl = Number(position.unrealized_pnl);
+  if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(pnl)) return "--";
+  return `${(pnl / cost * 100).toFixed(2)}%`;
 }

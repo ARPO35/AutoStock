@@ -374,6 +374,35 @@ class SessionRunManager:
                         "error": tool_result.error,
                     },
                 )
+                if call.name.startswith("order_") and tool_result.ok and tool_result.result:
+                    if tool_result.result.get("order_id"):
+                        await self._send(
+                            session_id,
+                            "order_created",
+                            {
+                                "run_id": run_id,
+                                "account_id": simulator_account_id,
+                                "tool_call_id": tool_call_id,
+                                "tool_name": call.name,
+                                "order_id": tool_result.result.get("order_id"),
+                                "symbol": tool_result.result.get("symbol"),
+                                "side": tool_result.result.get("side"),
+                            },
+                        )
+                    if tool_result.result.get("trade_id"):
+                        await self._send(
+                            session_id,
+                            "trade_created",
+                            {
+                                "run_id": run_id,
+                                "account_id": simulator_account_id,
+                                "tool_call_id": tool_call_id,
+                                "tool_name": call.name,
+                                "trade_id": tool_result.result.get("trade_id"),
+                                "symbol": tool_result.result.get("symbol"),
+                                "side": tool_result.result.get("side"),
+                            },
+                        )
                 if call.name.startswith(("order_", "portfolio_")) and simulator_account_id:
                     await self._send(
                         session_id,

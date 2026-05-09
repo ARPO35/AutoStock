@@ -36,6 +36,7 @@ interface TradeState {
   lastRunLatencyMs: number | null;
   runError: string | null;
   runNotice: string | null;
+  focusedToolCallId: string | null;
 
   streamedRounds: StreamedRound[];
   currentReasoning: string;
@@ -55,6 +56,7 @@ interface TradeState {
   sendMessage: (sessionId: string, mode: "run" | "event" | "write", content: string, model?: string | null) => Promise<void>;
   runOnce: (sessionId: string, model?: string | null) => Promise<void>;
   stopCurrentRun: (sessionId: string) => Promise<void>;
+  focusToolCall: (toolCallId: string | null, sessionId?: string | null) => void;
 
   getTimeline: () => TimelineItem[];
 
@@ -111,6 +113,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   lastRunLatencyMs: null,
   runError: null,
   runNotice: null,
+  focusedToolCallId: null,
 
   streamedRounds: [],
   currentReasoning: "",
@@ -126,10 +129,11 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       optimisticUserMessage: null,
       streamedRounds: [],
       currentReasoning: "",
-        currentContent: "",
-        currentToolCalls: [],
-        runError: null,
-        runNotice: null,
+      currentContent: "",
+      currentToolCalls: [],
+      runError: null,
+      runNotice: null,
+      focusedToolCallId: null,
     }),
   setDraft: (value) => set({ draft: value }),
   setBusy: (value) => set({ busy: value }),
@@ -411,6 +415,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       set({ busy: false });
       await get().loadTimeline(sessionId);
     }
+  },
+
+  focusToolCall: (toolCallId, sessionId) => {
+    if (sessionId && sessionId !== get().selectedSessionId) {
+      set({ selectedSessionId: sessionId, focusedToolCallId: toolCallId });
+      return;
+    }
+    set({ focusedToolCallId: toolCallId });
   },
 
   getTimeline: () => {

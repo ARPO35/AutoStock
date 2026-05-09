@@ -17,6 +17,8 @@ export function LLMLinearTimeline() {
   const currentReasoning = useTradeStore((s) => s.currentReasoning);
   const currentContent = useTradeStore((s) => s.currentContent);
   const currentToolCalls = useTradeStore((s) => s.currentToolCalls);
+  const focusedToolCallId = useTradeStore((s) => s.focusedToolCallId);
+  const focusToolCall = useTradeStore((s) => s.focusToolCall);
 
   const timeline = useMemo(
     () => useTradeStore.getState().getTimeline(),
@@ -79,6 +81,15 @@ export function LLMLinearTimeline() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [timeline.length, busy, currentContent, autoScrollEnabled]);
 
+  useEffect(() => {
+    if (!focusedToolCallId) return;
+    const target = document.getElementById(`tool-call-${focusedToolCallId}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = window.setTimeout(() => focusToolCall(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [focusedToolCallId, timelineSource, focusToolCall]);
+
   if (!selectedSessionId) {
     return (
       <div className="flex-1 min-h-0 grid place-items-center p-4">
@@ -113,9 +124,18 @@ export function LLMLinearTimeline() {
     <div className="flex-1 min-h-0 relative">
       <div className="h-full overflow-y-auto" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
         <div className="flex flex-col gap-3 p-4 min-h-full">
-          {timeline.map((item) => (
-            <MessageBubble key={item.id} item={item} />
-          ))}
+          {timeline.map((item) => {
+            const highlighted = Boolean(item.toolCallId && item.toolCallId === focusedToolCallId);
+            return (
+              <div
+                key={item.id}
+                id={item.toolCallId ? `tool-call-${item.toolCallId}` : undefined}
+                className={highlighted ? "rounded-lg bg-brand-primary/10 ring-1 ring-brand-primary/60 transition-colors" : undefined}
+              >
+                <MessageBubble item={item} />
+              </div>
+            );
+          })}
           {busy && !loadingTimeline && !currentContent && !currentReasoning && <LoadingDots />}
           <div ref={bottomRef} />
         </div>
