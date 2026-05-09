@@ -20,17 +20,24 @@ def utc_now() -> str:
 @router.get("/overview")
 async def view_overview(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
-    snapshots = [_account_snapshot(store, str(account["id"]), start, end, symbol) for account in accounts]
+    snapshots = [
+        _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
+        for account in accounts
+    ]
     totals = _totals(snapshots)
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, status_filter),
         "summary": {
             **totals,
             "account_count": len(snapshots),
@@ -38,26 +45,32 @@ async def view_overview(
             "order_count": sum(len(snapshot["recent_orders"]) for snapshot in snapshots),
         },
         "accounts": snapshots,
-        "recent_trades": _trades(store, account_id, start, end, symbol, limit=12),
-        "recent_logs": _logs(store, account_id, start, end, symbol, limit=12),
+        "recent_trades": _trades(store, account_id, start, end, symbol, limit=12, session_id=session_id, model=model, side=side),
+        "recent_logs": _logs(store, account_id, start, end, symbol, limit=12, session_id=session_id, model=model, side=side, status_filter=status_filter),
+        "recent_tools": _tool_timeline(store, account_id, start, end, symbol, 12, session_id=session_id, model=model, status_filter=status_filter),
+        "recent_errors": _error_timeline(store, account_id, start, end, symbol, 12, session_id=session_id, model=model),
     }
 
 
 @router.get("/accounts")
 async def view_account_detail(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     snapshots = [
-        _account_snapshot(store, str(account["id"]), start, end, symbol)
+        _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
         for account in _accounts(store, account_id)
     ]
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, status_filter),
         "accounts": snapshots,
     }
 
@@ -65,30 +78,37 @@ async def view_account_detail(
 @router.get("/accounts/{account_id}/snapshot")
 async def view_account_snapshot(
     account_id: str,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     _account_or_404(store, account_id)
-    return _account_snapshot(store, account_id, start, end, symbol)
+    return _account_snapshot(store, account_id, start, end, symbol, session_id, model, side, status_filter)
 
 
 @router.get("/trades")
 async def view_trades(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
-    rows = _trades(store, account_id, start, end, symbol, limit=limit)
+    rows = _trades(store, account_id, start, end, symbol, limit=limit, session_id=session_id, model=model, side=side)
     turnover = sum(float(row["turnover"]) for row in rows)
     fees = sum(float(row["fee"]) + float(row["tax"]) for row in rows)
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, None),
         "summary": {
             "trade_count": len(rows),
             "turnover": round(turnover, 2),
@@ -101,9 +121,12 @@ async def view_trades(
 @router.get("/assets")
 async def view_assets(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
@@ -111,14 +134,14 @@ async def view_assets(
         {
             "account_id": account["id"],
             "account_name": account["name"],
-            "points": _asset_points(store, account, start, end, symbol),
+            "points": _asset_points(store, account, start, end, symbol, session_id=session_id, model=model, side=side),
         }
         for account in accounts
     ]
     latest_total = sum(float(item["points"][-1]["total_asset"]) for item in series if item["points"])
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, None),
         "summary": {
             "account_count": len(series),
             "latest_total_asset": round(latest_total, 2),
@@ -130,16 +153,20 @@ async def view_assets(
 @router.get("/logs")
 async def view_logs(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
-    rows = _logs(store, account_id, start, end, symbol, limit)
+    rows = _logs(store, account_id, start, end, symbol, limit, session_id=session_id, model=model, side=side, status_filter=status_filter)
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, status_filter),
         "summary": {"log_count": len(rows)},
         "logs": rows,
     }
@@ -148,22 +175,26 @@ async def view_logs(
 @router.get("/timeline")
 async def view_timeline(
     account_id: str | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
     start: str | None = None,
     end: str | None = None,
     symbol: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=300, ge=1, le=1000),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    rows.extend(_message_timeline(store, account_id, start, end, limit))
-    rows.extend(_run_timeline(store, account_id, start, end, limit))
-    rows.extend(_trade_timeline(store, account_id, start, end, symbol, limit))
-    rows.extend(_tool_timeline(store, account_id, start, end, symbol, limit))
+    rows.extend(_message_timeline(store, account_id, start, end, limit, session_id=session_id, model=model))
+    rows.extend(_run_timeline(store, account_id, start, end, limit, session_id=session_id, model=model, status_filter=status_filter))
+    rows.extend(_trade_timeline(store, account_id, start, end, symbol, limit, session_id=session_id, model=model, side=side))
+    rows.extend(_tool_timeline(store, account_id, start, end, symbol, limit, session_id=session_id, model=model, status_filter=status_filter))
     rows.sort(key=lambda row: str(row["time"]), reverse=True)
     rows = rows[:limit]
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, start, end, symbol),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, status_filter),
         "summary": {"event_count": len(rows)},
         "items": rows,
     }
@@ -171,15 +202,23 @@ async def view_timeline(
 
 def _filters(
     account_id: str | None,
+    session_id: str | None,
+    model: str | None,
     start: str | None,
     end: str | None,
     symbol: str | None,
+    side: str | None,
+    status_filter: str | None,
 ) -> dict[str, str | None]:
     return {
         "account_id": account_id or None,
+        "session_id": session_id or None,
+        "model": model or None,
         "start": start or None,
         "end": end or None,
         "symbol": symbol or None,
+        "side": side or None,
+        "status": status_filter or None,
     }
 
 
@@ -211,6 +250,10 @@ def _account_snapshot(
     start: str | None,
     end: str | None,
     symbol: str | None,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = None,
 ) -> dict[str, Any]:
     account = _account_or_404(store, account_id)
     positions = _positions(store, account_id, symbol)
@@ -240,10 +283,11 @@ def _account_snapshot(
             "running_sessions": sum(1 for row in sessions if "run" in str(row.get("status", "")).lower()),
         },
         "positions": positions,
-        "recent_orders": _orders(store, account_id, start, end, symbol, limit=20),
-        "recent_trades": _trades(store, account_id, start, end, symbol, limit=20),
-        "asset_points": _asset_points(store, account, start, end, symbol),
+        "recent_orders": _orders(store, account_id, start, end, symbol, limit=20, session_id=session_id, model=model, side=side, status_filter=status_filter),
+        "recent_trades": _trades(store, account_id, start, end, symbol, limit=20, session_id=session_id, model=model, side=side),
+        "asset_points": _asset_points(store, account, start, end, symbol, session_id=session_id, model=model, side=side),
         "sessions": sessions,
+        "session_contributions": _session_contributions(store, account_id, start, end, symbol),
     }
 
 
@@ -271,14 +315,34 @@ def _orders(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses, params = _account_time_symbol_clauses("o", "created_at", account_id, start, end, symbol)
+    _append_session_model_filter(clauses, params, "o", "s", "r", session_id, model)
+    if side:
+        clauses.append("o.side = ?")
+        params.append(side)
+    if status_filter:
+        clauses.append("o.status = ?")
+        params.append(status_filter)
     return store.fetch_all(
         f"""
-        SELECT o.*, a.name AS account_name, s.name AS session_name
+        SELECT
+            o.*,
+            a.name AS account_name,
+            s.name AS session_name,
+            s.provider_id AS session_provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            COALESCE(r.model, s.model) AS model
         FROM orders o
         JOIN simulator_accounts a ON a.id = o.simulator_account_id
         LEFT JOIN chat_sessions s ON s.id = o.session_id
+        LEFT JOIN chat_runs r ON r.id = o.run_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
         WHERE {' AND '.join(clauses)}
         ORDER BY o.created_at DESC
         LIMIT ?
@@ -294,14 +358,26 @@ def _trades(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses, params = _account_time_symbol_clauses("t", "traded_at", account_id, start, end, symbol)
+    _append_session_model_filter(clauses, params, "t", "s", "r", session_id, model)
+    if side:
+        clauses.append("t.side = ?")
+        params.append(side)
     rows = store.fetch_all(
         f"""
         SELECT
             t.*,
             a.name AS account_name,
             s.name AS session_name,
+            s.provider_id AS session_provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            COALESCE(r.provider_id, s.provider_id) AS provider_id,
+            COALESCE(r.model, s.model) AS model,
             o.name AS name,
             u.total_tokens AS run_total_tokens,
             u.prompt_tokens AS run_prompt_tokens,
@@ -313,6 +389,8 @@ def _trades(
         FROM trades t
         JOIN simulator_accounts a ON a.id = t.simulator_account_id
         LEFT JOIN chat_sessions s ON s.id = t.session_id
+        LEFT JOIN chat_runs r ON r.id = t.run_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
         LEFT JOIN orders o ON o.id = t.order_id
         LEFT JOIN (
             SELECT
@@ -357,9 +435,12 @@ def _asset_points(
     start: str | None,
     end: str | None,
     symbol: str | None,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
 ) -> list[dict[str, Any]]:
     account_id = str(account["id"])
-    trades = list(reversed(_trades(store, account_id, None, end, symbol, limit=1000)))
+    trades = list(reversed(_trades(store, account_id, None, end, symbol, limit=1000, session_id=session_id, model=model, side=side)))
     cash = float(account["initial_cash"])
     quantities: defaultdict[str, int] = defaultdict(int)
     last_prices: dict[str, float] = {}
@@ -435,17 +516,30 @@ def _logs(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
+    status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses = ["tc.tool_name IN ('order_buy', 'order_sell')"]
     params: list[Any] = []
     if account_id:
         clauses.append("s.simulator_account_id = ?")
         params.append(account_id)
+    _append_session_model_filter(clauses, params, "tc", "s", "r", session_id, model)
     _append_time_filter(clauses, params, "tc.started_at", start, end)
     if symbol:
         clauses.append("(tc.arguments_json LIKE ? OR tr.result_json LIKE ?)")
         like = f"%{symbol}%"
         params.extend([like, like])
+    if side:
+        tool_name = "order_buy" if side == "buy" else "order_sell" if side == "sell" else None
+        if tool_name:
+            clauses.append("tc.tool_name = ?")
+            params.append(tool_name)
+    if status_filter:
+        clauses.append("tc.status = ?")
+        params.append(status_filter)
 
     rows = store.fetch_all(
         f"""
@@ -462,9 +556,15 @@ def _logs(
             tr.result_json,
             s.name AS session_name,
             s.simulator_account_id AS account_id,
-            a.name AS account_name
+            a.name AS account_name,
+            COALESCE(r.provider_id, s.provider_id) AS provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            COALESCE(r.model, s.model) AS model
         FROM chat_tool_calls tc
         JOIN chat_sessions s ON s.id = tc.session_id
+        LEFT JOIN chat_runs r ON r.id = tc.run_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
         LEFT JOIN simulator_accounts a ON a.id = s.simulator_account_id
         LEFT JOIN chat_tool_results tr ON tr.tool_call_id = tc.id
         WHERE {' AND '.join(clauses)}
@@ -489,6 +589,10 @@ def _logs(
                 "session_name": row["session_name"],
                 "account_id": row["account_id"],
                 "account_name": row["account_name"],
+                "provider_id": row.get("provider_id"),
+                "provider_name": row.get("provider_name"),
+                "provider_type": row.get("provider_type"),
+                "model": row.get("model"),
                 "tool_name": row["tool_name"],
                 "side": side,
                 "symbol": arguments.get("symbol") or result.get("symbol"),
@@ -512,12 +616,15 @@ def _message_logs(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses = ["1 = 1"]
     params: list[Any] = []
     if account_id:
         clauses.append("s.simulator_account_id = ?")
         params.append(account_id)
+    _append_session_model_filter(clauses, params, "m", "s", None, session_id, model)
     _append_time_filter(clauses, params, "m.created_at", start, end)
     if symbol:
         clauses.append(
@@ -541,6 +648,10 @@ def _message_logs(
             s.name AS session_name,
             s.simulator_account_id AS account_id,
             a.name AS account_name,
+            s.provider_id AS provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            s.model AS model,
             m.role,
             m.message_type,
             m.content,
@@ -548,6 +659,7 @@ def _message_logs(
             m.created_at
         FROM chat_messages m
         JOIN chat_sessions s ON s.id = m.session_id
+        LEFT JOIN llm_providers p ON p.id = s.provider_id
         LEFT JOIN simulator_accounts a ON a.id = s.simulator_account_id
         WHERE {' AND '.join(clauses)}
         ORDER BY m.created_at DESC
@@ -563,8 +675,10 @@ def _message_timeline(
     start: str | None,
     end: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
-    rows = _message_logs(store, account_id, start, end, None, limit)
+    rows = _message_logs(store, account_id, start, end, None, limit, session_id=session_id, model=model)
     return [
         {
             "id": row["id"],
@@ -574,6 +688,10 @@ def _message_timeline(
             "account_name": row["account_name"],
             "session_id": row["session_id"],
             "session_name": row["session_name"],
+            "provider_id": row.get("provider_id"),
+            "provider_name": row.get("provider_name"),
+            "provider_type": row.get("provider_type"),
+            "model": row.get("model"),
             "title": f"{row['role']} / {row['message_type']}",
             "summary": str(row.get("content") or "")[:240],
             "payload": row,
@@ -588,12 +706,19 @@ def _run_timeline(
     start: str | None,
     end: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses = ["1 = 1"]
     params: list[Any] = []
     if account_id:
         clauses.append("s.simulator_account_id = ?")
         params.append(account_id)
+    _append_session_model_filter(clauses, params, "r", "s", "r", session_id, model)
+    if status_filter:
+        clauses.append("r.status = ?")
+        params.append(status_filter)
     _append_time_filter(clauses, params, "r.started_at", start, end)
     rows = store.fetch_all(
         f"""
@@ -601,9 +726,13 @@ def _run_timeline(
             r.*,
             s.name AS session_name,
             s.simulator_account_id AS account_id,
-            a.name AS account_name
+            a.name AS account_name,
+            COALESCE(r.provider_id, s.provider_id) AS provider_id,
+            p.name AS provider_name,
+            p.provider_type
         FROM chat_runs r
         JOIN chat_sessions s ON s.id = r.session_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
         LEFT JOIN simulator_accounts a ON a.id = s.simulator_account_id
         WHERE {' AND '.join(clauses)}
         ORDER BY r.started_at DESC
@@ -620,6 +749,10 @@ def _run_timeline(
             "account_name": row["account_name"],
             "session_id": row["session_id"],
             "session_name": row["session_name"],
+            "provider_id": row.get("provider_id"),
+            "provider_name": row.get("provider_name"),
+            "provider_type": row.get("provider_type"),
+            "model": row.get("model"),
             "title": f"Run {row['status']}",
             "summary": row.get("error") or row.get("model") or "",
             "payload": row,
@@ -635,6 +768,9 @@ def _trade_timeline(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    side: str | None = None,
 ) -> list[dict[str, Any]]:
     return [
         {
@@ -645,12 +781,18 @@ def _trade_timeline(
             "account_name": row["account_name"],
             "session_id": row["session_id"],
             "session_name": row["session_name"],
+            "provider_id": row.get("provider_id"),
+            "provider_name": row.get("provider_name"),
+            "provider_type": row.get("provider_type"),
+            "model": row.get("model"),
+            "run_id": row.get("run_id"),
+            "tool_call_id": row.get("tool_call_id"),
             "symbol": row["symbol"],
             "title": f"{row['side']} {row['symbol']}",
             "summary": f"{row['quantity']} shares @ {row['price']}",
             "payload": row,
         }
-        for row in _trades(store, account_id, start, end, symbol, limit)
+        for row in _trades(store, account_id, start, end, symbol, limit, session_id=session_id, model=model, side=side)
     ]
 
 
@@ -661,12 +803,19 @@ def _tool_timeline(
     end: str | None,
     symbol: str | None,
     limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+    status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses = ["1 = 1"]
     params: list[Any] = []
     if account_id:
         clauses.append("s.simulator_account_id = ?")
         params.append(account_id)
+    _append_session_model_filter(clauses, params, "tc", "s", "r", session_id, model)
+    if status_filter:
+        clauses.append("tc.status = ?")
+        params.append(status_filter)
     _append_time_filter(clauses, params, "tc.started_at", start, end)
     if symbol:
         clauses.append("(tc.arguments_json LIKE ? OR tr.result_json LIKE ?)")
@@ -680,9 +829,15 @@ def _tool_timeline(
             tr.created_at AS result_created_at,
             s.name AS session_name,
             s.simulator_account_id AS account_id,
-            a.name AS account_name
+            a.name AS account_name,
+            COALESCE(r.provider_id, s.provider_id) AS provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            COALESCE(r.model, s.model) AS model
         FROM chat_tool_calls tc
         JOIN chat_sessions s ON s.id = tc.session_id
+        LEFT JOIN chat_runs r ON r.id = tc.run_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
         LEFT JOIN simulator_accounts a ON a.id = s.simulator_account_id
         LEFT JOIN chat_tool_results tr ON tr.tool_call_id = tc.id
         WHERE {' AND '.join(clauses)}
@@ -700,12 +855,90 @@ def _tool_timeline(
             "account_name": row["account_name"],
             "session_id": row["session_id"],
             "session_name": row["session_name"],
+            "provider_id": row.get("provider_id"),
+            "provider_name": row.get("provider_name"),
+            "provider_type": row.get("provider_type"),
+            "model": row.get("model"),
+            "run_id": row.get("run_id"),
+            "tool_call_id": row.get("id"),
+            "symbol": _extract_symbol(row),
             "title": row["tool_name"],
             "summary": row.get("error") or row["status"],
             "payload": row,
         }
         for row in rows
     ]
+
+
+def _error_timeline(
+    store: SQLiteStore,
+    account_id: str | None,
+    start: str | None,
+    end: str | None,
+    symbol: str | None,
+    limit: int,
+    session_id: str | None = None,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    run_errors = _run_timeline(
+        store,
+        account_id,
+        start,
+        end,
+        limit,
+        session_id=session_id,
+        model=model,
+        status_filter="error",
+    )
+    tool_errors = _tool_timeline(
+        store,
+        account_id,
+        start,
+        end,
+        symbol,
+        limit,
+        session_id=session_id,
+        model=model,
+        status_filter="error",
+    )
+    rows = [*run_errors, *tool_errors]
+    rows.sort(key=lambda row: str(row["time"]), reverse=True)
+    return rows[:limit]
+
+
+def _session_contributions(
+    store: SQLiteStore,
+    account_id: str,
+    start: str | None,
+    end: str | None,
+    symbol: str | None,
+) -> list[dict[str, Any]]:
+    clauses, params = _account_time_symbol_clauses("t", "traded_at", account_id, start, end, symbol)
+    rows = store.fetch_all(
+        f"""
+        SELECT
+            COALESCE(t.session_id, '') AS session_id,
+            COALESCE(s.name, '未绑定 Session') AS session_name,
+            COALESCE(r.provider_id, s.provider_id) AS provider_id,
+            p.name AS provider_name,
+            p.provider_type,
+            COALESCE(r.model, s.model, '') AS model,
+            COUNT(*) AS trade_count,
+            SUM(CASE WHEN t.side = 'buy' THEN 1 ELSE 0 END) AS buy_count,
+            SUM(CASE WHEN t.side = 'sell' THEN 1 ELSE 0 END) AS sell_count,
+            ROUND(SUM(t.price * t.quantity), 2) AS turnover,
+            ROUND(SUM(t.fee + t.tax), 2) AS fees
+        FROM trades t
+        LEFT JOIN chat_sessions s ON s.id = t.session_id
+        LEFT JOIN chat_runs r ON r.id = t.run_id
+        LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
+        WHERE {' AND '.join(clauses)}
+        GROUP BY t.session_id, s.name, COALESCE(r.provider_id, s.provider_id), p.name, p.provider_type, COALESCE(r.model, s.model, '')
+        ORDER BY turnover DESC
+        """,
+        params,
+    )
+    return rows
 
 
 def _account_time_symbol_clauses(
@@ -726,6 +959,26 @@ def _account_time_symbol_clauses(
         params.append(symbol)
     _append_time_filter(clauses, params, f"{alias}.{time_column}", start, end)
     return clauses, params
+
+
+def _append_session_model_filter(
+    clauses: list[str],
+    params: list[Any],
+    record_alias: str,
+    session_alias: str,
+    run_alias: str | None,
+    session_id: str | None,
+    model: str | None,
+) -> None:
+    if session_id:
+        clauses.append(f"{record_alias}.session_id = ?")
+        params.append(session_id)
+    if model:
+        if run_alias:
+            clauses.append(f"COALESCE({run_alias}.model, {session_alias}.model) = ?")
+        else:
+            clauses.append(f"{session_alias}.model = ?")
+        params.append(model)
 
 
 def _append_time_filter(
@@ -763,3 +1016,14 @@ def _json_object(value: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_symbol(row: dict[str, Any]) -> str | None:
+    arguments = _json_object(str(row.get("arguments_json") or "{}"))
+    if arguments.get("symbol"):
+        return str(arguments["symbol"])
+    envelope = _json_object(str(row.get("result_json") or "{}"))
+    result = envelope.get("result") if isinstance(envelope.get("result"), dict) else {}
+    if isinstance(result, dict) and result.get("symbol"):
+        return str(result["symbol"])
+    return None

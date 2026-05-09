@@ -18,7 +18,11 @@ def _seed_trade(client):
     ).json()
     session = client.post(
         "/api/sessions",
-        json={"name": "View Session", "simulator_account_id": account["id"]},
+        json={
+            "name": "View Session",
+            "simulator_account_id": account["id"],
+            "model": "deepseek-v4-pro",
+        },
     ).json()
     store = client.app.state.store
     now = _now()
@@ -31,21 +35,21 @@ def _seed_trade(client):
         INSERT INTO orders (
             id, session_id, simulator_account_id, symbol, name,
             side, order_type, price, quantity, filled_quantity,
-            status, created_at, updated_at
+            status, run_id, tool_call_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, '000001', 'Ping An Bank', 'buy', 'market', 10, 1000, 1000, 'filled', ?, ?)
+        VALUES (?, ?, ?, '000001', 'Ping An Bank', 'buy', 'market', 10, 1000, 1000, 'filled', ?, ?, ?, ?)
         """,
-        (order_id, session["id"], account["id"], now, now),
+        (order_id, session["id"], account["id"], run_id, tool_call_id, now, now),
     )
     store.execute(
         """
         INSERT INTO trades (
             id, order_id, session_id, simulator_account_id,
-            symbol, side, price, quantity, fee, tax, traded_at
+            symbol, side, price, quantity, fee, tax, run_id, tool_call_id, traded_at
         )
-        VALUES (?, ?, ?, ?, '000001', 'buy', 10, 1000, 5, 0, ?)
+        VALUES (?, ?, ?, ?, '000001', 'buy', 10, 1000, 5, 0, ?, ?, ?)
         """,
-        (trade_id, order_id, session["id"], account["id"], now),
+        (trade_id, order_id, session["id"], account["id"], run_id, tool_call_id, now),
     )
     store.execute(
         """
@@ -72,7 +76,7 @@ def _seed_trade(client):
             id, session_id, provider_id, model, status,
             max_tool_rounds, started_at, finished_at
         )
-        VALUES (?, ?, NULL, NULL, 'finished', 5, ?, ?)
+        VALUES (?, ?, NULL, 'deepseek-v4-pro', 'finished', 5, ?, ?)
         """,
         (run_id, session["id"], now, now),
     )
@@ -166,6 +170,40 @@ def test_view_trades_filters_by_account_and_symbol(monkeypatch) -> None:
     assert miss.json()["summary"]["trade_count"] == 0
 
 
+def test_view_trades_filters_by_session_model_and_side(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    account, session = _seed_trade(client)
+
+    hit = client.get(
+        "/api/view/trades",
+        params={
+            "account_id": account["id"],
+            "session_id": session["id"],
+            "model": "deepseek-v4-pro",
+            "side": "buy",
+        },
+    )
+    wrong_side = client.get(
+        "/api/view/trades",
+        params={
+            "account_id": account["id"],
+            "session_id": session["id"],
+            "model": "deepseek-v4-pro",
+            "side": "sell",
+        },
+    )
+
+    assert hit.status_code == 200
+    row = hit.json()["trades"][0]
+    assert row["session_id"] == session["id"]
+    assert row["model"] == "deepseek-v4-pro"
+    assert row["side"] == "buy"
+    assert row["run_id"]
+    assert row["tool_call_id"]
+    assert wrong_side.status_code == 200
+    assert wrong_side.json()["summary"]["trade_count"] == 0
+
+
 def test_view_timeline_combines_messages_and_trades(monkeypatch) -> None:
     client = make_client(monkeypatch)
     account, session = _seed_trade(client)
@@ -177,6 +215,7 @@ def test_view_timeline_combines_messages_and_trades(monkeypatch) -> None:
 
     assert {"message", "trade"}.issubset(types)
     assert any(row["session_id"] == session["id"] for row in body["items"])
+    assert any(row.get("run_id") for row in body["items"] if row["type"] == "trade")
 
 
 def test_order_tools_require_trade_reason(monkeypatch) -> None:
