@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
@@ -8,7 +8,9 @@ import {
   MessageSquare,
   RefreshCw,
   Search,
+  Send,
   Table2,
+  TimerReset,
   Wallet
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -16,8 +18,10 @@ import { Input, Select } from "@/components/ui/Input";
 import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
 import { useDataStore } from "@/stores/dataStore";
 import { useMarketStore } from "@/stores/marketStore";
+import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore, type ViewSection, viewSections } from "@/stores/viewStore";
-import type { AccountSnapshot, AssetPoint, TradeRow, ViewLogRow, ViewTimelineRow } from "@/api";
+import { api } from "@/api";
+import type { AccountSnapshot, AssetPoint, MarketAnnouncementResponse, MarketHistoryResponse, TradeRow, ViewLogRow, ViewTimelineRow } from "@/api";
 import { barClose, barTime, formatMoney, formatValue, humanTime, linePoints } from "@/lib/utils";
 
 export function ViewPage() {
@@ -45,9 +49,13 @@ export function ViewPage() {
   }, [
     section,
     filters.account_id,
+    filters.session_id,
+    filters.model,
     filters.start,
     filters.end,
     filters.symbol,
+    filters.side,
+    filters.status,
     loadOverview,
     loadAccounts,
     loadTrades,
@@ -126,17 +134,44 @@ function ViewNav({
 
 function ViewFilters() {
   const accounts = useDataStore((s) => s.accounts);
+  const sessions = useDataStore((s) => s.sessions);
   const filters = useViewStore((s) => s.filters);
   const patchFilters = useViewStore((s) => s.patchFilters);
+  const models = useMemo(
+    () => Array.from(new Set(sessions.map((session) => session.model).filter((value): value is string => Boolean(value)))).sort(),
+    [sessions]
+  );
+  const filteredSessions = useMemo(
+    () => sessions.filter((session) => !filters.account_id || session.simulator_account_id === filters.account_id),
+    [sessions, filters.account_id]
+  );
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr_1fr_auto] gap-2 items-end">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[1.2fr_1.2fr_1fr_1fr_1fr_1fr_1fr_auto] gap-2 items-end">
       <label className="grid gap-1.5 text-xs text-text-muted">
         账户
         <Select value={filters.account_id ?? ""} onChange={(e) => patchFilters({ account_id: e.target.value || undefined })}>
           <option value="">全部账户</option>
           {accounts.map((account) => (
             <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </Select>
+      </label>
+      <label className="grid gap-1.5 text-xs text-text-muted">
+        Session
+        <Select value={filters.session_id ?? ""} onChange={(e) => patchFilters({ session_id: e.target.value || undefined })}>
+          <option value="">全部 Session</option>
+          {filteredSessions.map((session) => (
+            <option key={session.id} value={session.id}>{session.name}</option>
+          ))}
+        </Select>
+      </label>
+      <label className="grid gap-1.5 text-xs text-text-muted">
+        模型
+        <Select value={filters.model ?? ""} onChange={(e) => patchFilters({ model: e.target.value || undefined })}>
+          <option value="">全部模型</option>
+          {models.map((model) => (
+            <option key={model} value={model}>{model}</option>
           ))}
         </Select>
       </label>
@@ -149,7 +184,15 @@ function ViewFilters() {
         placeholder="000001"
         icon={<Search size={14} />}
       />
-      <Button variant="secondary" size="sm" onClick={() => patchFilters({ account_id: "", start: "", end: "", symbol: "" })}>
+      <label className="grid gap-1.5 text-xs text-text-muted">
+        方向
+        <Select value={filters.side ?? ""} onChange={(e) => patchFilters({ side: e.target.value || undefined })}>
+          <option value="">全部</option>
+          <option value="buy">买入</option>
+          <option value="sell">卖出</option>
+        </Select>
+      </label>
+      <Button variant="secondary" size="sm" onClick={() => patchFilters({ account_id: "", session_id: "", model: "", start: "", end: "", symbol: "", side: "", status: "" })}>
         清空
       </Button>
     </div>
@@ -172,6 +215,10 @@ function OverviewPanel() {
   return (
     <div className="grid gap-3">
       <MetricStrip summary={data.summary} />
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<LineChart size={16} />} title="综合资产曲线" />
+        <CombinedAssetChart snapshots={data.accounts} />
+      </section>
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-3">
         <section className="border border-hairline rounded-xl bg-surface-card p-4">
           <PanelHeader icon={<Wallet size={16} />} title="账户矩阵" />
@@ -180,6 +227,20 @@ function OverviewPanel() {
         <section className="border border-hairline rounded-xl bg-surface-card p-4">
           <PanelHeader icon={<History size={16} />} title="最近成交" />
           <TradeList trades={data.recent_trades} compact />
+        </section>
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <section className="border border-hairline rounded-xl bg-surface-card p-4">
+          <PanelHeader icon={<MessageSquare size={16} />} title="最近决策" />
+          <LogList logs={data.recent_logs ?? []} compact />
+        </section>
+        <section className="border border-hairline rounded-xl bg-surface-card p-4">
+          <PanelHeader icon={<Database size={16} />} title="最近工具调用" />
+          <TimelineList items={data.recent_tools ?? []} compact />
+        </section>
+        <section className="border border-hairline rounded-xl bg-surface-card p-4">
+          <PanelHeader icon={<Activity size={16} />} title="最近错误" />
+          <TimelineList items={data.recent_errors ?? []} compact />
         </section>
       </div>
     </div>
@@ -220,15 +281,36 @@ function TradesPanel() {
 
 function AssetsPanel() {
   const data = useViewStore((s) => s.assets);
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
   if (!data) return <EmptyState title="暂无资产曲线" description="账户创建后会生成初始点，成交后会生成交易点。" />;
+  const visibleSeries = data.series.filter((series) => !hidden[series.account_id]);
   return (
     <div className="grid gap-3">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-w-[860px]">
         <Metric label="账户数" value={String(data.summary.account_count ?? 0)} />
         <Metric label="最新总资产" value={formatMoney(data.summary.latest_total_asset)} />
       </div>
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <div className="flex items-start justify-between gap-3">
+          <PanelHeader icon={<LineChart size={16} />} title="多账户资产对比" />
+          <div className="flex flex-wrap justify-end gap-2">
+            {data.series.map((series) => (
+              <button
+                key={series.account_id}
+                type="button"
+                onClick={() => setHidden((state) => ({ ...state, [series.account_id]: !state[series.account_id] }))}
+                className={`rounded-md border px-2 py-1 text-xs ${hidden[series.account_id] ? "border-hairline text-text-muted" : "border-brand-primary/50 text-text-on-dark bg-brand-primary/10"}`}
+              >
+                {series.account_name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <MultiAssetChart series={visibleSeries} />
+        <p className="mt-2 text-xs text-text-muted">基准曲线：沪深300预留，待回放/指数缓存接口接入后叠加。</p>
+      </section>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-        {data.series.map((series) => (
+        {visibleSeries.map((series) => (
           <section key={series.account_id} className="border border-hairline rounded-xl bg-surface-card p-4">
             <PanelHeader icon={<LineChart size={16} />} title={series.account_name} />
             <AssetChart points={series.points} />
@@ -241,20 +323,97 @@ function AssetsPanel() {
 }
 
 function StockPanel() {
+  const navigate = useNavigate();
+  const accounts = useDataStore((s) => s.accounts);
+  const providers = useDataStore((s) => s.providers);
+  const createSession = useDataStore((s) => s.createSession);
+  const setSelectedSessionId = useTradeStore((s) => s.setSelectedSessionId);
   const marketForm = useMarketStore((s) => s.marketForm);
   const setMarketForm = useMarketStore((s) => s.setMarketForm);
   const marketQuote = useMarketStore((s) => s.marketQuote);
   const marketHistory = useMarketStore((s) => s.marketHistory);
+  const cacheRows = useMarketStore((s) => s.cacheRows);
+  const dataFetchResult = useMarketStore((s) => s.dataFetchResult);
   const queryQuote = useMarketStore((s) => s.queryQuote);
   const queryHistory = useMarketStore((s) => s.queryHistory);
+  const fetchHistory = useMarketStore((s) => s.fetchHistory);
+  const loadDataState = useMarketStore((s) => s.loadDataState);
+  const [minuteHistory, setMinuteHistory] = useState<MarketHistoryResponse | null>(null);
+  const [announcementData, setAnnouncementData] = useState<MarketAnnouncementResponse | null>(null);
+  const [analysisAccountId, setAnalysisAccountId] = useState("");
+  const [analysisProviderId, setAnalysisProviderId] = useState("");
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const values = useMemo(() => marketHistory?.bars.map(barClose).filter((v): v is number => v != null) ?? [], [marketHistory]);
+  const minuteValues = useMemo(() => minuteHistory?.bars.map(barClose).filter((v): v is number => v != null) ?? [], [minuteHistory]);
+  const matchingCacheRows = useMemo(
+    () => cacheRows.filter((row) => !marketForm.symbol.trim() || row.symbol === marketForm.symbol.trim()),
+    [cacheRows, marketForm.symbol]
+  );
+  const selectedProvider = providers.find((provider) => provider.id === analysisProviderId) ?? providers[0] ?? null;
+
+  useEffect(() => {
+    void loadDataState();
+  }, [loadDataState]);
+
+  async function queryMinute() {
+    if (!marketForm.symbol.trim() || !marketForm.start || !marketForm.end) return;
+    setMinuteHistory(await api.minute({
+      symbol: marketForm.symbol.trim(),
+      start: marketForm.start,
+      end: marketForm.end,
+      period: "5",
+      allowFetchMissing: marketForm.allowFetchMissing,
+    }));
+  }
+
+  async function queryAnnouncements() {
+    if (!marketForm.symbol.trim()) return;
+    setAnnouncementData(await api.announcement({
+      symbol: marketForm.symbol.trim(),
+      start: marketForm.start || undefined,
+      end: marketForm.end || undefined,
+      allowFetchMissing: marketForm.allowFetchMissing,
+    }));
+  }
+
+  async function sendStockToLlm() {
+    const symbol = marketForm.symbol.trim();
+    const accountId = analysisAccountId || accounts[0]?.id;
+    const provider = selectedProvider;
+    if (!symbol || !accountId || !provider) return;
+    setAnalysisBusy(true);
+    try {
+      const session = await createSession({
+        name: `股票分析 ${symbol}`,
+        simulator_account_id: accountId,
+        provider_id: provider.id,
+        model: provider.model,
+      });
+      const quoteLine = marketQuote ? JSON.stringify(marketQuote) : "暂无实时报价";
+      await api.createMessage(session.id, {
+        role: "user",
+        message_type: "event",
+        content: [
+          `[股票分析事件] ${symbol}`,
+          `时间范围：${marketForm.start || "未指定"} 至 ${marketForm.end || "未指定"}`,
+          `报价摘要：${quoteLine}`,
+          `历史K线条数：${marketHistory?.bars.length ?? 0}`,
+          "请基于当前可见行情与工具能力，给出是否需要进一步查询、等待或模拟交易的计划。"
+        ].join("\n")
+      });
+      setSelectedSessionId(session.id);
+      navigate("/trade");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  }
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
       <section className="xl:col-span-2 border border-hairline rounded-xl bg-surface-card p-4">
         <PanelHeader icon={<Search size={16} />} title="行情查询" />
         <form
-          className="grid grid-cols-1 md:grid-cols-[1fr_160px_160px_120px_auto_auto] gap-2 items-end"
+          className="grid grid-cols-1 md:grid-cols-[1fr_160px_160px_120px_auto_auto_auto_auto] gap-2 items-end"
           onSubmit={(event) => {
             event.preventDefault();
             if (marketForm.symbol.trim()) {
@@ -273,11 +432,25 @@ function StockPanel() {
               <option value="hfq">后复权</option>
             </Select>
           </label>
+          <label className="flex h-10 items-center gap-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={marketForm.allowFetchMissing}
+              onChange={(e) => setMarketForm({ ...marketForm, allowFetchMissing: e.target.checked })}
+            />
+            缺失时拉取
+          </label>
           <Button variant="secondary" size="sm" type="button" disabled={!marketForm.symbol.trim()} onClick={() => void queryQuote(marketForm.symbol.trim())}>
             查报价
           </Button>
           <Button variant="primary" size="sm" type="submit" disabled={!marketForm.symbol.trim()}>
             查历史
+          </Button>
+          <Button variant="secondary" size="sm" type="button" disabled={!marketForm.symbol.trim() || !marketForm.start || !marketForm.end} onClick={() => void queryMinute()}>
+            查分钟
+          </Button>
+          <Button variant="secondary" size="sm" type="button" disabled={!marketForm.symbol.trim()} onClick={() => void queryAnnouncements()}>
+            查公告
           </Button>
         </form>
       </section>
@@ -321,6 +494,85 @@ function StockPanel() {
           <EmptyState title="暂无历史行情" description="查询历史后显示 K 线数据和收盘价走势。" />
         )}
       </section>
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<LineChart size={16} />} title="分钟行情" />
+        {minuteHistory ? (
+          <>
+            <MiniChart values={minuteValues} />
+            <p className="mt-2 text-xs text-text-muted">{minuteHistory.interval} / {minuteHistory.bars.length} 条</p>
+          </>
+        ) : (
+          <EmptyState title="暂无分钟行情" description="填写起止日期后查询 5 分钟线。" />
+        )}
+      </section>
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<Database size={16} />} title="公告与缓存" />
+        <div className="grid gap-3">
+          {announcementData && announcementData.announcements.length > 0 ? (
+            <div className="max-h-[220px] overflow-auto">
+              {announcementData.announcements.slice(0, 12).map((item, index) => (
+                <div key={index} className="border-b border-hairline/50 py-2 text-sm">
+                  <strong className="block text-text-on-dark">{formatValue(item.title ?? item.announcementTitle ?? item.name ?? `公告 ${index + 1}`)}</strong>
+                  <span className="text-xs text-text-muted">{formatValue(item.date ?? item.datetime ?? item.time ?? item["公告日期"])}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="暂无公告" description="点击查公告后显示本地或拉取结果。" />
+          )}
+          <div className="border-t border-hairline pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-text-on-dark">缓存覆盖</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!marketForm.symbol.trim() || !marketForm.start || !marketForm.end}
+                onClick={() => void fetchHistory(marketForm.symbol.trim(), marketForm.start, marketForm.end, marketForm.adjust || undefined)}
+              >
+                拉取保存
+              </Button>
+            </div>
+            {dataFetchResult && (
+              <p className="mb-2 text-xs text-text-muted">
+                新增 {dataFetchResult.inserted} / 跳过 {dataFetchResult.skipped} / 冲突 {dataFetchResult.conflicted}
+              </p>
+            )}
+            <CacheRows rows={matchingCacheRows} />
+          </div>
+        </div>
+      </section>
+      <section className="xl:col-span-2 border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<Send size={16} />} title="发送给 LLM 分析" />
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            账户
+            <Select value={analysisAccountId} onChange={(e) => setAnalysisAccountId(e.target.value)}>
+              <option value="">默认第一个账户</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>{account.name}</option>
+              ))}
+            </Select>
+          </label>
+          <label className="grid gap-1.5 text-xs text-text-muted">
+            Provider / 模型
+            <Select value={analysisProviderId} onChange={(e) => setAnalysisProviderId(e.target.value)}>
+              <option value="">默认第一个 Provider</option>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>{provider.name} / {provider.model}</option>
+              ))}
+            </Select>
+          </label>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Send size={14} />}
+            disabled={analysisBusy || !marketForm.symbol.trim() || accounts.length === 0 || providers.length === 0}
+            onClick={() => void sendStockToLlm()}
+          >
+            新建分析 Session
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -338,12 +590,81 @@ function LogsPanel() {
 
 function TimelinePanel() {
   const data = useViewStore((s) => s.timeline);
+  const [currentTime, setCurrentTime] = useState(() => new Date().toISOString().slice(0, 16));
   if (!data) return <EmptyState title="暂无时间线" description="消息、运行、工具和成交会合并为全局事件流。" />;
   return (
-    <section className="border border-hairline rounded-xl bg-surface-card p-4">
-      <PanelHeader icon={<Activity size={16} />} title="全局时间线" />
-      {data.items.length === 0 ? <EmptyState title="没有匹配事件" description="调整筛选条件后重试。" /> : <TimelineList items={data.items} />}
-    </section>
+    <div className="grid gap-3">
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<TimerReset size={16} />} title="时间线控制" />
+        <div className="grid grid-cols-1 md:grid-cols-[220px_auto_auto_auto_1fr] gap-2 items-end">
+          <Input label="全局模拟时间" type="datetime-local" value={currentTime} onChange={(e) => setCurrentTime(e.target.value)} />
+          <Button variant="secondary" size="sm" disabled>暂停</Button>
+          <Button variant="secondary" size="sm" disabled>继续</Button>
+          <Button variant="secondary" size="sm" disabled>覆盖重跑</Button>
+          <p className="text-xs text-text-muted">本阶段提供只读控制骨架；真实 Replay Clock 与覆盖式重跑在历史回放阶段接入。</p>
+        </div>
+      </section>
+      <section className="border border-hairline rounded-xl bg-surface-card p-4">
+        <PanelHeader icon={<Activity size={16} />} title="全局时间线" />
+        {data.items.length === 0 ? <EmptyState title="没有匹配事件" description="调整筛选条件后重试。" /> : <TimelineList items={data.items} />}
+      </section>
+    </div>
+  );
+}
+
+function CombinedAssetChart({ snapshots }: { snapshots: AccountSnapshot[] }) {
+  const series = snapshots.map((snapshot) => ({
+    account_id: snapshot.account.id,
+    account_name: snapshot.account.name,
+    points: snapshot.asset_points,
+  }));
+  return <MultiAssetChart series={series} />;
+}
+
+function MultiAssetChart({ series }: { series: Array<{ account_id: string; account_name: string; points: AssetPoint[] }> }) {
+  const visible = series.filter((item) => item.points.length >= 2);
+  if (visible.length === 0) return <EmptyState title="曲线点不足" description="至少需要一个账户有两个资产点。" />;
+  const palette = ["var(--color-brand-primary)", "var(--color-accent-turquoise)", "var(--color-info)", "var(--color-trading-rise)", "var(--color-trading-fall)"];
+  const allValues = visible.flatMap((item) => item.points.map((point) => Number(point.total_asset)).filter(Number.isFinite));
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const span = max - min || 1;
+  const toPoints = (points: AssetPoint[]) =>
+    points
+      .map((point, index) => {
+        const x = 2 + (index / Math.max(points.length - 1, 1)) * 96;
+        const y = 7 + 46 - ((Number(point.total_asset) - min) / span) * 46;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(" ");
+
+  return (
+    <div>
+      <svg className="mt-2 h-[180px] w-full" viewBox="0 0 100 60" role="img" aria-label="多账户资产曲线">
+        {[8, 30, 52].map((y) => (
+          <line key={y} x1="2" x2="98" y1={y} y2={y} stroke="var(--color-hairline)" strokeOpacity="0.55" strokeWidth="0.5" />
+        ))}
+        {visible.map((item, index) => (
+          <polyline
+            key={item.account_id}
+            points={toPoints(item.points)}
+            fill="none"
+            stroke={palette[index % palette.length]}
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-text-muted">
+        {visible.map((item, index) => (
+          <span key={item.account_id} className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ background: palette[index % palette.length] }} />
+            {item.account_name}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -416,6 +737,10 @@ function AccountDetailCard({ snapshot }: { snapshot: AccountSnapshot }) {
           </div>
         )}
       </div>
+      <div className="mt-3 border-t border-hairline pt-3">
+        <PanelHeader icon={<Table2 size={15} />} title="Session 交易贡献" />
+        <SessionContributionTable rows={snapshot.session_contributions ?? []} />
+      </div>
     </section>
   );
 }
@@ -444,6 +769,38 @@ function PositionTable({ positions }: { positions: AccountSnapshot["positions"] 
               <td className="py-1.5 text-text-muted">{row.avg_cost}</td>
               <td className="py-1.5 text-text-on-dark">{formatMoney(row.market_value)}</td>
               <td className={`py-1.5 ${toneClass(row.unrealized_pnl)}`}>{formatMoney(row.unrealized_pnl)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SessionContributionTable({ rows }: { rows: NonNullable<AccountSnapshot["session_contributions"]> }) {
+  if (rows.length === 0) return <EmptyState title="暂无贡献数据" description="成交归因到 Session 后这里会显示贡献。" />;
+  return (
+    <div className="max-h-[220px] overflow-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-text-muted border-b border-hairline">
+            <th className="py-2 font-medium">Session</th>
+            <th className="py-2 font-medium">模型</th>
+            <th className="py-2 font-medium">成交</th>
+            <th className="py-2 font-medium">买/卖</th>
+            <th className="py-2 font-medium">成交额</th>
+            <th className="py-2 font-medium">费用</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.session_id}-${row.model}`} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-on-dark">{row.session_name}</td>
+              <td className="py-1.5 text-text-muted">{row.model || row.provider_name || "--"}</td>
+              <td className="py-1.5 text-text-muted">{row.trade_count}</td>
+              <td className="py-1.5 text-text-muted">{row.buy_count}/{row.sell_count}</td>
+              <td className="py-1.5 text-text-on-dark">{formatMoney(row.turnover)}</td>
+              <td className="py-1.5 text-text-muted">{formatMoney(row.fees)}</td>
             </tr>
           ))}
         </tbody>
@@ -579,10 +936,40 @@ function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function LogList({ logs }: { logs: ViewLogRow[] }) {
+function CacheRows({ rows }: { rows: Array<{ symbol: string; name?: string | null; interval: string; adjust: string; start_datetime: string; end_datetime: string; bar_count: number }> }) {
+  if (rows.length === 0) return <EmptyState title="暂无缓存覆盖" description="拉取并保存后显示本地覆盖范围。" />;
+  return (
+    <div className="max-h-[220px] overflow-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-text-muted border-b border-hairline">
+            <th className="py-2 font-medium">代码</th>
+            <th className="py-2 font-medium">周期</th>
+            <th className="py-2 font-medium">范围</th>
+            <th className="py-2 font-medium">条数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 20).map((row) => (
+            <tr key={`${row.symbol}-${row.interval}-${row.adjust}`} className="border-b border-hairline/50">
+              <td className="py-1.5 text-text-on-dark">{row.name ? `${row.name} ${row.symbol}` : row.symbol}</td>
+              <td className="py-1.5 text-text-muted">{row.interval} / {row.adjust || "不复权"}</td>
+              <td className="py-1.5 text-text-muted">{row.start_datetime} - {row.end_datetime}</td>
+              <td className="py-1.5 text-text-muted">{row.bar_count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LogList({ logs, compact = false }: { logs: ViewLogRow[]; compact?: boolean }) {
+  const visible = compact ? logs.slice(0, 6) : logs;
+  if (visible.length === 0) return <EmptyState title="暂无交易理由" description="order.buy / order.sell 的理由会在这里聚合。" />;
   return (
     <div className="grid gap-2">
-      {logs.map((log) => (
+      {visible.map((log) => (
         <article key={log.id} className="rounded-lg border border-hairline bg-surface-canvas/50 p-3">
           <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
             <span>{log.account_name ?? "未绑定账户"} / {log.session_name ?? log.session_id}</span>
@@ -598,6 +985,11 @@ function LogList({ logs }: { logs: ViewLogRow[] }) {
             <span className="rounded-full border border-hairline px-2 py-0.5 text-xs text-text-muted">
               {log.price ? `成交价 ${log.price}` : log.status ?? "--"}
             </span>
+            {log.model && (
+              <span className="rounded-full border border-hairline px-2 py-0.5 text-xs text-text-muted">
+                {log.model}
+              </span>
+            )}
           </div>
           <p className="mt-2 text-sm leading-relaxed text-text-body">{log.trade_reason || "未记录交易理由"}</p>
           {log.error && <p className="mt-2 text-xs text-trading-rise">{log.error}</p>}
@@ -607,17 +999,19 @@ function LogList({ logs }: { logs: ViewLogRow[] }) {
   );
 }
 
-function TimelineList({ items }: { items: ViewTimelineRow[] }) {
+function TimelineList({ items, compact = false }: { items: ViewTimelineRow[]; compact?: boolean }) {
+  const visible = compact ? items.slice(0, 8) : items;
+  if (visible.length === 0) return <EmptyState title="暂无事件" description="当前筛选条件下没有事件。" />;
   return (
     <div className="relative grid gap-2 pl-4 before:absolute before:left-1 before:top-1 before:bottom-1 before:w-px before:bg-hairline">
-      {items.map((item) => (
+      {visible.map((item) => (
         <article key={`${item.type}-${item.id}`} className="relative rounded-lg border border-hairline bg-surface-canvas/50 p-3 before:absolute before:-left-[15px] before:top-4 before:w-2 before:h-2 before:rounded-full before:bg-brand-primary">
           <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
-            <span>{item.type} / {item.account_name ?? "未绑定账户"}</span>
+            <span>{item.type} / {item.account_name ?? "未绑定账户"} / {item.model ?? item.provider_name ?? "--"}</span>
             <span>{humanTime(item.time)}</span>
           </div>
           <h3 className="mt-1 text-sm font-semibold text-text-on-dark">{item.title}</h3>
-          <p className="mt-1 text-sm text-text-body">{item.summary || "--"}</p>
+          <p className="mt-1 text-sm text-text-body">{item.summary || item.symbol || "--"}</p>
         </article>
       ))}
     </div>

@@ -139,6 +139,13 @@ export interface MarketHistoryResponse {
   bars: Record<string, unknown>[];
 }
 
+export interface MarketAnnouncementResponse {
+  symbol: string;
+  cache_hit: boolean;
+  fetch_stats: Record<string, number> | null;
+  announcements: Record<string, unknown>[];
+}
+
 export interface FetchHistoryResponse {
   symbol: string;
   interval: string;
@@ -305,9 +312,13 @@ export interface PromptRole {
 
 export interface ViewFilters {
   account_id?: string;
+  session_id?: string;
+  model?: string;
   start?: string;
   end?: string;
   symbol?: string;
+  side?: string;
+  status?: string;
 }
 
 export interface AccountMetrics {
@@ -383,6 +394,20 @@ export interface TradeRow {
   traded_at: string;
 }
 
+export interface SessionContributionRow {
+  session_id: string;
+  session_name: string;
+  provider_id?: string | null;
+  provider_name?: string | null;
+  provider_type?: string | null;
+  model?: string | null;
+  trade_count: number;
+  buy_count: number;
+  sell_count: number;
+  turnover: number;
+  fees: number;
+}
+
 export interface AssetPoint {
   time: string;
   cash: number;
@@ -400,6 +425,7 @@ export interface AccountSnapshot {
   recent_trades: TradeRow[];
   asset_points: AssetPoint[];
   sessions: Array<Session & { provider_name?: string | null; provider_type?: string | null }>;
+  session_contributions?: SessionContributionRow[];
 }
 
 export interface ViewLogRow {
@@ -409,6 +435,10 @@ export interface ViewLogRow {
   session_name?: string | null;
   account_id?: string | null;
   account_name?: string | null;
+  provider_id?: string | null;
+  provider_name?: string | null;
+  provider_type?: string | null;
+  model?: string | null;
   tool_name: "order_buy" | "order_sell" | string;
   side: "buy" | "sell" | string;
   symbol?: string | null;
@@ -430,6 +460,12 @@ export interface ViewTimelineRow {
   account_name?: string | null;
   session_id?: string | null;
   session_name?: string | null;
+  provider_id?: string | null;
+  provider_name?: string | null;
+  provider_type?: string | null;
+  model?: string | null;
+  run_id?: string | null;
+  tool_call_id?: string | null;
   symbol?: string | null;
   title: string;
   summary: string;
@@ -443,6 +479,8 @@ export interface ViewOverviewResponse {
   accounts: AccountSnapshot[];
   recent_trades: TradeRow[];
   recent_logs: ViewLogRow[];
+  recent_tools?: ViewTimelineRow[];
+  recent_errors?: ViewTimelineRow[];
 }
 
 export interface ViewAccountsResponse {
@@ -504,9 +542,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 function viewQuery(filters?: ViewFilters & { limit?: number }): string {
   const query = new URLSearchParams();
   if (filters?.account_id) query.set("account_id", filters.account_id);
+  if (filters?.session_id) query.set("session_id", filters.session_id);
+  if (filters?.model) query.set("model", filters.model);
   if (filters?.start) query.set("start", filters.start);
   if (filters?.end) query.set("end", filters.end);
   if (filters?.symbol) query.set("symbol", filters.symbol);
+  if (filters?.side) query.set("side", filters.side);
+  if (filters?.status) query.set("status", filters.status);
   if (filters?.limit) query.set("limit", String(filters.limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
@@ -567,6 +609,23 @@ export const api = {
     if (params.adjust) query.set("adjust", params.adjust);
     if (params.allowFetchMissing) query.set("allow_fetch_missing", "true");
     return request<MarketHistoryResponse>(`/api/market/history?${query.toString()}`);
+  },
+  minute: (params: { symbol: string; start: string; end: string; period?: string; allowFetchMissing?: boolean }) => {
+    const query = new URLSearchParams();
+    query.set("symbol", params.symbol);
+    query.set("start", params.start);
+    query.set("end", params.end);
+    if (params.period) query.set("period", params.period);
+    if (params.allowFetchMissing) query.set("allow_fetch_missing", "true");
+    return request<MarketHistoryResponse>(`/api/market/minute?${query.toString()}`);
+  },
+  announcement: (params: { symbol: string; start?: string; end?: string; allowFetchMissing?: boolean }) => {
+    const query = new URLSearchParams();
+    query.set("symbol", params.symbol);
+    if (params.start) query.set("start", params.start);
+    if (params.end) query.set("end", params.end);
+    if (params.allowFetchMissing) query.set("allow_fetch_missing", "true");
+    return request<MarketAnnouncementResponse>(`/api/market/announcement?${query.toString()}`);
   },
   fetchHistory: (payload: { symbol: string; start: string; end: string; interval?: string; adjust?: string }) =>
     request<FetchHistoryResponse>("/api/data/fetch-history", {

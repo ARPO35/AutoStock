@@ -73,7 +73,11 @@ export const useViewStore = create<ViewState>((set, get) => ({
         ...state.filters,
         ...patch,
         account_id: patch.account_id === "" ? undefined : patch.account_id ?? state.filters.account_id,
+        session_id: patch.session_id === "" ? undefined : patch.session_id ?? state.filters.session_id,
+        model: patch.model === "" ? undefined : patch.model ?? state.filters.model,
         symbol: patch.symbol === "" ? undefined : patch.symbol ?? state.filters.symbol,
+        side: patch.side === "" ? undefined : patch.side ?? state.filters.side,
+        status: patch.status === "" ? undefined : patch.status ?? state.filters.status,
         start: patch.start === "" ? undefined : patch.start ?? state.filters.start,
         end: patch.end === "" ? undefined : patch.end ?? state.filters.end,
       }
