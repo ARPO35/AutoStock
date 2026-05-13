@@ -22,11 +22,13 @@ def _test_dir() -> Path:
 
 
 def make_client(monkeypatch) -> TestClient:
-    path = _test_dir()
+    path = _test_dir().resolve()
     monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(path / "app.db"))
     monkeypatch.setenv("AUTOSTOCK_MARKET_DUCKDB_PATH", str(path / "market.duckdb"))
     monkeypatch.setenv("AUTOSTOCK_FRONTEND_DIST_PATH", str(path / "frontend_dist"))
     monkeypatch.setenv("AUTOSTOCK_SIMULATOR_ENFORCE_TRADING_HOURS", "0")
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_ENABLED", "1")
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(path / "logs"))
     get_settings.cache_clear()
     return TestClient(create_app())
 
@@ -365,6 +367,72 @@ def test_session_run_provider_connection_error_is_reported(monkeypatch) -> None:
     assert "APIConnectionError: Connection error." in runs.json()[0]["error"]
 
 
+def test_session_run_provider_error_preserves_partial_assistant_message(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+
+    class APIConnectionError(Exception):
+        pass
+
+    class PartiallyFailingProvider:
+        async def chat_stream(self, config, messages, tools):
+            yield {"choices": [{"delta": {"content": "A"}}]}
+            yield {"choices": [{"delta": {"content": "B"}}]}
+            raise APIConnectionError("Connection dropped.")
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: PartiallyFailingProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post(
+        "/api/simulator/accounts",
+        json={"name": "Account Under Test"},
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Session Under Test",
+            "simulator_account_id": account["id"],
+            "provider_id": provider["id"],
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+
+    with client.websocket_connect(f"/ws/sessions/{session['id']}") as websocket:
+        run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+        assert run.status_code == 502
+
+        assert websocket.receive_json()["type"] == "run_started"
+        assert websocket.receive_json()["token"] == "A"
+        assert websocket.receive_json()["token"] == "B"
+        assistant_event = websocket.receive_json()
+        assert assistant_event["type"] == "assistant_message"
+        error_event = websocket.receive_json()
+        assert error_event["type"] == "error"
+        assert "APIConnectionError: Connection dropped." in error_event["error"]
+
+    messages = client.get(f"/api/sessions/{session['id']}/messages").json()
+    assert [message["message_type"] for message in messages] == ["user", "assistant"]
+    assert messages[-1]["content"].startswith("AB\n\n[Interrupted: ")
+    assert "APIConnectionError: Connection dropped." in messages[-1]["content"]
+
+    runs = client.get(f"/api/sessions/{session['id']}/runs").json()
+    assert runs[0]["status"] == "error"
+    assert runs[0]["final_message_id"] == messages[-1]["id"]
+
+
 def test_session_run_applies_prompt_role_templates(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app
@@ -591,7 +659,14 @@ def test_session_run_can_be_stopped(monkeypatch) -> None:
 
     runs = client.get(f"/api/sessions/{session['id']}/runs")
     assert runs.status_code == 200
-    assert runs.json()[0]["status"] == "cancelled"
+    run = runs.json()[0]
+    assert run["status"] == "cancelled"
+
+    messages = client.get(f"/api/sessions/{session['id']}/messages").json()
+    assert [message["message_type"] for message in messages] == ["user", "assistant"]
+    assert messages[-1]["content"].startswith("A")
+    assert messages[-1]["content"].endswith("[Interrupted: User interrupt]")
+    assert run["final_message_id"] == messages[-1]["id"]
 
     second_stop = client.post(f"/api/sessions/{session['id']}/stop")
     assert second_stop.status_code == 200

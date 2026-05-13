@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import asdict
 from typing import Any
 
 from app.llm.base import ChatMessage, ChatResponse, LLMProviderConfig, ToolCall, ToolDefinition
+from app.llm.raw_logger import RawLogContext, write_raw_llm_log
 
 
 class OpenAICompatibleProvider:
@@ -30,6 +32,7 @@ class OpenAICompatibleProvider:
         config: LLMProviderConfig,
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
+        log_context: RawLogContext | None = None,
     ) -> ChatResponse:
         try:
             from openai import AsyncOpenAI
@@ -43,7 +46,25 @@ class OpenAICompatibleProvider:
         )
 
         request = self._build_chat_request(config, messages, tools)
-        response = await client.chat.completions.create(**request)
+        self._log_request(context=log_context, config=config, request=request)
+        try:
+            response = await client.chat.completions.create(**request)
+        except Exception as exc:
+            self._log_exception(
+                context=log_context,
+                event="error",
+                config=config,
+                request=request,
+                exc=exc,
+            )
+            raise
+        raw = self._dump_model(response)
+        write_raw_llm_log(
+            context=log_context,
+            direction="inbound",
+            event="response",
+            payload=raw,
+        )
         choice = response.choices[0]
         message = choice.message
         calls = []
@@ -56,7 +77,6 @@ class OpenAICompatibleProvider:
                 )
             )
 
-        raw = response.model_dump(mode="json") if hasattr(response, "model_dump") else {}
         usage = raw.get("usage") or {}
         return ChatResponse(content=message.content, tool_calls=calls, raw=raw, usage=usage)
 
@@ -65,6 +85,7 @@ class OpenAICompatibleProvider:
         config: LLMProviderConfig,
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
+        log_context: RawLogContext | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         try:
             from openai import AsyncOpenAI
@@ -81,9 +102,33 @@ class OpenAICompatibleProvider:
         request["stream"] = True
         request["stream_options"] = {"include_usage": True}
 
-        stream = await client.chat.completions.create(**request)
-        async for chunk in stream:
-            yield chunk.model_dump(mode="json")
+        self._log_request(context=log_context, config=config, request=request)
+        try:
+            stream = await client.chat.completions.create(**request)
+            async for chunk in stream:
+                raw_chunk = self._dump_model(chunk)
+                write_raw_llm_log(
+                    context=log_context,
+                    direction="inbound",
+                    event="chunk",
+                    payload=raw_chunk,
+                )
+                yield raw_chunk
+        except Exception as exc:
+            self._log_exception(
+                context=log_context,
+                event="stream_error",
+                config=config,
+                request=request,
+                exc=exc,
+            )
+            raise
+        write_raw_llm_log(
+            context=log_context,
+            direction="inbound",
+            event="stream_end",
+            payload={},
+        )
 
     def _message_to_payload(self, message: ChatMessage) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role}
@@ -107,3 +152,49 @@ class OpenAICompatibleProvider:
         if tool.strict:
             payload["function"]["strict"] = True
         return payload
+
+    def _log_request(
+        self,
+        *,
+        context: RawLogContext | None,
+        config: LLMProviderConfig,
+        request: dict[str, Any],
+    ) -> None:
+        write_raw_llm_log(
+            context=context,
+            direction="outbound",
+            event="request",
+            payload={"provider_config": asdict(config), "request": request},
+        )
+
+    def _log_exception(
+        self,
+        *,
+        context: RawLogContext | None,
+        event: str,
+        config: LLMProviderConfig,
+        request: dict[str, Any],
+        exc: Exception,
+    ) -> None:
+        write_raw_llm_log(
+            context=context,
+            direction="inbound",
+            event=event,
+            payload={
+                "provider_config": asdict(config),
+                "request": request,
+                "exception": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "repr": repr(exc),
+                },
+            },
+        )
+
+    def _dump_model(self, value: Any) -> dict[str, Any]:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return value
+        raw = getattr(value, "__dict__", {})
+        return raw if isinstance(raw, dict) else {}

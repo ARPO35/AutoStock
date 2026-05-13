@@ -5,6 +5,7 @@ from typing import Any
 
 from app.llm.base import ChatMessage, ChatResponse, LLMProviderConfig, ToolDefinition
 from app.llm.openai_compatible import OpenAICompatibleProvider
+from app.llm.raw_logger import RawLogContext
 
 
 class DeepSeekProvider(OpenAICompatibleProvider):
@@ -25,11 +26,12 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         config: LLMProviderConfig,
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
+        log_context: RawLogContext | None = None,
     ) -> ChatResponse:
         effective = config
         if config.strict_tool_schema and config.base_url.rstrip("/") == "https://api.deepseek.com":
             effective = replace(config, base_url="https://api.deepseek.com/beta")
-        response = await super().chat(effective, messages, tools)
+        response = await super().chat(effective, messages, tools, log_context=log_context)
 
         reasoning: str | None = None
         raw = response.raw

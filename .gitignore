@@ -22,6 +22,7 @@ frontend_dist/
 
 data/
 backend/data/
+logs/
 *.db
 *.duckdb
 

@@ -62,6 +62,7 @@ class ChatProvider(Protocol):
         config: LLMProviderConfig,
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
+        log_context: dict[str, Any] | None = None,
     ) -> ChatResponse:
         ...
 
@@ -70,5 +71,6 @@ class ChatProvider(Protocol):
         config: LLMProviderConfig,
         messages: list[ChatMessage],
         tools: list[ToolDefinition],
+        log_context: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         ...

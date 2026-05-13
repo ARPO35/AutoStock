@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -11,6 +13,7 @@ from uuid import uuid4
 
 from app.core.websocket_manager import WebSocketManager
 from app.llm.base import ChatMessage, ChatProvider, LLMProviderConfig, ToolCall, ToolDefinition
+from app.llm.raw_logger import RawLogContext, write_raw_llm_log
 from app.llm.registry import provider_from_config
 from app.simulator.replay_clock import ReplayClockService, ReplayClockSnapshot
 from app.storage.sqlite import SQLiteStore
@@ -153,6 +156,8 @@ class SessionRunManager:
                     system_prompt=rendered_prompts.system_content,
                     cancel_event=cancel_event,
                 )
+            except SessionRunError:
+                raise
             except Exception as exc:
                 error = self._format_run_error(exc)
                 self._finish_run(run_id, status="error", error=error)
@@ -208,53 +213,112 @@ class SessionRunManager:
             call_index += 1
             call_usage: dict[str, Any] | None = None
             call_started = time.perf_counter()
+            log_context = self._raw_log_context(
+                session_id=session_id,
+                run_id=run_id,
+                call_index=call_index,
+                round_index=_round + 1,
+                provider_id=provider_id,
+                config=config,
+            )
 
-            async for chunk in provider.chat_stream(config, messages, tools):  # type: ignore[attr-defined]
-                if cancel_event.is_set():
-                    self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+            try:
+                async for chunk in self._provider_chat_stream(
+                    provider=provider,
+                    config=config,
+                    messages=messages,
+                    tools=tools,
+                    log_context=log_context,
+                ):
+                    if cancel_event.is_set():
+                        final_message = self._create_interrupted_message(
+                            session_id=session_id,
+                            content_parts=content_parts,
+                            reasoning_parts=reasoning_parts,
+                            cause="User interrupt",
+                        )
+                        self._finish_run(
+                            run_id,
+                            status="cancelled",
+                            final_message_id=str(final_message["id"]) if final_message else None,
+                            error="Cancelled by user",
+                            token_usage=usage,
+                        )
+                        if final_message:
+                            await self._send(
+                                session_id,
+                                "assistant_message",
+                                {"run_id": run_id, "message": final_message},
+                            )
+                        await self._send(
+                            session_id,
+                            "run_finished",
+                            {"run_id": run_id, "status": "cancelled", "usage": usage},
+                        )
+                        result: dict[str, Any] = {"run_id": run_id, "status": "cancelled"}
+                        if final_message:
+                            result["final_message"] = final_message
+                        return result
+                    chunk_usage = chunk.get("usage")
+                    if chunk_usage:
+                        call_usage = chunk_usage
+
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+                        await self._send(
+                            session_id,
+                            "assistant_token",
+                            {"run_id": run_id, "token": delta["content"]},
+                        )
+
+                    if delta.get("reasoning_content"):
+                        reasoning_parts.append(delta["reasoning_content"])
+                        await self._send(
+                            session_id,
+                            "assistant_reasoning",
+                            {"run_id": run_id, "token": delta["reasoning_content"]},
+                        )
+
+                    for tc_delta in delta.get("tool_calls") or []:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in tool_calls_by_index:
+                            tool_calls_by_index[idx] = {"id": "", "name": "", "arguments": ""}
+                        tc = tool_calls_by_index[idx]
+                        if tc_delta.get("id"):
+                            tc["id"] = tc_delta["id"]
+                        fn = tc_delta.get("function") or {}
+                        if fn.get("name"):
+                            tc["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tc["arguments"] += fn["arguments"]
+            except Exception as exc:
+                error = self._format_run_error(exc)
+                final_message = self._create_interrupted_message(
+                    session_id=session_id,
+                    content_parts=content_parts,
+                    reasoning_parts=reasoning_parts,
+                    cause=error,
+                )
+                self._finish_run(
+                    run_id,
+                    status="error",
+                    final_message_id=str(final_message["id"]) if final_message else None,
+                    error=error,
+                    token_usage=usage,
+                )
+                if final_message:
                     await self._send(
                         session_id,
-                        "run_finished",
-                        {"run_id": run_id, "status": "cancelled", "usage": usage},
+                        "assistant_message",
+                        {"run_id": run_id, "message": final_message},
                     )
-                    return {"run_id": run_id, "status": "cancelled"}
-                chunk_usage = chunk.get("usage")
-                if chunk_usage:
-                    call_usage = chunk_usage
-
-                choices = chunk.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-
-                if delta.get("content"):
-                    content_parts.append(delta["content"])
-                    await self._send(
-                        session_id,
-                        "assistant_token",
-                        {"run_id": run_id, "token": delta["content"]},
-                    )
-
-                if delta.get("reasoning_content"):
-                    reasoning_parts.append(delta["reasoning_content"])
-                    await self._send(
-                        session_id,
-                        "assistant_reasoning",
-                        {"run_id": run_id, "token": delta["reasoning_content"]},
-                    )
-
-                for tc_delta in delta.get("tool_calls") or []:
-                    idx = tc_delta.get("index", 0)
-                    if idx not in tool_calls_by_index:
-                        tool_calls_by_index[idx] = {"id": "", "name": "", "arguments": ""}
-                    tc = tool_calls_by_index[idx]
-                    if tc_delta.get("id"):
-                        tc["id"] = tc_delta["id"]
-                    fn = tc_delta.get("function") or {}
-                    if fn.get("name"):
-                        tc["name"] = fn["name"]
-                    if fn.get("arguments"):
-                        tc["arguments"] += fn["arguments"]
+                await self._send(session_id, "error", {"run_id": run_id, "error": error})
+                raise SessionRunError(run_id=run_id, error=error) from exc
 
             usage_records.append(
                 record_llm_usage(
@@ -362,6 +426,18 @@ class SessionRunManager:
                     call.arguments,
                     runtime_context={**base_runtime_context, "tool_call_id": tool_call_id},
                 )
+                write_raw_llm_log(
+                    context=log_context,
+                    direction="internal",
+                    event="tool_result",
+                    payload={
+                        "tool_name": call.name,
+                        "arguments_json": call.arguments,
+                        "ok": tool_result.ok,
+                        "result": tool_result.result,
+                        "error": tool_result.error,
+                    },
+                )
                 self._save_tool_result(
                     run_id=run_id,
                     session_id=session_id,
@@ -434,6 +510,63 @@ class SessionRunManager:
             {"run_id": run_id, "status": "max_tool_rounds_reached", "usage": usage},
         )
         return {"run_id": run_id, "status": "max_tool_rounds_reached"}
+
+    async def _provider_chat(
+        self,
+        *,
+        provider: ChatProvider,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+        log_context: RawLogContext,
+    ) -> Any:
+        if self._accepts_log_context(provider.chat):
+            return await provider.chat(config, messages, tools, log_context=log_context)
+        return await provider.chat(config, messages, tools)
+
+    async def _provider_chat_stream(
+        self,
+        *,
+        provider: ChatProvider,
+        config: LLMProviderConfig,
+        messages: list[ChatMessage],
+        tools: list[ToolDefinition],
+        log_context: RawLogContext,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        if self._accepts_log_context(provider.chat_stream):
+            stream = provider.chat_stream(config, messages, tools, log_context=log_context)
+        else:
+            stream = provider.chat_stream(config, messages, tools)
+        async for chunk in stream:
+            yield chunk
+
+    def _raw_log_context(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None,
+        call_index: int,
+        round_index: int,
+        provider_id: str | None,
+        config: LLMProviderConfig,
+    ) -> RawLogContext:
+        return {
+            "session_id": session_id,
+            "run_id": run_id,
+            "call_index": call_index,
+            "round_index": round_index,
+            "provider_type": config.provider_type,
+            "provider_name": config.name,
+            "provider_id": provider_id,
+            "model": config.model,
+        }
+
+    def _accepts_log_context(self, method: Callable[..., Any]) -> bool:
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return False
+        return "log_context" in signature.parameters
 
     def _tool_definitions(
         self,
@@ -556,6 +689,34 @@ class SessionRunManager:
             message_type="system_prompt",
         )
 
+    def _create_interrupted_message(
+        self,
+        session_id: str,
+        content_parts: list[str],
+        reasoning_parts: list[str],
+        cause: str,
+    ) -> dict[str, Any] | None:
+        content = "".join(content_parts)
+        reasoning = "".join(reasoning_parts) or None
+        if not content and not reasoning:
+            return None
+        return self._create_message(
+            session_id=session_id,
+            role="assistant",
+            content=self._append_interrupt_marker(content, cause),
+            message_type="assistant",
+            reasoning_content=reasoning,
+        )
+
+    def _append_interrupt_marker(self, content: str, cause: str) -> str:
+        marker = f"[Interrupted: {self._single_line(cause)}]"
+        if not content.strip():
+            return marker
+        return f"{content.rstrip()}\n\n{marker}"
+
+    def _single_line(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
     def _create_message(
         self,
         session_id: str,
@@ -619,13 +780,22 @@ class SessionRunManager:
         )
         try:
             call_started = time.perf_counter()
-            response = await provider.chat(
-                config,
-                [
+            response = await self._provider_chat(
+                provider=provider,
+                config=config,
+                messages=[
                     ChatMessage(role="system", content=prompt),
                     ChatMessage(role="user", content=user_message),
                 ],
-                [],
+                tools=[],
+                log_context=self._raw_log_context(
+                    session_id=session_id,
+                    run_id=None,
+                    call_index=1,
+                    round_index=0,
+                    provider_id=provider_id,
+                    config=config,
+                ),
             )
             record_llm_usage(
                 self.store,
