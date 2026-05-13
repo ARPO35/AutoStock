@@ -1,8 +1,9 @@
-import { Play, StopCircle, Bell, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, Clock, PauseCircle, Play, RotateCcw, SlidersHorizontal, StopCircle } from "lucide-react";
 import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
 import { Badge } from "@/components/ui/Shared";
-import { statusLabel, normalizeStatus } from "@/lib/utils";
+import { normalizeStatus, statusLabel } from "@/lib/utils";
 import { api } from "@/api";
 import type { SessionStatus } from "@/types";
 
@@ -16,6 +17,14 @@ export function SessionHeader() {
   const busy = useTradeStore((s) => s.busy);
   const runOnce = useTradeStore((s) => s.runOnce);
   const stopCurrentRun = useTradeStore((s) => s.stopCurrentRun);
+  const replayClocks = useTradeStore((s) => s.replayClocks);
+  const replayClockLoading = useTradeStore((s) => s.replayClockLoading);
+  const replayClockError = useTradeStore((s) => s.replayClockError);
+  const loadReplayClock = useTradeStore((s) => s.loadReplayClock);
+  const updateReplayClock = useTradeStore((s) => s.updateReplayClock);
+  const restoreReplayClockLive = useTradeStore((s) => s.restoreReplayClockLive);
+  const [replayDraft, setReplayDraft] = useState("");
+  const [speedDraft, setSpeedDraft] = useState("1");
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
   const selectedAccount = selectedSession?.simulator_account_id
@@ -27,6 +36,22 @@ export function SessionHeader() {
   const selectedPromptRole = selectedSession?.prompt_role_id
     ? promptRoles.find((role) => role.id === selectedSession.prompt_role_id) ?? null
     : promptRoles[0] ?? null;
+  const accountId = selectedAccount?.id ?? "";
+  const replayClock = accountId ? replayClocks[accountId] : null;
+
+  useEffect(() => {
+    if (accountId) void loadReplayClock(accountId);
+  }, [accountId, loadReplayClock]);
+
+  useEffect(() => {
+    if (!replayClock) {
+      setReplayDraft("");
+      setSpeedDraft("1");
+      return;
+    }
+    setReplayDraft(toDatetimeLocal(replayClock.effective_time));
+    setSpeedDraft(String(replayClock.speed ?? 1));
+  }, [replayClock?.account_id, replayClock?.effective_time, replayClock?.speed]);
 
   const status: SessionStatus = normalizeStatus(selectedSession?.status);
   const statusVariant = status === "running"
@@ -45,11 +70,11 @@ export function SessionHeader() {
     try {
       await api.updateSession(selectedSessionId, {
         provider_id: providerId || null,
-        model: provider?.model ?? null
+        model: provider?.model ?? null,
       });
       await loadSessions();
     } catch {
-      // 由 store 处理
+      // Store-level errors are surfaced elsewhere.
     }
   };
 
@@ -59,7 +84,7 @@ export function SessionHeader() {
       await api.updateSession(selectedSessionId, { model: model || null });
       await loadSessions();
     } catch {
-      // 由 store 处理
+      // Store-level errors are surfaced elsewhere.
     }
   };
 
@@ -69,8 +94,37 @@ export function SessionHeader() {
       await api.updateSession(selectedSessionId, { prompt_role_id: promptRoleId || "default" });
       await loadSessions();
     } catch {
-      // 由 store 处理
+      // Store-level errors are surfaced elsewhere.
     }
+  };
+
+  const handleApplyReplay = async () => {
+    if (!accountId || !replayDraft) return;
+    await updateReplayClock(accountId, {
+      mode: "replay",
+      replay_time: replayDraft,
+      speed: Number(speedDraft) >= 0 ? Number(speedDraft) : 1,
+    });
+  };
+
+  const handlePauseResume = async () => {
+    if (!accountId) return;
+    const current = replayClock?.mode === "replay"
+      ? replayClock.effective_time
+      : new Date().toISOString();
+    if (replayClock?.mode === "replay" && replayClock.speed === 0) {
+      await updateReplayClock(accountId, {
+        mode: "replay",
+        replay_time: current,
+        speed: Number(speedDraft) > 0 ? Number(speedDraft) : 1,
+      });
+      return;
+    }
+    await updateReplayClock(accountId, {
+      mode: "replay",
+      replay_time: current,
+      speed: 0,
+    });
   };
 
   return (
@@ -80,9 +134,8 @@ export function SessionHeader() {
           LLM Linear Flow
         </p>
         <h1 className="text-lg font-semibold text-text-on-dark truncate">
-          {selectedSession?.name ?? "暂无会话"}
+          {selectedSession?.name ?? "No session"}
         </h1>
-        {/* 模型选择器 */}
         {selectedSessionId && (
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <select
@@ -91,18 +144,16 @@ export function SessionHeader() {
               onChange={(e) => handleProviderChange(e.target.value)}
               disabled={busy}
             >
-              <option value="">选择 Provider</option>
+              <option value="">Provider</option>
               {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
             <input
               className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 placeholder:text-text-muted min-w-[120px]"
               value={selectedSession?.model ?? selectedProvider?.model ?? ""}
               onChange={(e) => handleModelChange(e.target.value)}
-              placeholder="模型名称"
+              placeholder="Model"
               disabled={busy}
               onBlur={(e) => handleModelChange(e.target.value)}
             />
@@ -111,15 +162,13 @@ export function SessionHeader() {
               value={selectedSession?.prompt_role_id ?? selectedPromptRole?.id ?? ""}
               onChange={(e) => handlePromptRoleChange(e.target.value)}
               disabled={busy || promptRoles.length === 0}
-              title="提示词角色"
+              title="Prompt role"
             >
               {promptRoles.length === 0 ? (
-                <option value="">无提示词角色</option>
+                <option value="">No prompt role</option>
               ) : (
                 promptRoles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.name}
-                  </option>
+                  <option key={role.id} value={role.id}>{role.name}</option>
                 ))
               )}
             </select>
@@ -127,20 +176,77 @@ export function SessionHeader() {
         )}
         <div className="flex flex-wrap gap-1.5 mt-2">
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
-            账户：{selectedAccount?.name ?? "--"}
+            Account: {selectedAccount?.name ?? "--"}
           </span>
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
-            Skill：{selectedSession?.skill_id ?? "--"}
+            Skill: {selectedSession?.skill_id ?? "--"}
           </span>
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
-            提示词：{selectedPromptRole?.name ?? "--"}
+            Prompt: {selectedPromptRole?.name ?? "--"}
           </span>
           <span className="px-2 py-0.5 border border-hairline rounded-full bg-surface-elevated text-text-muted text-xs">
-            模式：实时
+            Clock: {replayClock?.mode === "replay" ? `Replay ${replayClock.speed}x` : "Live"}
           </span>
-          <Badge variant={statusVariant}>
-            {statusLabel(status)}
-          </Badge>
+          <Badge variant={statusVariant}>{statusLabel(status)}</Badge>
+        </div>
+        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+          <span className="inline-flex items-center gap-1 h-8 px-2 rounded-md border border-hairline bg-surface-elevated text-text-muted text-xs">
+            <Clock size={13} />
+            {accountId ? (replayClock?.effective_time ? formatClock(replayClock.effective_time) : "Loading") : "No account"}
+          </span>
+          <input
+            className="h-8 w-[168px] px-2 rounded-md bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 disabled:opacity-50"
+            type="datetime-local"
+            value={replayDraft}
+            disabled={!accountId || replayClockLoading || busy}
+            onChange={(e) => setReplayDraft(e.target.value)}
+          />
+          <select
+            className="h-8 w-[76px] px-2 rounded-md bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 disabled:opacity-50"
+            value={speedDraft}
+            disabled={!accountId || replayClockLoading || busy}
+            onChange={(e) => setSpeedDraft(e.target.value)}
+          >
+            <option value="0">0x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+            <option value="10">10x</option>
+          </select>
+          <button
+            className="inline-flex items-center gap-1 h-8 px-2 rounded-md border border-hairline bg-surface-card text-text-on-dark text-xs hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!accountId || !replayDraft || replayClockLoading || busy}
+            onClick={handleApplyReplay}
+          >
+            Apply
+          </button>
+          <button
+            className="inline-flex items-center gap-1 h-8 px-2 rounded-md border border-hairline bg-surface-card text-text-on-dark text-xs hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!accountId || replayClockLoading || busy}
+            onClick={handlePauseResume}
+            title={replayClock?.mode === "replay" && replayClock.speed === 0 ? "Resume replay" : "Pause at effective time"}
+          >
+            {replayClock?.mode === "replay" && replayClock.speed === 0 ? <Play size={13} /> : <PauseCircle size={13} />}
+            {replayClock?.mode === "replay" && replayClock.speed === 0 ? "Resume" : "Pause"}
+          </button>
+          <button
+            className="inline-flex items-center gap-1 h-8 px-2 rounded-md border border-hairline bg-surface-card text-text-on-dark text-xs hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+            type="button"
+            disabled={!accountId || replayClockLoading || busy}
+            onClick={() => accountId && restoreReplayClockLive(accountId)}
+            title="Restore live clock"
+          >
+            <RotateCcw size={13} />
+            Live
+          </button>
+          {replayClockError && (
+            <span className="text-xs text-trading-rise max-w-[240px] truncate" title={replayClockError}>
+              {replayClockError}
+            </span>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -151,37 +257,46 @@ export function SessionHeader() {
           onClick={() => selectedSessionId && runOnce(selectedSessionId, selectedSession?.model)}
         >
           <Play size={15} />
-          运行一次
+          Run once
         </button>
         <button
           className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm transition-colors"
           type="button"
           disabled={!selectedSessionId || !busy}
           onClick={() => selectedSessionId && stopCurrentRun(selectedSessionId)}
-          title={busy ? "停止当前运行" : "当前没有正在运行的任务"}
+          title={busy ? "Stop current run" : "No active run"}
         >
           <StopCircle size={15} />
-          停止
+          Stop
         </button>
         <button
           className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm transition-colors"
           type="button"
           disabled
-          title="后端尚未接入触发器接口"
+          title="Trigger API is not wired yet"
         >
           <Bell size={15} />
-          触发器
+          Trigger
         </button>
         <button
           className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-hairline bg-surface-card text-text-on-dark text-sm transition-colors"
           type="button"
           disabled
-          title="后端尚未提供 Session 配置修改接口"
+          title="Session configuration editing is not wired yet"
         >
           <SlidersHorizontal size={15} />
-          修改配置
+          Config
         </button>
       </div>
     </header>
   );
+}
+
+function toDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.replace(" ", "T").slice(0, 16);
+}
+
+function formatClock(value: string): string {
+  return value.replace("T", " ").slice(0, 19);
 }

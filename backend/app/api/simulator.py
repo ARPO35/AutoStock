@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_store
 from app.simulator.engine import SimulatorEngine
+from app.simulator.replay_clock import ReplayClockService
 from app.simulator.rules import TradingRuleError
 from app.storage.sqlite import SQLiteStore
 
@@ -34,6 +35,12 @@ class AccountUpdate(BaseModel):
     name: str | None = None
     commission_rate: float | None = Field(default=None, ge=0, le=0.01)
     min_commission: float | None = Field(default=None, ge=0)
+
+
+class ReplayClockUpdate(BaseModel):
+    mode: Literal["live", "replay"] = "replay"
+    replay_time: str | None = None
+    speed: float | None = Field(default=None, ge=0)
 
 
 @router.get("/accounts")
@@ -125,6 +132,49 @@ async def account_trades(
 ) -> list[dict[str, object]]:
     _get_account_or_404(engine, account_id)
     return engine.get_trades(account_id)
+
+
+@router.get("/accounts/{account_id}/replay-clock")
+async def get_replay_clock(
+    account_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    try:
+        return ReplayClockService(store).get_clock(account_id).as_dict()
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.put("/accounts/{account_id}/replay-clock")
+async def update_replay_clock(
+    account_id: str,
+    payload: ReplayClockUpdate,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    service = ReplayClockService(store)
+    try:
+        if payload.mode == "live":
+            return service.set_live(account_id).as_dict()
+        return service.set_replay(
+            account_id=account_id,
+            replay_time=payload.replay_time,
+            speed=payload.speed,
+        ).as_dict()
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/accounts/{account_id}/replay-clock/live")
+async def restore_replay_clock_live(
+    account_id: str,
+    store: SQLiteStore = Depends(get_store),
+) -> dict[str, object]:
+    try:
+        return ReplayClockService(store).set_live(account_id).as_dict()
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/accounts/{account_id}/reset")

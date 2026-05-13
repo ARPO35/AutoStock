@@ -2,23 +2,35 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market.replay import clamp_end_to_effective, is_replay_context, replay_quote_from_cache
 from app.tools.registry import ToolSpec
 
 
 def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[ToolSpec]:
-    async def market_quote(arguments: dict[str, Any]) -> dict[str, Any]:
+    async def market_quote(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
+        if is_replay_context(runtime_context):
+            return await replay_quote_from_cache(market_store, symbol, runtime_context)
         quote = await market_provider.quote(symbol)
         await market_store.insert_quote_async(quote)
         return quote
 
-    async def market_history(arguments: dict[str, Any]) -> dict[str, Any]:
+    async def market_history(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
         start = _optional_text(arguments.get("start"))
         end = _optional_text(arguments.get("end"))
         interval = str(arguments.get("interval") or "daily")
         adjust = str(arguments.get("adjust") or "")
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
+        replay = is_replay_context(runtime_context)
+        if replay:
+            end = clamp_end_to_effective(end, runtime_context, date_only=interval == "daily")
 
         bars = await market_store.query_history_async(
             symbol=symbol,
@@ -28,6 +40,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust=adjust,
         )
         fetch_stats = None
+        if replay and not bars:
+            raise ValueError(f"No cached history for {symbol} before replay time {end}.")
         if not bars and allow_fetch_missing:
             if not start or not end:
                 raise ValueError("start and end are required when allow_fetch_missing is true.")
@@ -56,7 +70,12 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             "bars": bars,
         }
 
-    async def data_fetch_history(arguments: dict[str, Any]) -> dict[str, Any]:
+    async def data_fetch_history(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if is_replay_context(runtime_context):
+            raise ValueError("data_fetch_history is disabled during replay runs.")
         symbol = str(arguments["symbol"])
         start = str(arguments["start"])
         end = str(arguments["end"])
@@ -78,12 +97,18 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             **stats,
         }
 
-    async def market_minute(arguments: dict[str, Any]) -> dict[str, Any]:
+    async def market_minute(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
         start = str(arguments["start"])
         end = str(arguments["end"])
         period = str(arguments.get("period") or "1")
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
+        replay = is_replay_context(runtime_context)
+        if replay:
+            end = clamp_end_to_effective(end, runtime_context)
 
         bars = await market_store.query_history_async(
             symbol=symbol,
@@ -93,6 +118,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust="",
         )
         fetch_stats = None
+        if replay and not bars:
+            raise ValueError(f"No cached minute history for {symbol} before replay time {end}.")
         if not bars and allow_fetch_missing:
             fetched = await market_provider.minute(
                 symbol=symbol,
@@ -118,11 +145,17 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             "bars": bars,
         }
 
-    async def market_announcement(arguments: dict[str, Any]) -> dict[str, Any]:
+    async def market_announcement(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
         start = _optional_text(arguments.get("start"))
         end = _optional_text(arguments.get("end"))
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
+        replay = is_replay_context(runtime_context)
+        if replay:
+            end = clamp_end_to_effective(end, runtime_context, date_only=True)
 
         announcements = await market_store.query_announcements_async(
             symbol=symbol,
@@ -130,6 +163,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             end=end,
         )
         fetch_stats = None
+        if replay and not announcements:
+            raise ValueError(f"No cached announcements for {symbol} before replay time {end}.")
         if not announcements and allow_fetch_missing:
             if not start or not end:
                 raise ValueError("start and end are required when allow_fetch_missing is true.")

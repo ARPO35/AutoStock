@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market.replay import is_replay_context, replay_quote_from_cache
 from app.simulator.engine import SimulatorEngine
 from app.simulator.rules import TradingRuleError
 from app.tools.registry import ToolSpec
 
 
-def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
+def create_order_tool_specs(engine: SimulatorEngine, market_store: Any | None = None) -> list[ToolSpec]:
+    async def _runtime_quote(symbol: str, runtime_context: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not is_replay_context(runtime_context):
+            return None
+        if market_store is None:
+            raise TradingRuleError("Replay order tools require market cache storage.")
+        return await replay_quote_from_cache(market_store, symbol, runtime_context)
+
     def _filled_order_result(
         *,
         result: dict[str, Any],
@@ -67,6 +75,11 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
         if not trade_reason:
             raise TradingRuleError("trade_reason is required.")
         session_id = str((runtime_context or {}).get("session_id") or "")
+        current_time = (
+            (runtime_context or {}).get("effective_time")
+            if is_replay_context(runtime_context)
+            else None
+        )
 
         result = await engine.place_buy(
             session_id=session_id,
@@ -75,6 +88,8 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             quantity=quantity,
             run_id=str((runtime_context or {}).get("run_id") or "") or None,
             tool_call_id=str((runtime_context or {}).get("tool_call_id") or "") or None,
+            current_time=current_time,
+            quote=await _runtime_quote(symbol, runtime_context),
         )
 
         return _filled_order_result(
@@ -102,6 +117,11 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
         if not trade_reason:
             raise TradingRuleError("trade_reason is required.")
         session_id = str((runtime_context or {}).get("session_id") or "")
+        current_time = (
+            (runtime_context or {}).get("effective_time")
+            if is_replay_context(runtime_context)
+            else None
+        )
 
         result = await engine.place_sell(
             session_id=session_id,
@@ -110,6 +130,8 @@ def create_order_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
             quantity=quantity,
             run_id=str((runtime_context or {}).get("run_id") or "") or None,
             tool_call_id=str((runtime_context or {}).get("tool_call_id") or "") or None,
+            current_time=current_time,
+            quote=await _runtime_quote(symbol, runtime_context),
         )
 
         return _filled_order_result(

@@ -82,6 +82,7 @@ export interface RuntimeEvent {
   session_id: string;
   run_id?: string;
   account_id?: string;
+  clock?: ReplayClockState | null;
   tool_call_id?: string;
   tool_name?: string;
   order_id?: string;
@@ -206,6 +207,15 @@ export interface ProviderUsageResponse {
   latency_ms: number;
   avg_latency_ms: number;
   cap_exceeded_count: number;
+}
+
+export interface ReplayClockState {
+  account_id: string;
+  mode: "live" | "replay";
+  replay_time: string | null;
+  speed: number;
+  effective_time: string;
+  updated_at: string;
 }
 
 export interface UsageSummary {
@@ -572,6 +582,17 @@ export const api = {
   accounts: () => request<Account[]>("/api/simulator/accounts"),
   createAccount: (payload: Record<string, unknown>) =>
     request<Account>("/api/simulator/accounts", { method: "POST", body: JSON.stringify(payload) }),
+  replayClock: (accountId: string) =>
+    request<ReplayClockState>(`/api/simulator/accounts/${accountId}/replay-clock`),
+  updateReplayClock: (accountId: string, payload: Record<string, unknown>) =>
+    request<ReplayClockState>(`/api/simulator/accounts/${accountId}/replay-clock`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  restoreReplayClockLive: (accountId: string) =>
+    request<ReplayClockState>(`/api/simulator/accounts/${accountId}/replay-clock/live`, {
+      method: "POST"
+    }),
   sessions: () => request<Session[]>("/api/sessions"),
   createSession: (payload: Record<string, unknown>) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(payload) }),

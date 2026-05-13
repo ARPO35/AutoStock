@@ -449,6 +449,83 @@ def test_session_run_applies_prompt_role_templates(monkeypatch) -> None:
     assert [message["message_type"] for message in stored_again].count("system_prompt") == 1
 
 
+def test_session_run_uses_bound_account_replay_clock_for_prompt(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+    captured_messages = []
+
+    class CapturePromptProvider:
+        async def chat_stream(self, config, messages, tools):
+            captured_messages.append([(message.role, message.content) for message in messages])
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: CapturePromptProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider With Replay Clock",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post("/api/simulator/accounts", json={"name": "Replay Account"}).json()
+    clock = client.put(
+        f"/api/simulator/accounts/{account['id']}/replay-clock",
+        json={"mode": "replay", "replay_time": "2026-04-27T10:15:00+08:00", "speed": 0},
+    )
+    assert clock.status_code == 200
+
+    role = client.post("/api/prompt-roles", json={"name": "Replay Prompt Role"}).json()
+    updated_role = client.put(
+        f"/api/prompt-roles/{role['id']}",
+        json={
+            "name": "Replay Prompt Role",
+            "entries": [
+                {
+                    "id": role["entries"][0]["id"],
+                    "name": "system",
+                    "ref_name": "system",
+                    "content": "",
+                    "enabled": True,
+                    "builtin": True,
+                },
+                {
+                    "id": role["entries"][1]["id"],
+                    "name": "UserInput",
+                    "ref_name": "UserInput",
+                    "content": "question={UserInput}\ntime={time}",
+                    "enabled": True,
+                    "builtin": True,
+                },
+            ],
+        },
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Replay Session",
+            "simulator_account_id": account["id"],
+            "provider_id": provider["id"],
+            "model": "deepseek-v4-flash",
+            "prompt_role_id": updated_role["id"],
+        },
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+    assert run.status_code == 200
+    assert "time=2026-04-27T10:15:00+08:00" in captured_messages[0][0][1]
+
+    stored = client.get(f"/api/sessions/{session['id']}/messages").json()
+    assert stored[0]["content"].endswith("2026-04-27T10:15:00+08:00")
+
+
 def test_session_run_can_be_stopped(monkeypatch) -> None:
     client = make_client(monkeypatch)
     app = client.app

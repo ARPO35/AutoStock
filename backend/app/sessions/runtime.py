@@ -12,6 +12,7 @@ from uuid import uuid4
 from app.core.websocket_manager import WebSocketManager
 from app.llm.base import ChatMessage, ChatProvider, LLMProviderConfig, ToolCall, ToolDefinition
 from app.llm.registry import provider_from_config
+from app.simulator.replay_clock import ReplayClockService, ReplayClockSnapshot
 from app.storage.sqlite import SQLiteStore
 from app.tools.executor import ToolExecutor, ToolExecutionResult
 from app.tools.registry import ToolRegistry
@@ -79,18 +80,20 @@ class SessionRunManager:
         async with lock:
             active_run: ActiveRun | None = None
             session = self._get_session(session_id)
-            rendered_prompts = self._render_prompts(
-                role_id=str(session.get("prompt_role_id") or "default"),
-                user_input=message,
-            )
-            if rendered_prompts.system_content:
-                self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
-
             simulator_account_id = (
                 str(session["simulator_account_id"])
                 if session.get("simulator_account_id")
                 else None
             )
+            replay_clock = self._replay_clock_for_account(simulator_account_id)
+            rendered_prompts = self._render_prompts(
+                role_id=str(session.get("prompt_role_id") or "default"),
+                user_input=message,
+                render_time=replay_clock.effective_time if replay_clock else None,
+            )
+            if rendered_prompts.system_content:
+                self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
+
             provider_id = session.get("provider_id")
             if not provider_id:
                 raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
@@ -131,13 +134,18 @@ class SessionRunManager:
                 """,
                 (run_id, session_id, provider_id, model, max_tool_rounds, started_at),
             )
-            await self._send(session_id, "run_started", {"run_id": run_id})
+            await self._send(
+                session_id,
+                "run_started",
+                {"run_id": run_id, "clock": replay_clock.as_dict() if replay_clock else None},
+            )
 
             try:
                 result = await self._run_loop(
                     run_id=run_id,
                     session_id=session_id,
                     simulator_account_id=simulator_account_id,
+                    replay_clock=replay_clock,
                     provider=provider,
                     provider_id=str(provider_id),
                     config=config,
@@ -162,6 +170,7 @@ class SessionRunManager:
         run_id: str,
         session_id: str,
         simulator_account_id: str | None,
+        replay_clock: ReplayClockSnapshot | None,
         provider: ChatProvider,
         provider_id: str | None,
         config: LLMProviderConfig,
@@ -172,6 +181,13 @@ class SessionRunManager:
         messages = self._load_context(session_id, system_prompt=system_prompt)
         tools = self._tool_definitions(config)
         executor = ToolExecutor(self.tool_registry)
+        base_runtime_context = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "simulator_account_id": simulator_account_id,
+        }
+        if replay_clock is not None:
+            base_runtime_context.update(replay_clock.runtime_context())
 
         usage: dict[str, Any] | None = None
         usage_records: list[dict[str, Any]] = []
@@ -344,12 +360,7 @@ class SessionRunManager:
                 tool_result = await executor.execute(
                     call.name,
                     call.arguments,
-                    runtime_context={
-                        "session_id": session_id,
-                        "run_id": run_id,
-                        "tool_call_id": tool_call_id,
-                        "simulator_account_id": simulator_account_id,
-                    },
+                    runtime_context={**base_runtime_context, "tool_call_id": tool_call_id},
                 )
                 self._save_tool_result(
                     run_id=run_id,
@@ -455,7 +466,12 @@ class SessionRunManager:
             messages.insert(0, ChatMessage(role="system", content=system_prompt))
         return messages
 
-    def _render_prompts(self, role_id: str, user_input: str | None) -> RenderedPrompts:
+    def _render_prompts(
+        self,
+        role_id: str,
+        user_input: str | None,
+        render_time: str | None = None,
+    ) -> RenderedPrompts:
         entries = self.store.fetch_all(
             """
             SELECT ref_name, content, enabled
@@ -475,13 +491,13 @@ class SessionRunManager:
                 """
             )
         by_ref = {str(row["ref_name"]): row for row in entries}
-        render_time = datetime.now().astimezone().isoformat(timespec="seconds")
+        resolved_render_time = render_time or datetime.now().astimezone().isoformat(timespec="seconds")
 
         def render_ref(ref_name: str, stack: set[str]) -> str:
             if ref_name == "UserInput":
                 return user_input or ""
             if ref_name == "time":
-                return render_time
+                return resolved_render_time
             entry = by_ref.get(ref_name)
             if entry is None:
                 return "{" + ref_name + "}"
@@ -748,6 +764,11 @@ class SessionRunManager:
         if provider is None:
             raise LookupError("LLM provider not found.")
         return provider
+
+    def _replay_clock_for_account(self, account_id: str | None) -> ReplayClockSnapshot | None:
+        if not account_id:
+            return None
+        return ReplayClockService(self.store).get_clock(account_id)
 
     async def _send(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         await self.websocket_manager.send_session_event(

@@ -143,6 +143,50 @@ class MarketDuckDBStore:
             adjust,
         )
 
+    def latest_bar(
+        self,
+        symbol: str,
+        end: str,
+        interval: str | None = None,
+        interval_like: str | None = None,
+        adjust: str | None = None,
+    ) -> dict[str, Any] | None:
+        sql = """
+            SELECT *
+            FROM market_bars
+            WHERE symbol = ?
+              AND datetime <= ?
+        """
+        params: list[Any] = [symbol, end]
+        if interval is not None:
+            sql += " AND interval = ?"
+            params.append(interval)
+        if interval_like is not None:
+            sql += " AND interval LIKE ?"
+            params.append(interval_like)
+        if adjust is not None:
+            sql += " AND adjust = ?"
+            params.append(adjust)
+        sql += " ORDER BY datetime DESC LIMIT 1"
+        return self._row(sql, params)
+
+    async def latest_bar_async(
+        self,
+        symbol: str,
+        end: str,
+        interval: str | None = None,
+        interval_like: str | None = None,
+        adjust: str | None = None,
+    ) -> dict[str, Any] | None:
+        return await run_in_threadpool(
+            self.latest_bar,
+            symbol,
+            end,
+            interval,
+            interval_like,
+            adjust,
+        )
+
     def cache_status(
         self,
         symbol: str | None = None,

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.market.akshare_provider import AKShareMarketProvider
+from app.simulator.replay_clock import iso_seconds, parse_clock_time
 from app.simulator.rules import A_SHARE_TIMEZONE, TradingRules, TradingRuleError
 from app.storage.sqlite import SQLiteStore
 
@@ -14,6 +15,12 @@ def utc_now() -> str:
 
 def cn_today() -> str:
     return datetime.now(A_SHARE_TIMEZONE).date().isoformat()
+
+
+def resolve_runtime_time(value: str | datetime | None = None) -> datetime:
+    if value is None:
+        return datetime.now(A_SHARE_TIMEZONE)
+    return parse_clock_time(value)
 
 
 class SimulatorEngine:
@@ -51,8 +58,12 @@ class SimulatorEngine:
     def get_account(self, account_id: str) -> dict[str, object]:
         return _get_or_404(self.store, "simulator_accounts", account_id, "模拟账户")
 
-    def get_positions(self, account_id: str) -> list[dict[str, object]]:
-        self._rollover_t1_for_account(account_id)
+    def get_positions(
+        self,
+        account_id: str,
+        current_time: str | datetime | None = None,
+    ) -> list[dict[str, object]]:
+        self._rollover_t1_for_account(account_id, current_time=current_time)
         rows = self.store.fetch_all(
             """
             SELECT * FROM positions
@@ -105,14 +116,18 @@ class SimulatorEngine:
         quantity: int,
         run_id: str | None = None,
         tool_call_id: str | None = None,
+        current_time: str | datetime | None = None,
+        quote: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        self.rules.check_trading_hours()
-        self._rollover_t1_for_account(account_id)
+        trade_time = resolve_runtime_time(current_time)
+        self.rules.check_trading_hours(trade_time)
+        self._rollover_t1_for_account(account_id, current_time=trade_time)
         self.rules.check_board_lot(quantity, "buy")
 
         account = self.get_account(account_id)
 
-        quote = await self.market_provider.quote(symbol)
+        if quote is None:
+            quote = await self.market_provider.quote(symbol)
         self.rules.check_suspended(quote)
 
         price = float(quote["price"])
@@ -147,6 +162,8 @@ class SimulatorEngine:
             total_cost=total_cost,
             run_id=run_id,
             tool_call_id=tool_call_id,
+            current_time=trade_time,
+            quote_overrides={symbol: quote},
         )
 
     async def place_sell(
@@ -157,9 +174,12 @@ class SimulatorEngine:
         quantity: int,
         run_id: str | None = None,
         tool_call_id: str | None = None,
+        current_time: str | datetime | None = None,
+        quote: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        self.rules.check_trading_hours()
-        self._rollover_t1_for_account(account_id)
+        trade_time = resolve_runtime_time(current_time)
+        self.rules.check_trading_hours(trade_time)
+        self._rollover_t1_for_account(account_id, current_time=trade_time)
         self.rules.check_board_lot(quantity, "sell")
 
         position = self.store.fetch_one(
@@ -180,7 +200,8 @@ class SimulatorEngine:
                 f"持仓不足：可卖出 {available} 股，委托 {quantity} 股。"
             )
 
-        quote = await self.market_provider.quote(symbol)
+        if quote is None:
+            quote = await self.market_provider.quote(symbol)
         self.rules.check_suspended(quote)
 
         price = float(quote["price"])
@@ -209,6 +230,8 @@ class SimulatorEngine:
             total_cost=total_proceeds,
             run_id=run_id,
             tool_call_id=tool_call_id,
+            current_time=trade_time,
+            quote_overrides={symbol: quote},
         )
 
     async def _execute_trade(
@@ -226,8 +249,10 @@ class SimulatorEngine:
         total_cost: float,
         run_id: str | None,
         tool_call_id: str | None,
+        current_time: datetime,
+        quote_overrides: dict[str, dict[str, object]] | None = None,
     ) -> dict[str, object]:
-        now = utc_now()
+        now = iso_seconds(current_time)
         account = self.get_account(account_id)
 
         order_id = uuid4().hex
@@ -286,13 +311,17 @@ class SimulatorEngine:
 
         if side == "buy":
             new_cash = float(account["cash"]) - total_cost
-            self._update_position(account_id, symbol, name, side, price, quantity, commission, tax)
+            self._update_position(account_id, symbol, name, side, price, quantity, commission, tax, current_time)
         else:
             new_cash = float(account["cash"]) + total_cost
-            self._update_position(account_id, symbol, name, side, price, quantity, commission, tax)
+            self._update_position(account_id, symbol, name, side, price, quantity, commission, tax, current_time)
 
-        await self._refresh_positions_valuation(account_id)
-        total_asset = new_cash + await self._calc_market_value(account_id)
+        await self._refresh_positions_valuation(account_id, current_time=current_time, quote_overrides=quote_overrides)
+        total_asset = new_cash + await self._calc_market_value(
+            account_id,
+            current_time=current_time,
+            quote_overrides=quote_overrides,
+        )
         self.store.execute(
             """
             UPDATE simulator_accounts
@@ -319,8 +348,9 @@ class SimulatorEngine:
         quantity: int,
         commission: float,
         tax: float,
+        current_time: datetime | None = None,
     ) -> None:
-        now = utc_now()
+        now = iso_seconds(resolve_runtime_time(current_time))
         existing = self.store.fetch_one(
             "SELECT * FROM positions WHERE simulator_account_id = ? AND symbol = ?",
             (account_id, symbol),
@@ -373,16 +403,23 @@ class SimulatorEngine:
             (old_name, new_qty, new_available, new_avg, now, existing["id"]),
         )
 
-    async def _calc_market_value(self, account_id: str) -> float:
-        positions = self.get_positions(account_id)
+    async def _calc_market_value(
+        self,
+        account_id: str,
+        current_time: str | datetime | None = None,
+        quote_overrides: dict[str, dict[str, object]] | None = None,
+    ) -> float:
+        positions = self.get_positions(account_id, current_time=current_time)
         if not positions:
             return 0.0
 
         symbols = [str(p["symbol"]) for p in positions]
-        try:
-            quotes = await self.market_provider.quotes_batch(symbols)
-        except Exception:
-            quotes = None
+        quotes: dict[str, dict[str, object]] | None = quote_overrides
+        if quotes is None:
+            try:
+                quotes = await self.market_provider.quotes_batch(symbols)
+            except Exception:
+                quotes = None
 
         total_mv = 0.0
         for pos in positions:
@@ -399,14 +436,21 @@ class SimulatorEngine:
 
         return round(total_mv, 2)
 
-    async def _refresh_positions_valuation(self, account_id: str) -> None:
-        positions = self.get_positions(account_id)
+    async def _refresh_positions_valuation(
+        self,
+        account_id: str,
+        current_time: str | datetime | None = None,
+        quote_overrides: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        positions = self.get_positions(account_id, current_time=current_time)
         if not positions:
             return
 
         symbols = [str(p["symbol"]) for p in positions]
-        quotes = await self.market_provider.quotes_batch(symbols)
-        now = utc_now()
+        quotes = quote_overrides
+        if quotes is None:
+            quotes = await self.market_provider.quotes_batch(symbols)
+        now = iso_seconds(resolve_runtime_time(current_time))
         for pos in positions:
             symbol = str(pos["symbol"])
             quote = quotes.get(symbol) if isinstance(quotes, dict) else None
@@ -425,8 +469,12 @@ class SimulatorEngine:
                 (str(quote.get("name", pos["name"])), market_value, unrealized_pnl, now, pos["id"]),
             )
 
-    def _rollover_t1_for_account(self, account_id: str) -> None:
-        today = cn_today()
+    def _rollover_t1_for_account(
+        self,
+        account_id: str,
+        current_time: str | datetime | None = None,
+    ) -> None:
+        today = resolve_runtime_time(current_time).date().isoformat() if current_time is not None else cn_today()
         rows = self.store.fetch_all(
             """
             SELECT id, quantity, available_quantity, updated_at

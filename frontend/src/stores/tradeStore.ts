@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionTimelineItem, RuntimeEvent } from "@/api";
+import type { ReplayClockState, SessionTimelineItem, RuntimeEvent } from "@/api";
 import type { TimelineItem } from "@/types";
 import { api } from "@/api";
 import { buildTimeline, humanTime, syntheticToolCallItem } from "@/lib/utils";
@@ -37,6 +37,9 @@ interface TradeState {
   runError: string | null;
   runNotice: string | null;
   focusedToolCallId: string | null;
+  replayClocks: Record<string, ReplayClockState>;
+  replayClockLoading: boolean;
+  replayClockError: string | null;
 
   streamedRounds: StreamedRound[];
   currentReasoning: string;
@@ -57,6 +60,9 @@ interface TradeState {
   runOnce: (sessionId: string, model?: string | null) => Promise<void>;
   stopCurrentRun: (sessionId: string) => Promise<void>;
   focusToolCall: (toolCallId: string | null, sessionId?: string | null) => void;
+  loadReplayClock: (accountId: string) => Promise<void>;
+  updateReplayClock: (accountId: string, payload: Record<string, unknown>) => Promise<ReplayClockState | null>;
+  restoreReplayClockLive: (accountId: string) => Promise<ReplayClockState | null>;
 
   getTimeline: () => TimelineItem[];
 
@@ -114,6 +120,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   runError: null,
   runNotice: null,
   focusedToolCallId: null,
+  replayClocks: {},
+  replayClockLoading: false,
+  replayClockError: null,
 
   streamedRounds: [],
   currentReasoning: "",
@@ -423,6 +432,55 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       return;
     }
     set({ focusedToolCallId: toolCallId });
+  },
+
+  loadReplayClock: async (accountId) => {
+    if (!accountId) return;
+    set({ replayClockLoading: true, replayClockError: null });
+    try {
+      const clock = await api.replayClock(accountId);
+      set((s) => ({
+        replayClocks: { ...s.replayClocks, [accountId]: clock },
+        replayClockLoading: false,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ replayClockLoading: false, replayClockError: msg });
+    }
+  },
+
+  updateReplayClock: async (accountId, payload) => {
+    if (!accountId) return null;
+    set({ replayClockLoading: true, replayClockError: null });
+    try {
+      const clock = await api.updateReplayClock(accountId, payload);
+      set((s) => ({
+        replayClocks: { ...s.replayClocks, [accountId]: clock },
+        replayClockLoading: false,
+      }));
+      return clock;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ replayClockLoading: false, replayClockError: msg });
+      return null;
+    }
+  },
+
+  restoreReplayClockLive: async (accountId) => {
+    if (!accountId) return null;
+    set({ replayClockLoading: true, replayClockError: null });
+    try {
+      const clock = await api.restoreReplayClockLive(accountId);
+      set((s) => ({
+        replayClocks: { ...s.replayClocks, [accountId]: clock },
+        replayClockLoading: false,
+      }));
+      return clock;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ replayClockLoading: false, replayClockError: msg });
+      return null;
+    }
   },
 
   getTimeline: () => {

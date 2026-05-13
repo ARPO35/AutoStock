@@ -276,6 +276,15 @@ CREATE TABLE IF NOT EXISTS simulator_accounts (
 CREATE INDEX IF NOT EXISTS idx_simulator_accounts_created
     ON simulator_accounts(created_at);
 
+CREATE TABLE IF NOT EXISTS account_replay_clocks (
+    simulator_account_id TEXT PRIMARY KEY REFERENCES simulator_accounts(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL DEFAULT 'live',
+    base_replay_time TEXT,
+    base_real_time TEXT,
+    speed REAL NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     simulator_account_id TEXT NOT NULL REFERENCES simulator_accounts(id) ON DELETE CASCADE,

@@ -23,10 +23,16 @@ class TradingRules:
     def __init__(self, enforce_trading_hours: bool = True) -> None:
         self.enforce_trading_hours = enforce_trading_hours
 
-    def check_trading_hours(self) -> None:
+    def check_trading_hours(self, current_time: datetime | None = None) -> None:
         if not self.enforce_trading_hours:
             return
-        now = datetime.now(A_SHARE_TIMEZONE).time()
+        current = current_time or datetime.now(A_SHARE_TIMEZONE)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=A_SHARE_TIMEZONE)
+        current = current.astimezone(A_SHARE_TIMEZONE)
+        if current.weekday() >= 5:
+            raise TradingRuleError("当前不是A股工作日交易时段。")
+        now = current.time()
         if now < MORNING_START:
             raise TradingRuleError("尚未到交易时间（9:30 开盘）。")
         if MORNING_END <= now < AFTERNOON_START:
