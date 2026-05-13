@@ -183,6 +183,225 @@ def test_replay_market_tools_clamp_and_do_not_fetch() -> None:
     assert "disabled during replay" in (fetch.error or "")
 
 
+def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.history = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600000",
+                "name": "SPDB",
+                "interval": "daily",
+                "datetime": "2026-05-06",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.2,
+                "volume": 1000,
+                "amount": 10200,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-06T08:00:00+00:00",
+                "raw_hash": "daily-1",
+            }
+        ]
+    )
+    provider.minute = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600000",
+                "name": "SPDB",
+                "interval": "1m",
+                "datetime": "2026-05-06 09:35:00",
+                "open": 10.0,
+                "high": 10.3,
+                "low": 9.9,
+                "close": 10.2,
+                "volume": 500,
+                "amount": 5100,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-06T01:35:00+00:00",
+                "raw_hash": "minute-1",
+            }
+        ]
+    )
+    provider.announcement = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600000",
+                "name": "SPDB",
+                "title": "Replay-safe notice",
+                "type": "notice",
+                "published_at": "2026-05-06",
+                "url": "https://example.com/notice",
+                "source": "test",
+                "fetch_time": "2026-05-06T08:00:00+00:00",
+                "raw_hash": "ann-1",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+    context = {
+        "time_mode": "replay",
+        "effective_time": "2026-05-06T19:15:35+08:00",
+    }
+
+    history = asyncio.run(
+        executor.execute(
+            "market_history",
+            '{"symbol":"600000","start":"2026-04-01","end":"2026-12-31"}',
+            context,
+        )
+    )
+    assert history.ok is True
+    assert history.result["fetch_stats"] == {"inserted": 1, "skipped": 0, "conflicted": 0}
+    assert provider.history.await_args.kwargs["end"] == "2026-05-06"
+
+    minute = asyncio.run(
+        executor.execute(
+            "market_minute",
+            '{"symbol":"600000","start":"2026-05-06 09:30:00","end":"2026-12-31 15:00:00","period":"1","allow_fetch_missing":false}',
+            context,
+        )
+    )
+    assert minute.ok is True
+    assert provider.minute.await_args.kwargs["end"] == "2026-05-06 19:15:35"
+
+    announcement = asyncio.run(
+        executor.execute(
+            "market_announcement",
+            '{"symbol":"600000","start":"2026-04-01","end":"2026-12-31"}',
+            context,
+        )
+    )
+    assert announcement.ok is True
+    assert provider.announcement.await_args.kwargs["end"] == "2026-05-06"
+
+
+def test_replay_market_history_defaults_to_180_day_lookback() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.history = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600000",
+                "name": "SPDB",
+                "interval": "daily",
+                "datetime": "2026-05-06",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.2,
+                "volume": 1000,
+                "amount": 10200,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-06T08:00:00+00:00",
+                "raw_hash": "daily-default",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+
+    result = asyncio.run(
+        executor.execute(
+            "market_history",
+            '{"symbol":"600000"}',
+            {"time_mode": "replay", "effective_time": "2026-05-06T19:15:35+08:00"},
+        )
+    )
+
+    assert result.ok is True
+    assert provider.history.await_args.kwargs["start"] == "2025-11-07"
+    assert provider.history.await_args.kwargs["end"] == "2026-05-06"
+
+
+def test_replay_market_minute_defaults_to_market_open_and_effective_time() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.minute = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600000",
+                "name": "SPDB",
+                "interval": "1m",
+                "datetime": "2026-05-06 09:35:00",
+                "open": 10.0,
+                "high": 10.3,
+                "low": 9.9,
+                "close": 10.2,
+                "volume": 500,
+                "amount": 5100,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-06T01:35:00+00:00",
+                "raw_hash": "minute-default",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+
+    result = asyncio.run(
+        executor.execute(
+            "market_minute",
+            '{"symbol":"600000"}',
+            {"time_mode": "replay", "effective_time": "2026-05-06T19:15:35+08:00"},
+        )
+    )
+
+    assert result.ok is True
+    assert provider.minute.await_args.kwargs["start"] == "2026-05-06 09:30:00"
+    assert provider.minute.await_args.kwargs["end"] == "2026-05-06 19:15:35"
+
+
+def test_session_market_history_fetches_missing_without_allow_flag() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.history = AsyncMock(
+        return_value=[
+            {
+                "symbol": "000858",
+                "name": "Wuliangye",
+                "interval": "daily",
+                "datetime": "2026-05-06",
+                "open": 128.0,
+                "high": 132.0,
+                "low": 127.5,
+                "close": 130.0,
+                "volume": 1000,
+                "amount": 130000,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-06T08:00:00+00:00",
+                "raw_hash": "live-session-fetch",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+
+    result = asyncio.run(
+        executor.execute(
+            "market_history",
+            '{"symbol":"000858","start":"20260101","end":"20260513"}',
+            {"session_id": "session-under-test", "run_id": "run-under-test"},
+        )
+    )
+
+    assert result.ok is True
+    assert result.result["fetch_stats"] == {"inserted": 1, "skipped": 0, "conflicted": 0}
+    assert len(result.result["bars"]) == 1
+    assert provider.history.await_args.kwargs["symbol"] == "000858"
+
+
 def test_simulator_uses_injected_time_for_order_and_t1() -> None:
     store = _sqlite_store()
     engine = _engine(store, enforce_trading_hours=True)

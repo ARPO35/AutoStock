@@ -179,7 +179,7 @@ class SessionRunManager:
         cancel_event: asyncio.Event,
     ) -> dict[str, Any]:
         messages = self._load_context(session_id, system_prompt=system_prompt)
-        tools = self._tool_definitions(config)
+        tools = self._tool_definitions(config, replay_clock=replay_clock)
         executor = ToolExecutor(self.tool_registry)
         base_runtime_context = {
             "session_id": session_id,
@@ -435,11 +435,19 @@ class SessionRunManager:
         )
         return {"run_id": run_id, "status": "max_tool_rounds_reached"}
 
-    def _tool_definitions(self, config: LLMProviderConfig) -> list[ToolDefinition]:
+    def _tool_definitions(
+        self,
+        config: LLMProviderConfig,
+        replay_clock: ReplayClockSnapshot | None = None,
+    ) -> list[ToolDefinition]:
         strict_allowed = config.supports_strict_schema and config.strict_tool_schema
+        definitions = [
+            definition for definition in self.tool_registry.definitions()
+            if definition.name != "data_fetch_history"
+        ]
         return [
             replace(definition, strict=definition.strict and strict_allowed)
-            for definition in self.tool_registry.definitions()
+            for definition in definitions
         ]
 
     def _load_context(self, session_id: str, system_prompt: str | None = None) -> list[ChatMessage]:

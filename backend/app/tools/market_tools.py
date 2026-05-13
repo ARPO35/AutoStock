@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
-from app.market.replay import clamp_end_to_effective, is_replay_context, replay_quote_from_cache
+from app.market.replay import clamp_end_to_effective, effective_datetime, is_replay_context, replay_quote_from_cache
 from app.tools.registry import ToolSpec
+
+REPLAY_HISTORY_LOOKBACK_DAYS = 180
+MARKET_OPEN_TIME = "09:30:00"
 
 
 def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[ToolSpec]:
@@ -23,13 +27,16 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
-        start = _optional_text(arguments.get("start"))
-        end = _optional_text(arguments.get("end"))
         interval = str(arguments.get("interval") or "daily")
+        start = _normalize_history_bound(_optional_text(arguments.get("start")), interval=interval)
+        end = _normalize_history_bound(_optional_text(arguments.get("end")), interval=interval)
         adjust = str(arguments.get("adjust") or "")
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
         replay = is_replay_context(runtime_context)
+        auto_fetch_missing = replay or _is_session_runtime(runtime_context)
         if replay:
+            if not start:
+                start = _replay_history_start(runtime_context)
             end = clamp_end_to_effective(end, runtime_context, date_only=interval == "daily")
 
         bars = await market_store.query_history_async(
@@ -40,9 +47,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust=adjust,
         )
         fetch_stats = None
-        if replay and not bars:
-            raise ValueError(f"No cached history for {symbol} before replay time {end}.")
-        if not bars and allow_fetch_missing:
+        if not bars and (allow_fetch_missing or auto_fetch_missing):
             if not start or not end:
                 raise ValueError("start and end are required when allow_fetch_missing is true.")
             fetched = await market_provider.history(
@@ -60,6 +65,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 interval=interval,
                 adjust=adjust,
             )
+        if replay and not bars:
+            raise ValueError(f"No cached history for {symbol} before replay time {end}.")
 
         return {
             "symbol": symbol,
@@ -102,13 +109,18 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
-        start = str(arguments["start"])
-        end = str(arguments["end"])
+        start = _normalize_datetime_text(_optional_text(arguments.get("start")))
+        end = _normalize_datetime_text(_optional_text(arguments.get("end")))
         period = str(arguments.get("period") or "1")
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
         replay = is_replay_context(runtime_context)
+        auto_fetch_missing = replay or _is_session_runtime(runtime_context)
         if replay:
+            if not start:
+                start = _replay_minute_start(runtime_context)
             end = clamp_end_to_effective(end, runtime_context)
+        if not start or not end:
+            raise ValueError("start and end are required.")
 
         bars = await market_store.query_history_async(
             symbol=symbol,
@@ -118,9 +130,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust="",
         )
         fetch_stats = None
-        if replay and not bars:
-            raise ValueError(f"No cached minute history for {symbol} before replay time {end}.")
-        if not bars and allow_fetch_missing:
+        if not bars and (allow_fetch_missing or auto_fetch_missing):
             fetched = await market_provider.minute(
                 symbol=symbol,
                 start=start,
@@ -135,6 +145,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 interval=f"{period}m",
                 adjust="",
             )
+        if replay and not bars:
+            raise ValueError(f"No cached minute history for {symbol} before replay time {end}.")
 
         return {
             "symbol": symbol,
@@ -150,10 +162,11 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
-        start = _optional_text(arguments.get("start"))
-        end = _optional_text(arguments.get("end"))
+        start = _normalize_date_text(_optional_text(arguments.get("start")))
+        end = _normalize_date_text(_optional_text(arguments.get("end")))
         allow_fetch_missing = bool(arguments.get("allow_fetch_missing", False))
         replay = is_replay_context(runtime_context)
+        auto_fetch_missing = replay or _is_session_runtime(runtime_context)
         if replay:
             end = clamp_end_to_effective(end, runtime_context, date_only=True)
 
@@ -163,11 +176,9 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             end=end,
         )
         fetch_stats = None
-        if replay and not announcements:
-            raise ValueError(f"No cached announcements for {symbol} before replay time {end}.")
-        if not announcements and allow_fetch_missing:
+        if not announcements and (allow_fetch_missing or auto_fetch_missing):
             if not start or not end:
-                raise ValueError("start and end are required when allow_fetch_missing is true.")
+                raise ValueError("start and end are required for announcement lookup.")
             fetched = await market_provider.announcement(
                 symbol=symbol,
                 start=start,
@@ -179,6 +190,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 start=start,
                 end=end,
             )
+        if replay and not announcements:
+            raise ValueError(f"No cached announcements for {symbol} before replay time {end}.")
 
         return {
             "symbol": symbol,
@@ -206,7 +219,10 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         ToolSpec(
             name="market_history",
             display_name="market.history",
-            description="Read historical A-share bars from local cache, optionally fetching missing data.",
+            description=(
+                "Read historical A-share bars from local cache, optionally fetching missing data. "
+                "During replay runs, missing history is prepared automatically only up to the replay time."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -226,7 +242,10 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         ToolSpec(
             name="market_minute",
             display_name="market.minute",
-            description="Read A-share minute K-line bars from local cache, optionally fetching missing data.",
+            description=(
+                "Read A-share minute K-line bars from local cache, optionally fetching missing data. "
+                "During replay runs, missing minute bars are prepared automatically only up to the replay time."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -236,7 +255,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                     "period": {"type": "string", "enum": ["1", "5", "15", "30", "60"]},
                     "allow_fetch_missing": {"type": "boolean"},
                 },
-                "required": ["symbol", "start", "end"],
+                "required": ["symbol"],
                 "additionalProperties": False,
             },
             handler=market_minute,
@@ -245,7 +264,10 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
         ToolSpec(
             name="market_announcement",
             display_name="market.announcement",
-            description="Search A-share company announcements/notices from the local cache, optionally fetching missing data.",
+            description=(
+                "Search A-share company announcements/notices from the local cache, optionally fetching missing data. "
+                "During replay runs, missing announcements are prepared automatically only up to the replay date."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -287,3 +309,45 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _is_session_runtime(runtime_context: dict[str, Any] | None) -> bool:
+    return bool(runtime_context and runtime_context.get("session_id") and runtime_context.get("run_id"))
+
+
+def _normalize_history_bound(value: str | None, *, interval: str) -> str | None:
+    if interval == "daily":
+        return _normalize_date_text(value)
+    return _normalize_datetime_text(value)
+
+
+def _normalize_date_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    if "T" in text:
+        return text.split("T", 1)[0]
+    return text[:10]
+
+
+def _normalize_datetime_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    if "T" in text:
+        text = text.replace("T", " ")
+    return text[:19]
+
+
+def _replay_history_start(runtime_context: dict[str, Any] | None) -> str:
+    effective = effective_datetime(runtime_context)
+    return (effective.date() - timedelta(days=REPLAY_HISTORY_LOOKBACK_DAYS)).isoformat()
+
+
+def _replay_minute_start(runtime_context: dict[str, Any] | None) -> str:
+    effective = effective_datetime(runtime_context)
+    return f"{effective.date().isoformat()} {MARKET_OPEN_TIME}"

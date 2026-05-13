@@ -63,6 +63,7 @@ interface TradeState {
   loadReplayClock: (accountId: string) => Promise<void>;
   updateReplayClock: (accountId: string, payload: Record<string, unknown>) => Promise<ReplayClockState | null>;
   restoreReplayClockLive: (accountId: string) => Promise<ReplayClockState | null>;
+  syncReplayClock: (clock: ReplayClockState | null | undefined) => void;
 
   getTimeline: () => TimelineItem[];
 
@@ -193,6 +194,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         return;
       }
       get().pushEvent(event);
+
+      if (event.type === "run_started" && event.clock?.account_id) {
+        get().syncReplayClock(event.clock);
+      }
 
       if (event.type === "assistant_reasoning") {
         set((s) => {
@@ -481,6 +486,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       set({ replayClockLoading: false, replayClockError: msg });
       return null;
     }
+  },
+
+  syncReplayClock: (clock) => {
+    if (!clock?.account_id) return;
+    set((s) => ({
+      replayClocks: { ...s.replayClocks, [clock.account_id]: clock },
+      replayClockError: null,
+    }));
   },
 
   getTimeline: () => {

@@ -224,6 +224,7 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
 
     class StubChatProvider:
         async def chat(self, config, messages, tools):
+            assert "data_fetch_history" not in {tool.name for tool in tools}
             if messages and messages[-1].role == "tool":
                 return ChatResponse(content="done")
             return ChatResponse(
@@ -453,10 +454,12 @@ def test_session_run_uses_bound_account_replay_clock_for_prompt(monkeypatch) -> 
     client = make_client(monkeypatch)
     app = client.app
     captured_messages = []
+    captured_tool_names = []
 
     class CapturePromptProvider:
         async def chat_stream(self, config, messages, tools):
             captured_messages.append([(message.role, message.content) for message in messages])
+            captured_tool_names.append([tool.name for tool in tools])
             yield {"choices": [{"delta": {"content": "ok"}}]}
 
     app.state.run_manager = SessionRunManager(
@@ -521,6 +524,8 @@ def test_session_run_uses_bound_account_replay_clock_for_prompt(monkeypatch) -> 
     run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
     assert run.status_code == 200
     assert "time=2026-04-27T10:15:00+08:00" in captured_messages[0][0][1]
+    assert "market_history" in captured_tool_names[0]
+    assert "data_fetch_history" not in captured_tool_names[0]
 
     stored = client.get(f"/api/sessions/{session['id']}/messages").json()
     assert stored[0]["content"].endswith("2026-04-27T10:15:00+08:00")
