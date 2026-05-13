@@ -129,13 +129,16 @@ def record_llm_usage(
 
 
 def aggregate_usage(records: list[dict[str, Any]]) -> dict[str, Any]:
+    llm_calls = len(records)
+    latency_ms = round(sum(float(row.get("latency_ms") or 0) for row in records), 1)
     return {
-        "llm_calls": len(records),
+        "llm_calls": llm_calls,
         "prompt_tokens": sum(int(row.get("prompt_tokens") or 0) for row in records),
         "completion_tokens": sum(int(row.get("completion_tokens") or 0) for row in records),
         "thinking_tokens": sum(int(row.get("thinking_tokens") or 0) for row in records),
         "total_tokens": sum(int(row.get("total_tokens") or 0) for row in records),
-        "latency_ms": round(sum(float(row.get("latency_ms") or 0) for row in records), 1),
+        "latency_ms": latency_ms,
+        "avg_latency_ms": round(latency_ms / llm_calls, 1) if llm_calls else 0,
         "cap_exceeded": any(bool(row.get("cap_exceeded")) for row in records),
     }
 

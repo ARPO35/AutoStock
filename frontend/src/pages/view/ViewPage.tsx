@@ -790,6 +790,7 @@ function SessionContributionTable({ rows }: { rows: NonNullable<AccountSnapshot[
             <th className="py-2 font-medium">买/卖</th>
             <th className="py-2 font-medium">成交额</th>
             <th className="py-2 font-medium">费用</th>
+            <th className="py-2 font-medium">归因 Token</th>
           </tr>
         </thead>
         <tbody>
@@ -801,6 +802,7 @@ function SessionContributionTable({ rows }: { rows: NonNullable<AccountSnapshot[
               <td className="py-1.5 text-text-muted">{row.buy_count}/{row.sell_count}</td>
               <td className="py-1.5 text-text-on-dark">{formatMoney(row.turnover)}</td>
               <td className="py-1.5 text-text-muted">{formatMoney(row.fees)}</td>
+              <td className="py-1.5 text-text-muted font-mono">{formatTokens(row.attributed_total_tokens)}</td>
             </tr>
           ))}
         </tbody>
@@ -842,6 +844,8 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
             <th className="py-2 font-medium">成交额</th>
             <th className="py-2 font-medium">费用</th>
             <th className="py-2 font-medium">Run Token</th>
+            <th className="py-2 font-medium">归因 Token</th>
+            <th className="py-2 font-medium">归因耗时</th>
             <th className="py-2 font-medium">Session</th>
           </tr>
         </thead>
@@ -858,6 +862,12 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
               <td className="py-1.5 text-text-muted">{formatMoney(trade.total_fee)}</td>
               <td className="py-1.5 text-text-muted font-mono">
                 {formatTokens(trade.run_total_tokens)}
+              </td>
+              <td className="py-1.5 text-text-muted font-mono">
+                {formatTokens(trade.attributed_total_tokens)}
+              </td>
+              <td className="py-1.5 text-text-muted">
+                {formatLatency(trade.attributed_latency_ms)}
               </td>
               <td className="py-1.5 text-text-muted">{trade.session_name ?? "--"}</td>
             </tr>
@@ -1039,4 +1049,12 @@ function formatTokens(value: number | null | undefined): string {
   if (value == null) return "--";
   const num = Number(value);
   return Number.isFinite(num) ? new Intl.NumberFormat("zh-CN").format(num) : "--";
+}
+
+function formatLatency(value: number | null | undefined): string {
+  if (value == null) return "--";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}s`;
+  return `${Math.round(num)}ms`;
 }

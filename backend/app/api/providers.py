@@ -214,6 +214,7 @@ class ProviderUsageResponse(BaseModel):
     thinking_tokens: int = 0
     total_tokens: int = 0
     latency_ms: float = 0
+    avg_latency_ms: float = 0
     cap_exceeded_count: int = 0
 
 

@@ -385,6 +385,8 @@ def _trades(
             u.thinking_tokens AS run_thinking_tokens,
             u.llm_calls AS run_llm_calls,
             u.cap_exceeded_count AS run_cap_exceeded_count,
+            u.latency_ms AS run_latency_ms,
+            tc.run_trade_count AS run_trade_count,
             ROUND(t.price * t.quantity, 2) AS turnover
         FROM trades t
         JOIN simulator_accounts a ON a.id = t.simulator_account_id
@@ -400,11 +402,18 @@ def _trades(
                 SUM(completion_tokens) AS completion_tokens,
                 SUM(thinking_tokens) AS thinking_tokens,
                 SUM(total_tokens) AS total_tokens,
+                SUM(latency_ms) AS latency_ms,
                 SUM(cap_exceeded) AS cap_exceeded_count
             FROM llm_usage_records
             WHERE run_id IS NOT NULL
             GROUP BY run_id
         ) u ON u.run_id = t.run_id
+        LEFT JOIN (
+            SELECT run_id, COUNT(*) AS run_trade_count
+            FROM trades
+            WHERE run_id IS NOT NULL
+            GROUP BY run_id
+        ) tc ON tc.run_id = t.run_id
         WHERE {' AND '.join(clauses)}
         ORDER BY t.traded_at DESC
         LIMIT ?
@@ -413,6 +422,7 @@ def _trades(
     )
     for row in rows:
         row["total_fee"] = round(float(row.get("fee") or 0) + float(row.get("tax") or 0), 2)
+        _attach_trade_usage_attribution(row)
     return rows
 
 
@@ -427,6 +437,23 @@ def _sessions_for_account(store: SQLiteStore, account_id: str) -> list[dict[str,
         """,
         (account_id,),
     )
+
+
+def _attach_trade_usage_attribution(row: dict[str, Any]) -> None:
+    run_trade_count = int(row.get("run_trade_count") or 0)
+    fields = {
+        "attributed_prompt_tokens": "run_prompt_tokens",
+        "attributed_completion_tokens": "run_completion_tokens",
+        "attributed_thinking_tokens": "run_thinking_tokens",
+        "attributed_total_tokens": "run_total_tokens",
+        "attributed_latency_ms": "run_latency_ms",
+    }
+    for target, source in fields.items():
+        value = row.get(source)
+        if value is None or run_trade_count <= 0:
+            row[target] = None
+        else:
+            row[target] = round(float(value) / run_trade_count, 2)
 
 
 def _asset_points(
@@ -927,11 +954,36 @@ def _session_contributions(
             SUM(CASE WHEN t.side = 'buy' THEN 1 ELSE 0 END) AS buy_count,
             SUM(CASE WHEN t.side = 'sell' THEN 1 ELSE 0 END) AS sell_count,
             ROUND(SUM(t.price * t.quantity), 2) AS turnover,
-            ROUND(SUM(t.fee + t.tax), 2) AS fees
+            ROUND(SUM(t.fee + t.tax), 2) AS fees,
+            ROUND(SUM(CASE
+                WHEN u.total_tokens IS NOT NULL AND tc.run_trade_count > 0
+                THEN CAST(u.total_tokens AS REAL) / tc.run_trade_count
+                ELSE 0
+            END), 2) AS attributed_total_tokens,
+            ROUND(SUM(CASE
+                WHEN u.latency_ms IS NOT NULL AND tc.run_trade_count > 0
+                THEN CAST(u.latency_ms AS REAL) / tc.run_trade_count
+                ELSE 0
+            END), 1) AS attributed_latency_ms
         FROM trades t
         LEFT JOIN chat_sessions s ON s.id = t.session_id
         LEFT JOIN chat_runs r ON r.id = t.run_id
         LEFT JOIN llm_providers p ON p.id = COALESCE(r.provider_id, s.provider_id)
+        LEFT JOIN (
+            SELECT
+                run_id,
+                SUM(total_tokens) AS total_tokens,
+                SUM(latency_ms) AS latency_ms
+            FROM llm_usage_records
+            WHERE run_id IS NOT NULL
+            GROUP BY run_id
+        ) u ON u.run_id = t.run_id
+        LEFT JOIN (
+            SELECT run_id, COUNT(*) AS run_trade_count
+            FROM trades
+            WHERE run_id IS NOT NULL
+            GROUP BY run_id
+        ) tc ON tc.run_id = t.run_id
         WHERE {' AND '.join(clauses)}
         GROUP BY t.session_id, s.name, COALESCE(r.provider_id, s.provider_id), p.name, p.provider_type, COALESCE(r.model, s.model, '')
         ORDER BY turnover DESC

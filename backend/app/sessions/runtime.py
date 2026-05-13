@@ -111,6 +111,7 @@ class SessionRunManager:
                             session_id=session_id,
                             placeholder_name=str(session.get("name") or ""),
                             provider=provider,
+                            provider_id=str(provider_id),
                             config=config,
                             user_message=user_content,
                         )
@@ -582,6 +583,7 @@ class SessionRunManager:
         session_id: str,
         placeholder_name: str,
         provider: ChatProvider,
+        provider_id: str | None,
         config: LLMProviderConfig,
         user_message: str,
     ) -> None:
@@ -592,6 +594,7 @@ class SessionRunManager:
             "长度控制在8到20个中文字符，尽量准确概括主题。"
         )
         try:
+            call_started = time.perf_counter()
             response = await provider.chat(
                 config,
                 [
@@ -599,6 +602,20 @@ class SessionRunManager:
                     ChatMessage(role="user", content=user_message),
                 ],
                 [],
+            )
+            record_llm_usage(
+                self.store,
+                session_id=session_id,
+                run_id=None,
+                provider_id=provider_id,
+                provider_type=config.provider_type,
+                provider_name=config.name,
+                model=config.model,
+                usage=response.usage,
+                latency_ms=(time.perf_counter() - call_started) * 1000,
+                call_index=1,
+                purpose="session_title",
+                token_cap=config.run_token_limit,
             )
             candidate = self._normalize_title(response.content)
             if candidate:

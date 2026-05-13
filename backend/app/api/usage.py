@@ -123,6 +123,7 @@ def _usage_totals(
             COALESCE(SUM(u.thinking_tokens), 0) AS thinking_tokens,
             COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
             COALESCE(SUM(u.latency_ms), 0) AS latency_ms,
+            COALESCE(AVG(u.latency_ms), 0) AS avg_latency_ms,
             COALESCE(SUM(u.cap_exceeded), 0) AS cap_exceeded_count
         FROM llm_usage_records u
         JOIN chat_sessions s ON s.id = u.session_id
@@ -139,6 +140,7 @@ def _usage_totals(
         "thinking_tokens": int(row.get("thinking_tokens") or 0),
         "total_tokens": int(row.get("total_tokens") or 0),
         "latency_ms": round(float(row.get("latency_ms") or 0), 1),
+        "avg_latency_ms": round(float(row.get("avg_latency_ms") or 0), 1),
         "cap_exceeded_count": int(row.get("cap_exceeded_count") or 0),
     }
 
@@ -171,6 +173,7 @@ def _usage_grouped(
             COALESCE(SUM(u.thinking_tokens), 0) AS thinking_tokens,
             COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
             COALESCE(SUM(u.latency_ms), 0) AS latency_ms,
+            COALESCE(AVG(u.latency_ms), 0) AS avg_latency_ms,
             COALESCE(SUM(u.cap_exceeded), 0) AS cap_exceeded_count
         FROM llm_usage_records u
         JOIN chat_sessions s ON s.id = u.session_id
@@ -207,6 +210,7 @@ def _usage_runs(
             COALESCE(SUM(u.thinking_tokens), 0) AS thinking_tokens,
             COALESCE(SUM(u.total_tokens), 0) AS total_tokens,
             COALESCE(SUM(u.latency_ms), 0) AS latency_ms,
+            COALESCE(AVG(u.latency_ms), 0) AS avg_latency_ms,
             COALESCE(SUM(u.cap_exceeded), 0) AS cap_exceeded_count
         FROM llm_usage_records u
         JOIN chat_sessions s ON s.id = u.session_id

@@ -1051,7 +1051,7 @@ function UsageManagement() {
   if (loading && !usage) {
     return (
       <section>
-        <PanelHeader icon={<BarChart3 size={16} />} title="Token 用量分析" />
+        <PanelHeader icon={<BarChart3 size={16} />} title="用量与归因分析" />
         <p className="mt-3 text-sm text-text-muted">加载中...</p>
       </section>
     );
@@ -1062,7 +1062,7 @@ function UsageManagement() {
   return (
     <section className="grid gap-4">
       <div className="flex items-center justify-between gap-3">
-        <PanelHeader icon={<BarChart3 size={16} />} title="Token 用量分析" />
+        <PanelHeader icon={<BarChart3 size={16} />} title="用量与归因分析" />
         <Button
           variant="secondary"
           size="sm"
@@ -1087,12 +1087,13 @@ function UsageManagement() {
         />
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
             <MetricBox label="总 Token" value={formatTokens(summary.total_tokens)} />
             <MetricBox label="Prompt" value={formatTokens(summary.prompt_tokens)} />
             <MetricBox label="Completion" value={formatTokens(summary.completion_tokens)} />
             <MetricBox label="Thinking" value={formatTokens(summary.thinking_tokens)} />
             <MetricBox label="LLM 调用" value={String(summary.llm_calls)} />
+            <MetricBox label="平均耗时" value={formatLatency(summary.avg_latency_ms)} />
             <MetricBox label="超限" value={String(summary.cap_exceeded_count)} danger={summary.cap_exceeded_count > 0} />
           </div>
 
@@ -1145,6 +1146,7 @@ function UsageGroupTable({ title, rows }: { title: string; rows: UsageGroupRow[]
                 <th className="pb-2 font-medium">名称</th>
                 <th className="pb-2 font-medium">Token</th>
                 <th className="pb-2 font-medium">调用</th>
+                <th className="pb-2 font-medium">均耗时</th>
               </tr>
             </thead>
             <tbody>
@@ -1153,6 +1155,7 @@ function UsageGroupTable({ title, rows }: { title: string; rows: UsageGroupRow[]
                   <td className="py-1.5 text-text-on-dark">{row.name ?? row.id ?? "--"}</td>
                   <td className="py-1.5 text-text-muted font-mono">{formatTokens(row.total_tokens)}</td>
                   <td className="py-1.5 text-text-muted">{row.llm_calls}</td>
+                  <td className="py-1.5 text-text-muted">{formatLatency(row.avg_latency_ms)}</td>
                 </tr>
               ))}
             </tbody>
@@ -1176,6 +1179,7 @@ function UsageRunTable({ rows }: { rows: UsageRunRow[] }) {
             <th className="pb-2 font-medium sticky top-0 bg-surface-card">Session</th>
             <th className="pb-2 font-medium sticky top-0 bg-surface-card">模型</th>
             <th className="pb-2 font-medium sticky top-0 bg-surface-card">Token</th>
+            <th className="pb-2 font-medium sticky top-0 bg-surface-card">耗时</th>
             <th className="pb-2 font-medium sticky top-0 bg-surface-card">调用</th>
             <th className="pb-2 font-medium sticky top-0 bg-surface-card">状态</th>
           </tr>
@@ -1187,6 +1191,7 @@ function UsageRunTable({ rows }: { rows: UsageRunRow[] }) {
               <td className="py-1.5 text-text-on-dark">{row.session_name}</td>
               <td className="py-1.5 text-text-muted">{row.model}</td>
               <td className="py-1.5 text-text-on-dark font-mono">{formatTokens(row.total_tokens)}</td>
+              <td className="py-1.5 text-text-muted">{formatLatency(row.latency_ms)}</td>
               <td className="py-1.5 text-text-muted">{row.llm_calls}</td>
               <td className={`py-1.5 ${row.cap_exceeded_count > 0 ? "text-trading-rise" : "text-text-muted"}`}>
                 {row.cap_exceeded_count > 0 ? "超限" : "正常"}
@@ -1736,4 +1741,12 @@ function formatTokens(value: number | null | undefined): string {
   const num = Number(value ?? 0);
   if (!Number.isFinite(num)) return "--";
   return new Intl.NumberFormat("zh-CN").format(num);
+}
+
+function formatLatency(value: number | null | undefined): string {
+  if (value == null) return "--";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}s`;
+  return `${Math.round(num)}ms`;
 }

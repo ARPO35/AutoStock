@@ -204,6 +204,7 @@ export interface ProviderUsageResponse {
   thinking_tokens: number;
   total_tokens: number;
   latency_ms: number;
+  avg_latency_ms: number;
   cap_exceeded_count: number;
 }
 
@@ -215,6 +216,7 @@ export interface UsageSummary {
   thinking_tokens: number;
   total_tokens: number;
   latency_ms: number;
+  avg_latency_ms: number;
   cap_exceeded_count: number;
 }
 
@@ -391,6 +393,13 @@ export interface TradeRow {
   run_thinking_tokens?: number | null;
   run_llm_calls?: number | null;
   run_cap_exceeded_count?: number | null;
+  run_latency_ms?: number | null;
+  run_trade_count?: number | null;
+  attributed_prompt_tokens?: number | null;
+  attributed_completion_tokens?: number | null;
+  attributed_thinking_tokens?: number | null;
+  attributed_total_tokens?: number | null;
+  attributed_latency_ms?: number | null;
   traded_at: string;
 }
 
@@ -406,6 +415,8 @@ export interface SessionContributionRow {
   sell_count: number;
   turnover: number;
   fees: number;
+  attributed_total_tokens?: number | null;
+  attributed_latency_ms?: number | null;
 }
 
 export interface AssetPoint {
