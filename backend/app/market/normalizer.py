@@ -79,6 +79,7 @@ def normalize_spot_rows(
 def normalize_bid_ask_quote(
     rows: Any,
     symbol: str,
+    name: str | None = None,
     source: str = "akshare.stock_bid_ask_em",
     fetch_time: str | None = None,
 ) -> dict[str, Any]:
@@ -90,7 +91,7 @@ def normalize_bid_ask_quote(
     }
     quote = {
         "symbol": normalize_symbol(symbol),
-        "name": None,
+        "name": name,
         "price": _number(values.get("最新")),
         "open": _number(values.get("今开")),
         "high": _number(values.get("最高")),

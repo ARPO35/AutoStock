@@ -5,11 +5,15 @@ from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
-from app.market.normalizer import normalize_bid_ask_quote, normalize_history_rows, normalize_symbol
+from app.market.names import StockNameResolver
+from app.market.normalizer import normalize_bid_ask_quote, normalize_history_rows, normalize_spot_rows, normalize_symbol
 
 
 class AKShareMarketProvider:
     source = "akshare"
+
+    def __init__(self, name_resolver: StockNameResolver | None = None) -> None:
+        self.name_resolver = name_resolver or StockNameResolver()
 
     async def quote(self, symbol: str) -> dict[str, Any]:
         return await run_in_threadpool(self.quote_sync, symbol)
@@ -17,8 +21,9 @@ class AKShareMarketProvider:
     def quote_sync(self, symbol: str) -> dict[str, Any]:
         ak = self._akshare()
         normalized_symbol = normalize_symbol(symbol)
+        name = self.name_resolver.resolve(normalized_symbol, ak)
         frame = ak.stock_bid_ask_em(symbol=normalized_symbol)
-        quote = normalize_bid_ask_quote(frame, symbol=normalized_symbol)
+        quote = normalize_bid_ask_quote(frame, symbol=normalized_symbol, name=name)
         if quote["price"] is None:
             raise LookupError(f"Symbol not found in AKShare quote data: {normalized_symbol}")
         return quote
@@ -34,6 +39,14 @@ class AKShareMarketProvider:
             for symbol, quote in zip(unique_symbols, results, strict=False)
             if isinstance(quote, dict)
         }
+
+    async def all_a_quotes(self) -> list[dict[str, Any]]:
+        return await run_in_threadpool(self.all_a_quotes_sync)
+
+    def all_a_quotes_sync(self) -> list[dict[str, Any]]:
+        ak = self._akshare()
+        frame = ak.stock_zh_a_spot_em()
+        return normalize_spot_rows(frame)
 
     async def history(
         self,
@@ -58,6 +71,7 @@ class AKShareMarketProvider:
 
         ak = self._akshare()
         normalized_symbol = normalize_symbol(symbol)
+        name = self.name_resolver.resolve(normalized_symbol, ak)
         frame = ak.stock_zh_a_hist(
             symbol=normalized_symbol,
             period="daily",
@@ -70,6 +84,7 @@ class AKShareMarketProvider:
             symbol=normalized_symbol,
             interval=interval,
             adjust=adjust or "",
+            name=name,
         )
 
     _MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
@@ -103,6 +118,7 @@ class AKShareMarketProvider:
 
         ak = self._akshare()
         normalized_symbol = normalize_symbol(symbol)
+        name = self.name_resolver.resolve(normalized_symbol, ak)
 
         start_dt = self._minute_datetime(start)
         end_dt = self._minute_datetime(end)
@@ -119,6 +135,7 @@ class AKShareMarketProvider:
             symbol=normalized_symbol,
             period=period,
             adjust=adjust or "",
+            name=name,
         )
 
     async def announcement(

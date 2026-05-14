@@ -152,6 +152,8 @@ def test_view_account_snapshot_uses_simulator_account口径(monkeypatch) -> None
     assert body["metrics"]["market_value"] == 11000
     assert body["metrics"]["floating_pnl"] == 1000
     assert body["positions"][0]["symbol"] == "000001"
+    assert body["positions"][0]["name"] == "Ping An Bank"
+    assert body["recent_trades"][0]["name"] == "Ping An Bank"
     assert body["recent_trades"][0]["turnover"] == 10000
     assert body["asset_points"][-1]["source"] == "current"
 
@@ -166,6 +168,7 @@ def test_view_trades_filters_by_account_and_symbol(monkeypatch) -> None:
     assert hit.status_code == 200
     assert hit.json()["summary"]["trade_count"] == 1
     assert hit.json()["trades"][0]["account_name"] == "View Account"
+    assert hit.json()["trades"][0]["name"] == "Ping An Bank"
     assert miss.status_code == 200
     assert miss.json()["summary"]["trade_count"] == 0
 

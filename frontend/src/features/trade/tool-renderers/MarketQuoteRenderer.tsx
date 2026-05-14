@@ -4,6 +4,7 @@ import { formatValue } from "@/lib/utils";
 export function MarketQuoteRenderer({ data }: { data: Record<string, unknown> }) {
   const name = formatValue(data.name ?? data["名称"] ?? data.symbol ?? "--");
   const symbol = formatValue(data.symbol ?? "--");
+  const stockLabel = name !== "--" && name !== symbol ? `${name}（${symbol}）` : symbol;
   const price = Number(data.price ?? data["最新价"]);
   const change = Number(data.change ?? data["涨跌额"]);
   const pctChange = Number(data.pct_change ?? data.change_percent ?? data["涨跌幅"]);
@@ -22,7 +23,7 @@ export function MarketQuoteRenderer({ data }: { data: Record<string, unknown> })
     <div className="mt-2 p-2.5 border border-hairline rounded-lg bg-surface-canvas/40">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <strong className="text-text-on-dark">
-          {name} {symbol}
+          {stockLabel}
         </strong>
         <span className="text-text-on-dark">
           ¥{Number.isFinite(price) ? price.toFixed(2) : "--"}

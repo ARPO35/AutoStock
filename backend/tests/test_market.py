@@ -12,8 +12,11 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.market.akshare_provider import AKShareMarketProvider
 from app.market.normalizer import normalize_announcement_rows, normalize_bid_ask_quote, normalize_history_rows, normalize_minute_rows, normalize_spot_rows
+from app.market.replay import replay_quote_from_cache
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
+
+SPDB_NAME = "\u6d66\u53d1\u94f6\u884c"
 
 
 class FakeFrame:
@@ -31,6 +34,7 @@ class FakeMarketProvider:
         self.quote_calls = 0
         self.minute_calls = 0
         self.announcement_calls = 0
+        self.all_a_calls = 0
 
     async def history(self, symbol, start, end, interval="daily", adjust=""):
         self.history_calls += 1
@@ -135,6 +139,26 @@ class FakeMarketProvider:
             fetch_time="2026-04-27T08:00:00+00:00",
         )
 
+    async def all_a_quotes(self):
+        self.all_a_calls += 1
+        return normalize_spot_rows(
+            FakeFrame(
+                [
+                    {
+                        "代码": "600000",
+                        "名称": "浦发银行",
+                        "最新价": 10.8,
+                    },
+                    {
+                        "代码": "000001",
+                        "名称": "平安银行",
+                        "最新价": 12.3,
+                    },
+                ]
+            ),
+            fetch_time="2026-04-27T15:30:00+00:00",
+        )
+
 
 class BlockingFakeAKShare:
     def __init__(self, release_event: threading.Event) -> None:
@@ -162,7 +186,12 @@ class BlockingFakeAKShare:
 class SingleQuoteFakeAKShare:
     def __init__(self) -> None:
         self.bid_ask_calls: list[str] = []
+        self.name_calls = 0
         self.spot_calls = 0
+
+    def stock_info_a_code_name(self):
+        self.name_calls += 1
+        return FakeFrame([{"code": "600000", "name": SPDB_NAME}])
 
     def stock_bid_ask_em(self, symbol):
         self.bid_ask_calls.append(symbol)
@@ -183,6 +212,44 @@ class SingleQuoteFakeAKShare:
     def stock_zh_a_spot_em(self):
         self.spot_calls += 1
         raise AssertionError("market_quote must not fetch full-market spot data")
+
+
+class NameLookupFailureFakeAKShare(SingleQuoteFakeAKShare):
+    def stock_info_a_code_name(self):
+        self.name_calls += 1
+        raise RuntimeError("name lookup unavailable")
+
+
+class NamedBarsFakeAKShare(SingleQuoteFakeAKShare):
+    def stock_zh_a_hist(self, **kwargs):
+        return FakeFrame(
+            [
+                {
+                    "日期": "2026-04-27",
+                    "开盘": 10.0,
+                    "最高": 11.0,
+                    "最低": 9.5,
+                    "收盘": 10.5,
+                    "成交量": 1000,
+                    "成交额": 10500,
+                }
+            ]
+        )
+
+    def stock_zh_a_hist_min_em(self, **kwargs):
+        return FakeFrame(
+            [
+                {
+                    "时间": "2026-04-27 09:35:00",
+                    "开盘": 10.0,
+                    "最高": 10.3,
+                    "最低": 9.9,
+                    "收盘": 10.2,
+                    "成交量": 500,
+                    "成交额": 5100,
+                }
+            ]
+        )
 
 
 class BlockingCacheStatusStore(MarketDuckDBStore):
@@ -318,8 +385,24 @@ def test_akshare_quote_uses_single_symbol_lookup(monkeypatch) -> None:
     quote = asyncio.run(provider.quote("600000"))
 
     assert quote["symbol"] == "600000"
+    assert quote["name"] == SPDB_NAME
     assert quote["price"] == 10.8
     assert fake_ak.bid_ask_calls == ["600000"]
+    assert fake_ak.name_calls == 1
+    assert fake_ak.spot_calls == 0
+
+
+def test_akshare_quote_tolerates_name_lookup_failure(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = NameLookupFailureFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    quote = asyncio.run(provider.quote("600000"))
+
+    assert quote["symbol"] == "600000"
+    assert quote["name"] is None
+    assert quote["price"] == 10.8
+    assert fake_ak.name_calls == 1
     assert fake_ak.spot_calls == 0
 
 
@@ -331,9 +414,40 @@ def test_akshare_quotes_batch_skips_failed_symbols(monkeypatch) -> None:
     quotes = asyncio.run(provider.quotes_batch(["600000", "000002", "600000"]))
 
     assert list(quotes) == ["600000"]
+    assert quotes["600000"]["name"] == SPDB_NAME
     assert quotes["600000"]["price"] == 10.8
     assert fake_ak.bid_ask_calls.count("600000") == 1
     assert fake_ak.bid_ask_calls.count("000002") == 1
+    assert fake_ak.name_calls == 1
+
+
+def test_akshare_provider_enriches_bars_cache_status_and_replay_quote(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = NamedBarsFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    history = asyncio.run(provider.history("600000", "2026-04-27", "2026-04-27"))
+    minute = asyncio.run(provider.minute("600000", "2026-04-27", "2026-04-27", period="5"))
+
+    assert history[0]["name"] == SPDB_NAME
+    assert minute[0]["name"] == SPDB_NAME
+    assert fake_ak.name_calls == 1
+
+    store = MarketDuckDBStore(":memory:")
+    store.initialize()
+    assert store.insert_bars(history + minute)["inserted"] == 2
+
+    status = store.cache_status(symbol="600000")
+    assert {row["interval"]: row["name"] for row in status} == {"daily": SPDB_NAME, "5m": SPDB_NAME}
+
+    quote = asyncio.run(
+        replay_quote_from_cache(
+            store,
+            "600000",
+            {"time_mode": "replay", "effective_time": "2026-04-27 09:40:00"},
+        )
+    )
+    assert quote["name"] == SPDB_NAME
 
 
 def test_market_store_async_methods_do_not_block_event_loop() -> None:
@@ -386,6 +500,60 @@ def test_history_api_fetches_when_allowed(monkeypatch) -> None:
     assert history.json()["fetch_stats"] == {"inserted": 1, "skipped": 0, "conflicted": 0}
     assert len(history.json()["bars"]) == 1
     assert provider.history_calls == 1
+
+
+def test_watchlist_and_manual_quote_sync(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+
+    added = client.post(
+        "/api/data/watchlist",
+        json={"symbol": "600000", "name": "SPDB", "note": "track"},
+    )
+    assert added.status_code == 201
+    item = added.json()
+    assert item["symbol"] == "600000"
+
+    run = client.post(
+        "/api/data/sync/run",
+        json={"job_type": "quote", "scope": "watchlist"},
+    )
+    assert run.status_code == 200
+    body = run.json()
+    assert body["status"] == "success"
+    assert body["inserted"] == 1
+    assert provider.quote_calls == 1
+
+    rows = client.get("/api/data/sync-runs").json()
+    assert rows[0]["job_type"] == "quote"
+    assert rows[0]["scope"] == "watchlist"
+
+    updated = client.put(f"/api/data/watchlist/{item['id']}", json={"enabled": False})
+    assert updated.status_code == 200
+    assert updated.json()["enabled"] == 0
+
+    deleted = client.delete(f"/api/data/watchlist/{item['id']}")
+    assert deleted.status_code == 204
+
+
+def test_manual_all_a_quote_snapshot_sync(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+
+    run = client.post(
+        "/api/data/sync/run",
+        json={"job_type": "all_a_quote", "scope": "all"},
+    )
+    assert run.status_code == 200
+    body = run.json()
+    assert body["status"] == "success"
+    assert body["fetched"] == 2
+    assert body["inserted"] == 2
+    assert provider.all_a_calls == 1
+    rows = client.app.state.market_store._rows(
+        "SELECT symbol, name, price FROM market_quotes ORDER BY symbol",
+        [],
+    )
+    assert [row["symbol"] for row in rows] == ["000001", "600000"]
+    assert rows[1]["name"] == "浦发银行"
 
 
 def test_market_tools_return_json(monkeypatch) -> None:

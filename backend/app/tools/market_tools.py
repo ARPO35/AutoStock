@@ -47,7 +47,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust=adjust,
         )
         fetch_stats = None
-        if not bars and (allow_fetch_missing or auto_fetch_missing):
+        should_fetch = not bars if replay else not _covers_range(bars, start, end)
+        if (allow_fetch_missing or auto_fetch_missing) and should_fetch:
             if not start or not end:
                 raise ValueError("start and end are required when allow_fetch_missing is true.")
             fetched = await market_provider.history(
@@ -130,7 +131,8 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
             adjust="",
         )
         fetch_stats = None
-        if not bars and (allow_fetch_missing or auto_fetch_missing):
+        should_fetch = not bars if replay else not _covers_range(bars, start, end)
+        if (allow_fetch_missing or auto_fetch_missing) and should_fetch:
             fetched = await market_provider.minute(
                 symbol=symbol,
                 start=start,
@@ -341,6 +343,14 @@ def _normalize_datetime_text(value: str | None) -> str | None:
     if "T" in text:
         text = text.replace("T", " ")
     return text[:19]
+
+
+def _covers_range(rows: list[dict[str, Any]], start: str | None, end: str | None) -> bool:
+    if not rows or not start or not end:
+        return bool(rows)
+    first = str(rows[0].get("datetime") or "")
+    last = str(rows[-1].get("datetime") or "")
+    return first <= start and last >= end
 
 
 def _replay_history_start(runtime_context: dict[str, Any] | None) -> str:

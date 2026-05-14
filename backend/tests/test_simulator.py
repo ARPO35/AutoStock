@@ -113,6 +113,7 @@ class TestSimulatorBuy:
         order = result["order"]
         assert order["side"] == "buy"
         assert order["symbol"] == "000001"
+        assert order["name"] == "平安银行"
         assert order["quantity"] == 1000
         assert order["status"] == "filled"
 
@@ -129,6 +130,7 @@ class TestSimulatorBuy:
         positions = engine.get_positions(acc["id"])
         assert len(positions) == 1
         assert positions[0]["symbol"] == "000001"
+        assert positions[0]["name"] == "平安银行"
         assert int(positions[0]["quantity"]) == 1000
         assert int(positions[0]["available_quantity"]) == 0
 

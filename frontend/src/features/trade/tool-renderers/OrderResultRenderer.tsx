@@ -14,6 +14,7 @@ export function OrderResultRenderer({ data }: { data: Record<string, unknown> })
   const sourceSession = formatValue(data.session_id ?? data.source_session ?? data["来源Session"]);
   const sourceModel = formatValue(data.model ?? data.source_model ?? data["来源模型"]);
   const netAmountLabel = data.total_proceeds != null || data["到账金额"] != null ? "到账金额" : "总成本";
+  const stockLabel = name !== "--" ? `${name}（${symbol}）` : symbol;
 
   return (
     <div className="mt-2 p-3 border border-hairline rounded-lg bg-surface-canvas/40">
@@ -25,7 +26,7 @@ export function OrderResultRenderer({ data }: { data: Record<string, unknown> })
         <div>
           <span className="block text-text-muted text-xs">股票</span>
           <strong className="text-text-on-dark">
-            {symbol}{name !== "--" ? ` · ${name}` : ""}
+            {stockLabel}
           </strong>
         </div>
         <div>
