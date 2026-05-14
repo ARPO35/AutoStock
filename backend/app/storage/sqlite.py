@@ -475,4 +475,38 @@ CREATE INDEX IF NOT EXISTS idx_tavily_usage_created
 
 CREATE INDEX IF NOT EXISTS idx_tavily_usage_session
     ON tavily_usage_records(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS market_watchlist (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL UNIQUE,
+    name TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_watchlist_enabled
+    ON market_watchlist(enabled, symbol);
+
+CREATE TABLE IF NOT EXISTS market_sync_runs (
+    id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    symbols_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    fetched INTEGER NOT NULL DEFAULT 0,
+    inserted INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    conflicted INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_sync_runs_started
+    ON market_sync_runs(started_at);
+
+CREATE INDEX IF NOT EXISTS idx_market_sync_runs_job_scope
+    ON market_sync_runs(job_type, scope, started_at);
 """

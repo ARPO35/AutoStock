@@ -72,34 +72,29 @@ class MarketDuckDBStore:
 
     def insert_quote(self, quote: dict[str, Any]) -> None:
         with self._lock:
-            self.connection.execute(
-                """
-                INSERT INTO market_quotes (
-                    id, symbol, name, price, open, high, low, previous_close,
-                    volume, amount, source, fetch_time, raw_hash, snapshot_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    uuid4().hex,
-                    quote.get("symbol"),
-                    quote.get("name"),
-                    quote.get("price"),
-                    quote.get("open"),
-                    quote.get("high"),
-                    quote.get("low"),
-                    quote.get("previous_close"),
-                    quote.get("volume"),
-                    quote.get("amount"),
-                    quote.get("source"),
-                    quote.get("fetch_time"),
-                    quote.get("raw_hash"),
-                    json.dumps(quote, ensure_ascii=False, sort_keys=True),
-                ],
-            )
+            self._insert_quote(quote)
 
     async def insert_quote_async(self, quote: dict[str, Any]) -> None:
         await run_in_threadpool(self.insert_quote, quote)
+
+    def insert_quotes(self, quotes: list[dict[str, Any]]) -> dict[str, int]:
+        stats = {"inserted": 0, "skipped": 0, "conflicted": 0}
+        if not quotes:
+            return stats
+        with self._lock:
+            self.connection.execute("BEGIN TRANSACTION")
+            try:
+                for quote in quotes:
+                    self._insert_quote(quote)
+                    stats["inserted"] += 1
+                self.connection.execute("COMMIT")
+            except Exception:
+                self.connection.execute("ROLLBACK")
+                raise
+        return stats
+
+    async def insert_quotes_async(self, quotes: list[dict[str, Any]]) -> dict[str, int]:
+        return await run_in_threadpool(self.insert_quotes, quotes)
 
     def query_history(
         self,
@@ -345,6 +340,33 @@ class MarketDuckDBStore:
                 bar.get("source"),
                 bar.get("fetch_time"),
                 bar.get("raw_hash"),
+            ],
+        )
+
+    def _insert_quote(self, quote: dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO market_quotes (
+                id, symbol, name, price, open, high, low, previous_close,
+                volume, amount, source, fetch_time, raw_hash, snapshot_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                uuid4().hex,
+                quote.get("symbol"),
+                quote.get("name"),
+                quote.get("price"),
+                quote.get("open"),
+                quote.get("high"),
+                quote.get("low"),
+                quote.get("previous_close"),
+                quote.get("volume"),
+                quote.get("amount"),
+                quote.get("source"),
+                quote.get("fetch_time"),
+                quote.get("raw_hash"),
+                json.dumps(quote, ensure_ascii=False, sort_keys=True),
             ],
         )
 
