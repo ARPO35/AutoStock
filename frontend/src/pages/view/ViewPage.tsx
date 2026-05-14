@@ -6,11 +6,13 @@ import {
   History,
   LineChart,
   MessageSquare,
+  Play,
   RefreshCw,
   Search,
   Send,
   Table2,
   TimerReset,
+  Trash2,
   Wallet
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -334,15 +336,24 @@ function StockPanel() {
   const marketHistory = useMarketStore((s) => s.marketHistory);
   const cacheRows = useMarketStore((s) => s.cacheRows);
   const dataFetchResult = useMarketStore((s) => s.dataFetchResult);
+  const watchlist = useMarketStore((s) => s.watchlist);
+  const syncRuns = useMarketStore((s) => s.syncRuns);
+  const syncBusy = useMarketStore((s) => s.syncBusy);
   const queryQuote = useMarketStore((s) => s.queryQuote);
   const queryHistory = useMarketStore((s) => s.queryHistory);
   const fetchHistory = useMarketStore((s) => s.fetchHistory);
   const loadDataState = useMarketStore((s) => s.loadDataState);
+  const addWatchlistSymbol = useMarketStore((s) => s.addWatchlistSymbol);
+  const updateWatchlistSymbol = useMarketStore((s) => s.updateWatchlistSymbol);
+  const deleteWatchlistSymbol = useMarketStore((s) => s.deleteWatchlistSymbol);
+  const runMarketSync = useMarketStore((s) => s.runMarketSync);
   const [minuteHistory, setMinuteHistory] = useState<MarketHistoryResponse | null>(null);
   const [announcementData, setAnnouncementData] = useState<MarketAnnouncementResponse | null>(null);
   const [analysisAccountId, setAnalysisAccountId] = useState("");
   const [analysisProviderId, setAnalysisProviderId] = useState("");
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [watchSymbol, setWatchSymbol] = useState("");
+  const [watchName, setWatchName] = useState("");
   const values = useMemo(() => marketHistory?.bars.map(barClose).filter((v): v is number => v != null) ?? [], [marketHistory]);
   const minuteValues = useMemo(() => minuteHistory?.bars.map(barClose).filter((v): v is number => v != null) ?? [], [minuteHistory]);
   const matchingCacheRows = useMemo(
@@ -374,6 +385,14 @@ function StockPanel() {
       end: marketForm.end || undefined,
       allowFetchMissing: marketForm.allowFetchMissing,
     }));
+  }
+
+  async function addCurrentWatchSymbol() {
+    const symbol = watchSymbol.trim() || marketForm.symbol.trim();
+    if (!symbol) return;
+    await addWatchlistSymbol(symbol, watchName.trim() || undefined);
+    setWatchSymbol("");
+    setWatchName("");
   }
 
   async function sendStockToLlm() {
@@ -453,6 +472,96 @@ function StockPanel() {
             查公告
           </Button>
         </form>
+      </section>
+      <section className="xl:col-span-2 border border-hairline rounded-xl bg-surface-card p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0 flex-1">
+            <PanelHeader icon={<Database size={16} />} title="自动同步观察列表" />
+            <div className="grid grid-cols-1 md:grid-cols-[160px_180px_auto] gap-2 items-end">
+              <Input
+                label="股票代码"
+                value={watchSymbol}
+                onChange={(e) => setWatchSymbol(e.target.value)}
+                placeholder={marketForm.symbol.trim() || "000001"}
+              />
+              <Input
+                label="名称"
+                value={watchName}
+                onChange={(e) => setWatchName(e.target.value)}
+                placeholder="可选"
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={!watchSymbol.trim() && !marketForm.symbol.trim()}
+                onClick={() => void addCurrentWatchSymbol()}
+              >
+                加入观察
+              </Button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {watchlist.length === 0 ? (
+                <span className="text-sm text-text-muted">暂无观察股票</span>
+              ) : (
+                watchlist.map((item) => (
+                  <span
+                    key={item.id}
+                    className={`inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
+                      item.enabled ? "border-brand-primary/50 bg-brand-primary/10 text-text-on-dark" : "border-hairline text-text-muted"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="font-mono"
+                      onClick={() => void updateWatchlistSymbol(item.id, !item.enabled)}
+                      title="启用/停用"
+                    >
+                      {item.name ? `${item.name} ${item.symbol}` : item.symbol}
+                    </button>
+                    <button type="button" title="删除" onClick={() => void deleteWatchlistSymbol(item.id)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="w-full xl:w-[520px]">
+            <div className="mb-2 flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" icon={<Play size={14} />} disabled={syncBusy} onClick={() => void runMarketSync("quote", "all")}>
+                同步报价
+              </Button>
+              <Button variant="secondary" size="sm" disabled={syncBusy} onClick={() => void runMarketSync("minute", "all")}>
+                同步分钟线
+              </Button>
+              <Button variant="secondary" size="sm" disabled={syncBusy} onClick={() => void runMarketSync("daily", "all")}>
+                补齐日线
+              </Button>
+              <Button variant="secondary" size="sm" disabled={syncBusy} onClick={() => void runMarketSync("announcement", "all")}>
+                同步公告
+              </Button>
+            </div>
+            <div className="max-h-[132px] overflow-auto rounded-md border border-hairline/60">
+              {syncRuns.length === 0 ? (
+                <p className="p-3 text-sm text-text-muted">暂无同步记录</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <tbody>
+                    {syncRuns.slice(0, 5).map((run) => (
+                      <tr key={run.id} className="border-b border-hairline/50 last:border-0">
+                        <td className="px-2 py-1.5 text-text-on-dark">{run.job_type} / {run.scope}</td>
+                        <td className="px-2 py-1.5 text-text-muted">{run.status}</td>
+                        <td className="px-2 py-1.5 text-text-muted">{syncRunSymbolCount(run.symbols_json)} 支</td>
+                        <td className="px-2 py-1.5 text-text-muted">+{run.inserted} / skip {run.skipped}</td>
+                        <td className="px-2 py-1.5 text-text-muted">{humanTime(run.started_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
       <section className="border border-hairline rounded-xl bg-surface-card p-4">
         <PanelHeader icon={<Activity size={16} />} title="实时报价" />
@@ -815,15 +924,18 @@ function TradeList({ trades, compact = false }: { trades: TradeRow[]; compact?: 
   if (trades.length === 0) return <EmptyState title="暂无成交" description="成交后会显示最近记录。" />;
   return (
     <div className="grid gap-2">
-      {trades.slice(0, compact ? 8 : 20).map((trade) => (
-        <div key={trade.id} className="flex items-center justify-between gap-3 border-b border-hairline/60 pb-2">
-          <div>
-            <strong className="block text-sm text-text-on-dark">{trade.side === "buy" ? "买入" : "卖出"} {trade.symbol}</strong>
-            <span className="text-xs text-text-muted">{humanTime(trade.traded_at)} / {trade.account_name ?? "--"}</span>
+      {trades.slice(0, compact ? 8 : 20).map((trade) => {
+        const stockLabel = formatStockLabel(trade.symbol, trade.name);
+        return (
+          <div key={trade.id} className="flex items-center justify-between gap-3 border-b border-hairline/60 pb-2">
+            <div>
+              <strong className="block text-sm text-text-on-dark">{trade.side === "buy" ? "买入" : "卖出"} {stockLabel}</strong>
+              <span className="text-xs text-text-muted">{humanTime(trade.traded_at)} / {trade.account_name ?? "--"}</span>
+            </div>
+            <span className="text-sm text-text-on-dark">{trade.quantity} @ {trade.price}</span>
           </div>
-          <span className="text-sm text-text-on-dark">{trade.quantity} @ {trade.price}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -837,7 +949,7 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
           <tr className="text-left text-xs text-text-muted border-b border-hairline">
             <th className="py-2 font-medium">时间</th>
             <th className="py-2 font-medium">账户</th>
-            <th className="py-2 font-medium">代码</th>
+            <th className="py-2 font-medium">股票</th>
             <th className="py-2 font-medium">方向</th>
             <th className="py-2 font-medium">价格</th>
             <th className="py-2 font-medium">数量</th>
@@ -854,7 +966,7 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
             <tr key={trade.id} className="border-b border-hairline/50">
               <td className="py-1.5 text-text-muted">{humanTime(trade.traded_at)}</td>
               <td className="py-1.5 text-text-on-dark">{trade.account_name ?? "--"}</td>
-              <td className="py-1.5 font-mono text-text-on-dark">{trade.symbol}</td>
+              <td className="py-1.5 text-text-on-dark">{formatStockLabel(trade.symbol, trade.name)}</td>
               <td className={`py-1.5 ${trade.side === "buy" ? "rise" : "fall"}`}>{trade.side === "buy" ? "买入" : "卖出"}</td>
               <td className="py-1.5 text-text-muted">{trade.price}</td>
               <td className="py-1.5 text-text-muted">{trade.quantity}</td>
@@ -944,6 +1056,12 @@ function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
       ))}
     </div>
   );
+}
+
+function formatStockLabel(symbol: string, name?: string | null): string {
+  const code = symbol.match(/\d{6}/)?.[0] ?? symbol;
+  const cleanName = name?.trim();
+  return cleanName ? `${cleanName}（${code}）` : code;
 }
 
 function CacheRows({ rows }: { rows: Array<{ symbol: string; name?: string | null; interval: string; adjust: string; start_datetime: string; end_datetime: string; bar_count: number }> }) {
@@ -1057,4 +1175,13 @@ function formatLatency(value: number | null | undefined): string {
   if (!Number.isFinite(num)) return "--";
   if (num >= 1000) return `${(num / 1000).toFixed(1)}s`;
   return `${Math.round(num)}ms`;
+}
+
+function syncRunSymbolCount(value: string): number {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
 }

@@ -4,7 +4,9 @@ import type {
   MarketHistoryResponse,
   FetchHistoryResponse,
   CacheStatusRow,
-  DataConflict
+  DataConflict,
+  MarketWatchlistItem,
+  MarketSyncRun
 } from "@/api";
 import { api } from "@/api";
 
@@ -19,6 +21,9 @@ interface MarketState {
   dataFetchForm: typeof defaultDataFetchForm;
   dataFetchResult: FetchHistoryResponse | null;
   conflicts: DataConflict[];
+  watchlist: MarketWatchlistItem[];
+  syncRuns: MarketSyncRun[];
+  syncBusy: boolean;
 
   setMarketForm: (value: typeof defaultMarketForm) => void;
   setDataFetchForm: (value: typeof defaultDataFetchForm) => void;
@@ -28,6 +33,10 @@ interface MarketState {
   fetchHistory: (symbol: string, start: string, end: string, adjust?: string) => Promise<void>;
   loadDataState: () => Promise<void>;
   resolveConflict: (id: string, status: "resolved" | "ignored") => Promise<void>;
+  addWatchlistSymbol: (symbol: string, name?: string, note?: string) => Promise<void>;
+  updateWatchlistSymbol: (id: string, enabled: boolean) => Promise<void>;
+  deleteWatchlistSymbol: (id: string) => Promise<void>;
+  runMarketSync: (jobType: string, scope?: string) => Promise<void>;
 }
 
 export const useMarketStore = create<MarketState>((set) => ({
@@ -38,6 +47,9 @@ export const useMarketStore = create<MarketState>((set) => ({
   dataFetchForm: { ...defaultDataFetchForm },
   dataFetchResult: null,
   conflicts: [],
+  watchlist: [],
+  syncRuns: [],
+  syncBusy: false,
 
   setMarketForm: (value) => set({ marketForm: value }),
   setDataFetchForm: (value) => set({ dataFetchForm: value }),
@@ -74,8 +86,13 @@ export const useMarketStore = create<MarketState>((set) => ({
 
   loadDataState: async () => {
     try {
-      const [rows, c] = await Promise.all([api.cacheStatus(), api.dataConflicts("open")]);
-      set({ cacheRows: rows, conflicts: c });
+      const [rows, c, watchlist, syncRuns] = await Promise.all([
+        api.cacheStatus(),
+        api.dataConflicts("open"),
+        api.watchlist(),
+        api.syncRuns(10)
+      ]);
+      set({ cacheRows: rows, conflicts: c, watchlist, syncRuns });
     } catch {
       // handled by ui store
     }
@@ -85,5 +102,34 @@ export const useMarketStore = create<MarketState>((set) => ({
     await api.resolveConflict(id, status);
     const c = await api.dataConflicts("open");
     set({ conflicts: c });
+  },
+
+  addWatchlistSymbol: async (symbol, name, note) => {
+    await api.addWatchlistSymbol({ symbol, name, note });
+    const watchlist = await api.watchlist();
+    set({ watchlist });
+  },
+
+  updateWatchlistSymbol: async (id, enabled) => {
+    await api.updateWatchlistSymbol(id, { enabled });
+    const watchlist = await api.watchlist();
+    set({ watchlist });
+  },
+
+  deleteWatchlistSymbol: async (id) => {
+    await api.deleteWatchlistSymbol(id);
+    const watchlist = await api.watchlist();
+    set({ watchlist });
+  },
+
+  runMarketSync: async (jobType, scope = "all") => {
+    set({ syncBusy: true });
+    try {
+      await api.runMarketSync({ job_type: jobType, scope });
+      const [syncRuns, cacheRows] = await Promise.all([api.syncRuns(10), api.cacheStatus()]);
+      set({ syncRuns, cacheRows });
+    } finally {
+      set({ syncBusy: false });
+    }
   }
 }));

@@ -181,6 +181,31 @@ export interface DataConflict {
   status: string;
 }
 
+export interface MarketWatchlistItem {
+  id: string;
+  symbol: string;
+  name?: string | null;
+  note: string;
+  enabled: number | boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MarketSyncRun {
+  id: string;
+  job_type: string;
+  scope: string;
+  symbols_json: string;
+  status: string;
+  fetched: number;
+  inserted: number;
+  skipped: number;
+  conflicted: number;
+  error?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+}
+
 export interface ProviderModelsResponse {
   provider_id: string;
   models: string[];
@@ -681,6 +706,25 @@ export const api = {
     request<DataConflict>(`/api/data/conflicts/${conflictId}/resolve`, {
       method: "POST",
       body: JSON.stringify({ status })
+    }),
+  watchlist: () => request<MarketWatchlistItem[]>("/api/data/watchlist"),
+  addWatchlistSymbol: (payload: { symbol: string; name?: string; note?: string; enabled?: boolean }) =>
+    request<MarketWatchlistItem>("/api/data/watchlist", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateWatchlistSymbol: (itemId: string, payload: { name?: string; note?: string; enabled?: boolean }) =>
+    request<MarketWatchlistItem>(`/api/data/watchlist/${itemId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  deleteWatchlistSymbol: (itemId: string) =>
+    request<void>(`/api/data/watchlist/${itemId}`, { method: "DELETE" }),
+  syncRuns: (limit = 30) => request<MarketSyncRun[]>(`/api/data/sync-runs?limit=${limit}`),
+  runMarketSync: (payload: { job_type: string; scope?: string; period?: string }) =>
+    request<MarketSyncRun>("/api/data/sync/run", {
+      method: "POST",
+      body: JSON.stringify(payload)
     }),
   viewOverview: (filters?: ViewFilters) =>
     request<ViewOverviewResponse>(`/api/view/overview${viewQuery(filters)}`),
