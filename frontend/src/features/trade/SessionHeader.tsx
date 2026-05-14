@@ -26,6 +26,7 @@ export function SessionHeader() {
   const [replayDraft, setReplayDraft] = useState("");
   const [speedDraft, setSpeedDraft] = useState("1");
   const [editingReplayTime, setEditingReplayTime] = useState(false);
+  const [replayDraftDirty, setReplayDraftDirty] = useState(false);
   const [clockTick, setClockTick] = useState(() => Date.now());
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
@@ -47,6 +48,7 @@ export function SessionHeader() {
 
   useEffect(() => {
     if (accountId) void loadReplayClock(accountId);
+    setReplayDraftDirty(false);
   }, [accountId, loadReplayClock]);
 
   useEffect(() => {
@@ -58,6 +60,7 @@ export function SessionHeader() {
     if (!replayClock) {
       setReplayDraft("");
       setSpeedDraft("1");
+      setReplayDraftDirty(false);
       return;
     }
     setSpeedDraft(String(replayClock.speed ?? 1));
@@ -65,10 +68,10 @@ export function SessionHeader() {
 
   useEffect(() => {
     if (!replayClock) return;
-    if (!editingReplayTime) {
+    if (!editingReplayTime && !replayDraftDirty) {
       setReplayDraft(toDatetimeLocal(displayEffectiveTime));
     }
-  }, [displayEffectiveTime, editingReplayTime, replayClock]);
+  }, [displayEffectiveTime, editingReplayTime, replayClock, replayDraftDirty]);
 
   const status: SessionStatus = normalizeStatus(selectedSession?.status);
   const statusVariant = status === "running"
@@ -117,11 +120,15 @@ export function SessionHeader() {
 
   const handleApplyReplay = async () => {
     if (!accountId || !replayDraft) return;
-    await updateReplayClock(accountId, {
+    const clock = await updateReplayClock(accountId, {
       mode: "replay",
       replay_time: replayDraft,
       speed: Number(speedDraft) >= 0 ? Number(speedDraft) : 1,
     });
+    if (clock) {
+      setReplayDraftDirty(false);
+      setReplayDraft(toDatetimeLocal(clock.effective_time));
+    }
   };
 
   const handlePauseResume = async () => {
@@ -218,7 +225,10 @@ export function SessionHeader() {
             disabled={!accountId || replayClockLoading || busy}
             onFocus={() => setEditingReplayTime(true)}
             onBlur={() => setEditingReplayTime(false)}
-            onChange={(e) => setReplayDraft(e.target.value)}
+            onChange={(e) => {
+              setReplayDraftDirty(true);
+              setReplayDraft(e.target.value);
+            }}
           />
           <select
             className="h-8 w-[76px] px-2 rounded-md bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 disabled:opacity-50"
