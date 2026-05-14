@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -18,6 +19,8 @@ from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.websocket_manager import WebSocketManager
 from app.market.akshare_provider import AKShareMarketProvider
+from app.market.sync_service import MarketSyncService
+from app.scheduler.market_sync import create_market_sync_scheduler
 from app.sessions.runtime import SessionRunManager
 from app.simulator.engine import SimulatorEngine
 from app.storage.duckdb import MarketDuckDBStore
@@ -42,7 +45,28 @@ class LazyASGIApp:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version=settings.app_version)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        scheduler = app.state.market_sync_scheduler
+        if scheduler is not None and not scheduler.running:
+            scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler = app.state.market_sync_scheduler
+            if scheduler is not None:
+                with suppress(Exception):
+                    if scheduler.running:
+                        scheduler.shutdown(wait=False)
+            for state_name in ("market_store", "store"):
+                resource = getattr(app.state, state_name, None)
+                close = getattr(resource, "close", None)
+                if close is not None:
+                    with suppress(Exception):
+                        close()
+
+    app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
     store = SQLiteStore(settings.sqlite_path)
     store.initialize()
     market_store = MarketDuckDBStore(settings.market_duckdb_path)
@@ -50,6 +74,12 @@ def create_app() -> FastAPI:
     app.state.store = store
     app.state.market_store = market_store
     app.state.market_provider = AKShareMarketProvider()
+    app.state.market_sync_service = MarketSyncService(
+        store=app.state.store,
+        market_store=app.state.market_store,
+        market_provider=app.state.market_provider,
+    )
+    app.state.market_sync_scheduler = create_market_sync_scheduler(app.state.market_sync_service)
     app.state.websocket_manager = WebSocketManager()
     app.state.tavily_service = TavilyService(store=app.state.store, settings=settings)
     app.state.simulator_engine = SimulatorEngine(

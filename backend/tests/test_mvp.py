@@ -12,6 +12,8 @@ from app.core.config import get_settings
 from app.llm.base import ChatResponse, ToolCall
 from app.main import create_app
 from app.sessions.runtime import SessionRunManager
+from app.storage.duckdb import MarketDuckDBStore
+from app.storage.sqlite import SQLiteStore
 from app.tools.executor import ToolExecutor
 
 
@@ -31,6 +33,35 @@ def make_client(monkeypatch) -> TestClient:
     monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(path / "logs"))
     get_settings.cache_clear()
     return TestClient(create_app())
+
+
+def test_lifespan_closes_storage_handles(monkeypatch) -> None:
+    path = _test_dir().resolve()
+    monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(path / "app.db"))
+    monkeypatch.setenv("AUTOSTOCK_MARKET_DUCKDB_PATH", str(path / "market.duckdb"))
+    monkeypatch.setenv("AUTOSTOCK_FRONTEND_DIST_PATH", str(path / "frontend_dist"))
+    get_settings.cache_clear()
+
+    close_calls: list[str] = []
+    original_store_close = SQLiteStore.close
+    original_market_store_close = MarketDuckDBStore.close
+
+    def close_store(self: SQLiteStore) -> None:
+        close_calls.append("store")
+        original_store_close(self)
+
+    def close_market_store(self: MarketDuckDBStore) -> None:
+        close_calls.append("market_store")
+        original_market_store_close(self)
+
+    monkeypatch.setattr(SQLiteStore, "close", close_store)
+    monkeypatch.setattr(MarketDuckDBStore, "close", close_market_store)
+
+    with TestClient(create_app()) as client:
+        response = client.get("/api/health")
+        assert response.status_code == 200
+
+    assert close_calls == ["market_store", "store"]
 
 
 def test_session_crud(monkeypatch) -> None:
@@ -847,6 +878,7 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
     assert stored_result is not None
     order_result = json.loads(stored_result["result_json"])["result"]
     assert order_result["kind"] == "order_result"
+    assert order_result["name"] == "平安银行"
     assert order_result["order_price"] == 12.0
     assert order_result["trade_price"] == 12.0
     assert order_result["filled_price"] == 12.0
@@ -861,6 +893,7 @@ def test_tool_order_attribution_uses_session_context(monkeypatch) -> None:
     assert len(orders) == 1
     assert len(trades) == 1
     assert orders[0]["session_id"] == session["id"]
+    assert orders[0]["name"] == "平安银行"
     assert trades[0]["session_id"] == session["id"]
 
     executor = ToolExecutor(app.state.tool_registry)
