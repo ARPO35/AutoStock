@@ -24,6 +24,7 @@ import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore, type ViewSection, viewSections } from "@/stores/viewStore";
 import { api } from "@/api";
 import type { AccountSnapshot, AssetPoint, MarketAnnouncementResponse, MarketHistoryResponse, TradeRow, ViewLogRow, ViewTimelineRow } from "@/api";
+import { providerModelOptions } from "@/lib/providerModels";
 import { barClose, barTime, formatMoney, formatValue, humanTime, linePoints } from "@/lib/utils";
 
 export function ViewPage() {
@@ -350,7 +351,7 @@ function StockPanel() {
   const [minuteHistory, setMinuteHistory] = useState<MarketHistoryResponse | null>(null);
   const [announcementData, setAnnouncementData] = useState<MarketAnnouncementResponse | null>(null);
   const [analysisAccountId, setAnalysisAccountId] = useState("");
-  const [analysisProviderId, setAnalysisProviderId] = useState("");
+  const [analysisModelValue, setAnalysisModelValue] = useState("");
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [watchSymbol, setWatchSymbol] = useState("");
   const [watchName, setWatchName] = useState("");
@@ -360,7 +361,8 @@ function StockPanel() {
     () => cacheRows.filter((row) => !marketForm.symbol.trim() || row.symbol === marketForm.symbol.trim()),
     [cacheRows, marketForm.symbol]
   );
-  const selectedProvider = providers.find((provider) => provider.id === analysisProviderId) ?? providers[0] ?? null;
+  const llmModelOptions = useMemo(() => providerModelOptions(providers), [providers]);
+  const selectedModelOption = llmModelOptions.find((option) => option.value === analysisModelValue) ?? llmModelOptions[0] ?? null;
 
   useEffect(() => {
     void loadDataState();
@@ -398,15 +400,15 @@ function StockPanel() {
   async function sendStockToLlm() {
     const symbol = marketForm.symbol.trim();
     const accountId = analysisAccountId || accounts[0]?.id;
-    const provider = selectedProvider;
-    if (!symbol || !accountId || !provider) return;
+    const modelOption = selectedModelOption;
+    if (!symbol || !accountId || !modelOption) return;
     setAnalysisBusy(true);
     try {
       const session = await createSession({
         name: `股票分析 ${symbol}`,
         simulator_account_id: accountId,
-        provider_id: provider.id,
-        model: provider.model,
+        provider_id: modelOption.providerId,
+        model: modelOption.value,
       });
       const quoteLine = marketQuote ? JSON.stringify(marketQuote) : "暂无实时报价";
       await api.createMessage(session.id, {
@@ -664,10 +666,10 @@ function StockPanel() {
           </label>
           <label className="grid gap-1.5 text-xs text-text-muted">
             Provider / 模型
-            <Select value={analysisProviderId} onChange={(e) => setAnalysisProviderId(e.target.value)}>
-              <option value="">默认第一个 Provider</option>
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>{provider.name} / {provider.model}</option>
+            <Select value={analysisModelValue} onChange={(e) => setAnalysisModelValue(e.target.value)}>
+              <option value="">默认第一个可用模型</option>
+              {llmModelOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </Select>
           </label>
@@ -675,7 +677,7 @@ function StockPanel() {
             variant="primary"
             size="sm"
             icon={<Send size={14} />}
-            disabled={analysisBusy || !marketForm.symbol.trim() || accounts.length === 0 || providers.length === 0}
+            disabled={analysisBusy || !marketForm.symbol.trim() || accounts.length === 0 || llmModelOptions.length === 0}
             onClick={() => void sendStockToLlm()}
           >
             新建分析 Session

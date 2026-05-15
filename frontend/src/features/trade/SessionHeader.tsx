@@ -4,6 +4,7 @@ import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
 import { Badge } from "@/components/ui/Shared";
 import { normalizeStatus, statusLabel } from "@/lib/utils";
+import { providerScopedModelOptions } from "@/lib/providerModels";
 import { api } from "@/api";
 import type { SessionStatus } from "@/types";
 
@@ -39,6 +40,12 @@ export function SessionHeader() {
   const selectedPromptRole = selectedSession?.prompt_role_id
     ? promptRoles.find((role) => role.id === selectedSession.prompt_role_id) ?? null
     : promptRoles[0] ?? null;
+  const selectedModelOptions = providerScopedModelOptions(selectedProvider);
+  const selectedModelValue = selectedSession?.model
+    ? selectedModelOptions.find((option) => option.value === selectedSession.model)?.value
+      ?? selectedModelOptions.find((option) => option.model === selectedSession.model)?.value
+      ?? ""
+    : "";
   const accountId = selectedAccount?.id ?? "";
   const replayClock = accountId ? replayClocks[accountId] : null;
   const displayEffectiveTime = replayClock?.effective_time ?? "";
@@ -86,11 +93,12 @@ export function SessionHeader() {
 
   const handleProviderChange = async (providerId: string) => {
     if (!selectedSessionId) return;
-    const provider = providerId ? providers.find((p) => p.id === providerId) : null;
+    const provider = providerId ? providers.find((p) => p.id === providerId) ?? null : null;
+    const defaultModel = providerScopedModelOptions(provider)[0]?.value ?? null;
     try {
       await api.updateSession(selectedSessionId, {
         provider_id: providerId || null,
-        model: provider?.model ?? null,
+        model: defaultModel,
       });
       await loadSessions();
     } catch {
@@ -171,14 +179,18 @@ export function SessionHeader() {
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
-            <input
-              className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 placeholder:text-text-muted min-w-[120px]"
-              value={selectedSession?.model ?? selectedProvider?.model ?? ""}
+            <select
+              className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 min-w-[190px]"
+              value={selectedModelValue}
               onChange={(e) => handleModelChange(e.target.value)}
-              placeholder="Model"
-              disabled={busy}
-              onBlur={(e) => handleModelChange(e.target.value)}
-            />
+              disabled={busy || !selectedProvider || selectedModelOptions.length === 0}
+              title="Model"
+            >
+              <option value="">{selectedProvider ? "选择模型" : "请先选择 Provider"}</option>
+              {selectedModelOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <select
               className="h-8 px-2 rounded-lg bg-surface-card border border-hairline text-text-on-dark text-xs focus:border-info focus:ring-2 focus:ring-info/50 min-w-[130px]"
               value={selectedSession?.prompt_role_id ?? selectedPromptRole?.id ?? ""}

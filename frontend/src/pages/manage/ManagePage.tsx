@@ -38,6 +38,7 @@ import {
   conflictSummary,
   parseInputObject
 } from "@/lib/utils";
+import { providerModelOptions } from "@/lib/providerModels";
 
 /* ------------------------------------------------------------------ */
 /*  Page shell                                                        */
@@ -1593,46 +1594,20 @@ function TriggersPlaceholder() {
 
 function SystemSettings() {
   const providers = useDataStore((s) => s.providers);
-  const systemProviderId = useUIStore((s) => s.systemProviderId);
   const systemModel = useUIStore((s) => s.systemModel);
   const setSystemProviderId = useUIStore((s) => s.setSystemProviderId);
   const setSystemModel = useUIStore((s) => s.setSystemModel);
 
-  const [providerId, setProviderId] = useState(systemProviderId ?? "");
   const [model, setModel] = useState(systemModel ?? "");
-  const [models, setModels] = useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
   const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    if (!providerId) {
-      setModels([]);
-      setModel("");
-      return;
-    }
-    let cancelled = false;
-    setLoadingModels(true);
-    api
-      .providerModels(providerId)
-      .then((res) => {
-        if (!cancelled) {
-          setModels(res.models);
-          if (model && !res.models.includes(model)) setModel("");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setModels([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingModels(false);
-      });
-    return () => { cancelled = true; };
-  }, [providerId]);
+  const modelOptions = useMemo(() => providerModelOptions(providers), [providers]);
+  const selectedModelValue = modelOptions.some((option) => option.value === model) ? model : "";
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault();
-    setSystemProviderId(providerId || null);
-    setSystemModel(model || null);
+    const selected = modelOptions.find((option) => option.value === selectedModelValue) ?? null;
+    setSystemProviderId(selected?.providerId ?? null);
+    setSystemModel(selected ? selectedModelValue : null);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -1643,32 +1618,15 @@ function SystemSettings() {
       <div className="mt-3 p-4 border border-hairline rounded-lg">
         <form className="grid gap-3" onSubmit={handleSave}>
           <label className="grid gap-1.5 text-xs text-text-muted">
-            系统模型 Provider
-            <Select
-              value={providerId}
-              onChange={(e) => {
-                setProviderId(e.target.value);
-                setModel("");
-              }}
-            >
-              <option value="">不指定</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </Select>
-          </label>
-          <label className="grid gap-1.5 text-xs text-text-muted">
             系统模型
             <Select
-              value={model}
+              value={selectedModelValue}
               onChange={(e) => setModel(e.target.value)}
-              disabled={!providerId || loadingModels}
+              disabled={modelOptions.length === 0}
             >
-              <option value="">
-                {loadingModels ? "加载中..." : providerId ? "选择模型" : "请先选择 Provider"}
-              </option>
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
+              <option value="">{modelOptions.length > 0 ? "不指定" : "请先在 Provider 中勾选可用模型"}</option>
+              {modelOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </Select>
           </label>
