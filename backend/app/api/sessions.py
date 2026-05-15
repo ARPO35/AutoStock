@@ -65,7 +65,6 @@ class MessageRead(BaseModel):
 
 class RunCreate(BaseModel):
     message: str | None = Field(default=None, min_length=1)
-    max_tool_rounds: int = Field(default=5, ge=1, le=20)
 
 
 class RunRead(BaseModel):
@@ -75,7 +74,6 @@ class RunRead(BaseModel):
     model: str | None
     status: str
     event_message_id: str | None
-    max_tool_rounds: int
     started_at: str
     finished_at: str | None
     final_message_id: str | None
@@ -423,7 +421,6 @@ async def run_session(
         return await request.app.state.run_manager.run_once(
             session_id=session_id,
             message=payload.message,
-            max_tool_rounds=payload.max_tool_rounds,
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

@@ -74,7 +74,6 @@ class SessionRunManager:
         self,
         session_id: str,
         message: str | None = None,
-        max_tool_rounds: int = 5,
     ) -> dict[str, Any]:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         if lock.locked():
@@ -131,12 +130,11 @@ class SessionRunManager:
             self.store.execute(
                 """
                 INSERT INTO chat_runs (
-                    id, session_id, provider_id, model, status,
-                    max_tool_rounds, started_at
+                    id, session_id, provider_id, model, status, started_at
                 )
-                VALUES (?, ?, ?, ?, 'running', ?, ?)
+                VALUES (?, ?, ?, ?, 'running', ?)
                 """,
-                (run_id, session_id, provider_id, model, max_tool_rounds, started_at),
+                (run_id, session_id, provider_id, model, started_at),
             )
             await self._send(
                 session_id,
@@ -154,7 +152,6 @@ class SessionRunManager:
                     provider=provider,
                     provider_id=str(provider_id),
                     config=config,
-                    max_tool_rounds=max_tool_rounds,
                     system_prompt=rendered_prompts.system_content,
                     cancel_event=cancel_event,
                 )
@@ -182,7 +179,6 @@ class SessionRunManager:
         provider: ChatProvider,
         provider_id: str | None,
         config: LLMProviderConfig,
-        max_tool_rounds: int,
         system_prompt: str | None,
         cancel_event: asyncio.Event,
     ) -> dict[str, Any]:
@@ -200,8 +196,10 @@ class SessionRunManager:
         usage: dict[str, Any] | None = None
         usage_records: list[dict[str, Any]] = []
         call_index = 0
+        round_index = 0
 
-        for _round in range(max_tool_rounds):
+        while True:
+            round_index += 1
             if cancel_event.is_set():
                 self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
                 await self._send(
@@ -221,7 +219,7 @@ class SessionRunManager:
                 session_created_at=session_created_at,
                 run_id=run_id,
                 call_index=call_index,
-                round_index=_round + 1,
+                round_index=round_index,
                 provider_id=provider_id,
                 config=config,
             )
@@ -506,14 +504,6 @@ class SessionRunManager:
                             "tool_name": call.name,
                         },
                     )
-
-        self._finish_run(run_id, status="max_tool_rounds_reached", token_usage=usage)
-        await self._send(
-            session_id,
-            "run_finished",
-            {"run_id": run_id, "status": "max_tool_rounds_reached", "usage": usage},
-        )
-        return {"run_id": run_id, "status": "max_tool_rounds_reached"}
 
     async def _provider_chat(
         self,

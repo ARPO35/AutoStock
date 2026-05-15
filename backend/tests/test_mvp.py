@@ -67,6 +67,24 @@ def test_lifespan_closes_storage_handles(monkeypatch) -> None:
     assert close_calls == ["market_store", "store"]
 
 
+def test_chat_runs_schema_removes_legacy_max_tool_rounds() -> None:
+    path = _test_dir().resolve()
+    store = SQLiteStore(str(path / "app.db"))
+    try:
+        store.initialize()
+        store.execute("ALTER TABLE chat_runs ADD COLUMN max_tool_rounds INTEGER NOT NULL DEFAULT 5")
+
+        store.initialize()
+
+        columns = {
+            row["name"]
+            for row in store.connection.execute("PRAGMA table_info(chat_runs)").fetchall()
+        }
+        assert "max_tool_rounds" not in columns
+    finally:
+        store.close()
+
+
 def test_module_asgi_entrypoint_lifespan_closes_storage_handles(monkeypatch) -> None:
     path = _test_dir().resolve()
     monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(path / "app.db"))
@@ -410,6 +428,76 @@ def test_session_run_loop_and_websocket_events(monkeypatch) -> None:
         "tool_call_request",
         "assistant",
     ]
+
+
+def test_session_run_loop_has_no_tool_round_cap(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+    tool_rounds = 7
+
+    class StubChatProvider:
+        async def chat_stream(self, config, messages, tools):
+            completed_rounds = sum(1 for message in messages if message.role == "tool")
+            if completed_rounds >= tool_rounds:
+                yield {"choices": [{"delta": {"content": "done"}}]}
+                return
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": f"tool-call-{completed_rounds + 1}",
+                                    "function": {
+                                        "name": "system_echo",
+                                        "arguments": '{"message":"ping"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: StubChatProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Provider Under Test",
+            "api_key": "sk-test-123456",
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+    account = client.post(
+        "/api/simulator/accounts",
+        json={"name": "Account Under Test"},
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Session Under Test",
+            "simulator_account_id": account["id"],
+            "provider_id": provider["id"],
+            "model": "deepseek-v4-flash",
+        },
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "finished"
+    tool_calls = client.get(f"/api/sessions/{session['id']}/timeline").json()
+    assert sum(1 for item in tool_calls if item["type"] == "tool_call") == tool_rounds
+    runs = client.get(f"/api/sessions/{session['id']}/runs").json()
+    assert "max_tool_rounds" not in runs[0]
 
 
 def test_session_run_provider_connection_error_is_reported(monkeypatch) -> None:

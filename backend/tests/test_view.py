@@ -74,9 +74,9 @@ def _seed_trade(client):
         """
         INSERT INTO chat_runs (
             id, session_id, provider_id, model, status,
-            max_tool_rounds, started_at, finished_at
+            started_at, finished_at
         )
-        VALUES (?, ?, NULL, 'deepseek-v4-pro', 'finished', 5, ?, ?)
+        VALUES (?, ?, NULL, 'deepseek-v4-pro', 'finished', ?, ?)
         """,
         (run_id, session["id"], now, now),
     )

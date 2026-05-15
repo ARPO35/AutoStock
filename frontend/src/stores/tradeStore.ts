@@ -5,8 +5,6 @@ import { api } from "@/api";
 import { buildTimeline, humanTime, syntheticToolCallItem } from "@/lib/utils";
 import { useDataStore } from "@/stores/dataStore";
 
-const RUN_TIMEOUT_MS = 120_000;
-
 export interface StreamingToolCall {
   toolCallId: string;
   toolName: string;
@@ -47,7 +45,6 @@ interface TradeState {
   currentToolCalls: StreamingToolCall[];
 
   _ws: WebSocket | null;
-  _runTimer: ReturnType<typeof setTimeout> | null;
 
   setSelectedSessionId: (id: string) => void;
   setDraft: (value: string) => void;
@@ -131,7 +128,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   currentToolCalls: [],
 
   _ws: null,
-  _runTimer: null,
 
   setSelectedSessionId: (id) =>
     set({
@@ -313,11 +309,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   _disconnectWs: () => {
     const ws = get()._ws;
-    const timer = get()._runTimer;
-    if (timer) {
-      clearTimeout(timer);
-      set({ _runTimer: null });
-    }
     if (ws) {
       ws.onmessage = null;
       ws.onerror = null;
@@ -355,19 +346,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
     get()._connectWs(sessionId);
 
-    const timer = setTimeout(() => {
-      const s = get();
-      if (s.busy) {
-        s._disconnectWs();
-        set({ busy: false });
-        get().loadTimeline(sessionId);
-      }
-    }, RUN_TIMEOUT_MS);
-    set({ _runTimer: timer });
-
     api.runSession(sessionId, {
       message: mode === "event" ? `[手动事件]\n${content}` : content,
-      max_tool_rounds: 5,
     }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       set({ runError: msg });
@@ -396,17 +376,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
     get()._connectWs(sessionId);
 
-    const timer = setTimeout(() => {
-      const s = get();
-      if (s.busy) {
-        s._disconnectWs();
-        set({ busy: false });
-        get().loadTimeline(sessionId);
-      }
-    }, RUN_TIMEOUT_MS);
-    set({ _runTimer: timer });
-
-    api.runSession(sessionId, { max_tool_rounds: 5 }).catch((err) => {
+    api.runSession(sessionId, {}).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       set({ runError: msg });
       const s = get();

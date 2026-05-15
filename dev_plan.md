@@ -448,7 +448,6 @@ chat_runs             ← 实际表，原计划未单独列出
 - model
 - status
 - event_message_id
-- max_tool_rounds
 - started_at
 - finished_at
 - final_message_id
@@ -504,7 +503,7 @@ trigger fires
 → SessionRunManager.run_once()
 → _load_context()：从 DB 加载历史消息
 → _tool_definitions()：从 ToolRegistry 获取工具定义
-→ _run_loop(account, messages, tools, max_rounds):
+→ _run_loop(account, messages, tools):
     → provider.chat_stream() 流式调用 LLM
     → WS 推送 assistant_token（逐 token）
     → WS 推送 assistant_reasoning（DeepSeek thinking）
@@ -518,7 +517,7 @@ trigger fires
             → DB 存入 tool_call + tool_result
             → WS 推送 tool_call_finished
             → 将 tool result 追加到 messages 上下文
-        → 继续下一轮 LLM 调用（最多 max_tool_rounds 轮）
+        → 继续下一轮 LLM 调用，直到模型自然产出最终回复、用户取消或发生错误
 ```
 
 ### 8.2 WebSocket 事件类型（实际）
@@ -562,7 +561,6 @@ trigger fires
   "timezone": "Asia/Shanghai",
   "event_name": "开盘前观察",
   "event_prompt": "现在是A股开盘前，请检查持仓、公告、隔夜消息和市场情绪，决定今日模拟交易计划。",
-  "max_tool_rounds": 20,
   "max_runtime_seconds": 180,
   "conflict_policy": "queue"
 }
@@ -768,7 +766,6 @@ tools:
   - journal.write
 
 defaults:
-  max_tool_rounds: 20
   max_runtime_seconds: 180
 ```
 

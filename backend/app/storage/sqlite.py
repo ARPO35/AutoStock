@@ -80,8 +80,18 @@ class SQLiteStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            self._drop_chat_runs_max_tool_rounds()
             self._seed_default_prompt_role()
             self.connection.commit()
+
+    def _drop_chat_runs_max_tool_rounds(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(chat_runs)").fetchall()
+        }
+        if "max_tool_rounds" not in columns:
+            return
+        self.connection.execute("ALTER TABLE chat_runs DROP COLUMN max_tool_rounds")
 
     def _seed_default_prompt_role(self) -> None:
         exists = self.connection.execute(
@@ -363,7 +373,6 @@ CREATE TABLE IF NOT EXISTS chat_runs (
     model TEXT,
     status TEXT NOT NULL,
     event_message_id TEXT,
-    max_tool_rounds INTEGER NOT NULL,
     started_at TEXT NOT NULL,
     finished_at TEXT,
     final_message_id TEXT,

@@ -62,7 +62,6 @@ export interface Run {
   model: string | null;
   status: string;
   event_message_id: string | null;
-  max_tool_rounds: number;
   started_at: string;
   finished_at: string | null;
   final_message_id: string | null;
