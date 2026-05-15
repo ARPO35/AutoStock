@@ -276,7 +276,23 @@ def test_provider_and_simulator_account_and_key_mask(monkeypatch) -> None:
     assert body["base_url"] == "https://api.deepseek.com"
     assert body["has_api_key"] is True
     assert body["api_key_masked"] == "sk-tes****123456"
+    assert body["available_models"] == []
     assert "api_key" not in body
+
+    updated = client.put(
+        f"/api/providers/{body['id']}",
+        json={
+            "available_models": [
+                "deepseek-v4-flash",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "",
+            ]
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["available_models"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
+    assert updated.json()["model"] == "deepseek-v4-flash"
 
     account = client.post(
         "/api/simulator/accounts",
@@ -339,6 +355,56 @@ def test_echo_tool(monkeypatch) -> None:
     assert result.status_code == 200
     assert result.json()["ok"] is True
     assert result.json()["result"] == {"echo": "ping"}
+
+
+def test_session_run_strips_provider_prefix_from_model_for_api(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    app = client.app
+    captured_models: list[str] = []
+
+    class CaptureModelProvider:
+        async def chat(self, config, messages, tools):
+            captured_models.append(config.model)
+            return ChatResponse(content="done")
+
+        async def chat_stream(self, config, messages, tools):
+            result = await self.chat(config, messages, tools)
+            yield {"choices": [{"delta": {"content": result.content}}]}
+
+    app.state.run_manager = SessionRunManager(
+        store=app.state.store,
+        tool_registry=app.state.tool_registry,
+        websocket_manager=app.state.websocket_manager,
+        provider_factory=lambda config: CaptureModelProvider(),
+    )
+
+    provider = client.post(
+        "/api/providers",
+        json={
+            "provider_type": "deepseek",
+            "name": "Deepseek-ai",
+            "api_key": "sk-test-123456",
+            "model": "Deepseek-V4-Pro",
+            "available_models": ["Deepseek-V4-Pro"],
+        },
+    ).json()
+    account = client.post("/api/simulator/accounts", json={"name": "Account Under Test"}).json()
+    session = client.post(
+        "/api/sessions",
+        json={
+            "name": "Session Under Test",
+            "simulator_account_id": account["id"],
+            "provider_id": provider["id"],
+            "model": "Deepseek-ai/Deepseek-V4-Pro",
+        },
+    ).json()
+
+    run = client.post(f"/api/sessions/{session['id']}/run", json={"message": "hello"})
+
+    assert run.status_code == 200
+    assert captured_models == ["Deepseek-V4-Pro"]
+    runs = client.get(f"/api/sessions/{session['id']}/runs")
+    assert runs.json()[0]["model"] == "Deepseek-ai/Deepseek-V4-Pro"
 
 
 def test_session_run_loop_and_websocket_events(monkeypatch) -> None:

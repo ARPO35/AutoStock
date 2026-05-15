@@ -58,6 +58,12 @@ class SQLiteStore:
                 pass
             try:
                 self.connection.execute(
+                    "ALTER TABLE llm_providers ADD COLUMN available_models TEXT NOT NULL DEFAULT '[]'"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                self.connection.execute(
                     "ALTER TABLE orders ADD COLUMN run_id TEXT"
                 )
             except sqlite3.OperationalError:
@@ -252,6 +258,7 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     thinking_mode TEXT,
     strict_tool_schema INTEGER NOT NULL DEFAULT 0,
     run_token_limit INTEGER,
+    available_models TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

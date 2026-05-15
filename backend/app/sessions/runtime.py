@@ -101,7 +101,10 @@ class SessionRunManager:
                 raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
             provider_row = self._get_provider(str(provider_id))
             model = session.get("model") or provider_row["model"]
-            config = replace(self._provider_config(provider_row), model=str(model))
+            config = replace(
+                self._provider_config(provider_row),
+                model=self._provider_api_model(provider_row, str(model)),
+            )
             provider = self.provider_factory(config)
 
             if message:
@@ -903,6 +906,12 @@ class SessionRunManager:
             strict_tool_schema=bool(row["strict_tool_schema"]),
             run_token_limit=int(row["run_token_limit"]) if row.get("run_token_limit") is not None else None,
         )
+
+    def _provider_api_model(self, provider_row: dict[str, Any], model: str) -> str:
+        provider_prefix = f"{provider_row['name']}/"
+        if model.startswith(provider_prefix):
+            return model.removeprefix(provider_prefix)
+        return model
 
     def _format_run_error(self, exc: Exception) -> str:
         detail = f"{type(exc).__name__}: {exc}"

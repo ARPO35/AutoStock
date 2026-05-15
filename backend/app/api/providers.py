@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
@@ -37,6 +38,7 @@ class ProviderCreate(BaseModel):
     base_url: str | None = None
     api_key: str = Field(min_length=12)
     model: str = ""
+    available_models: list[str] = Field(default_factory=list)
     temperature: float = 0.7
     max_tokens: int | None = None
     timeout_seconds: float = 60
@@ -56,6 +58,7 @@ class ProviderRead(BaseModel):
     api_key_masked: str | None
     has_api_key: bool
     model: str
+    available_models: list[str]
     temperature: float
     max_tokens: int | None
     timeout_seconds: float
@@ -102,6 +105,7 @@ async def create_provider(
     provider_id = uuid4().hex
     now = utc_now()
     base_url = payload.base_url or _default_base_url(payload.provider_type, payload.strict_tool_schema)
+    available_models = _normalize_models(payload.available_models)
     try:
         store.execute(
             """
@@ -109,9 +113,9 @@ async def create_provider(
                 id, provider_type, name, base_url, api_key, model, temperature,
                 max_tokens, timeout_seconds, supports_tools, supports_parallel_tool_calls,
                 supports_strict_schema, thinking_mode, strict_tool_schema, run_token_limit,
-                created_at, updated_at
+                available_models, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 provider_id,
@@ -129,6 +133,7 @@ async def create_provider(
                 payload.thinking_mode,
                 int(payload.strict_tool_schema),
                 payload.run_token_limit,
+                json.dumps(available_models),
                 now,
                 now,
             ),
@@ -175,6 +180,7 @@ class ProviderUpdate(BaseModel):
     """可更新字段均为可选，留空表示不修改。"""
     base_url: str | None = None
     model: str | None = None
+    available_models: list[str] | None = None
     api_key: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -238,6 +244,21 @@ async def update_provider(
     if payload.model is not None:
         setters.append("model = ?")
         params.append(payload.model)
+    if payload.available_models is not None:
+        available_models = _normalize_models(payload.available_models)
+        current_model = payload.model if payload.model is not None else str(provider["model"])
+        next_model = current_model
+        if available_models and current_model not in available_models:
+            next_model = available_models[0]
+        if not available_models:
+            next_model = ""
+        if payload.model is not None and next_model != current_model:
+            params[-1] = next_model
+        elif payload.model is None:
+            setters.append("model = ?")
+            params.append(next_model)
+        setters.append("available_models = ?")
+        params.append(json.dumps(available_models))
     if payload.api_key is not None and payload.api_key.strip():
         setters.append("api_key = ?")
         params.append(payload.api_key)
@@ -437,6 +458,7 @@ def _default_base_url(provider_type: str, strict_tool_schema: bool) -> str:
 def _provider_public(row: dict[str, object]) -> dict[str, object]:
     return {
         **row,
+        "available_models": _parse_models(row.get("available_models")),
         "api_key_masked": mask_api_key(str(row.get("api_key") or "")),
         "has_api_key": bool(row.get("api_key")),
         "supports_tools": bool(row["supports_tools"]),
@@ -451,6 +473,30 @@ def _get_provider_or_404(store: SQLiteStore, provider_id: str) -> dict[str, obje
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
     return provider
+
+
+def _normalize_models(models: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for model in models:
+        value = str(model).strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def _parse_models(value: object) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return _normalize_models([str(model) for model in parsed])
 
 
 def _get_account_or_404(store: SQLiteStore, account_id: str) -> dict[str, object]:
