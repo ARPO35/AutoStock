@@ -1136,7 +1136,7 @@ tool results
 
 | 分组 | 状态 |
 |---|---|
-| 模型与API | 已实现（Provider CRUD + connect test + chat test） |
+| 模型与API | 已实现（Provider CRUD + connect test + chat test + 远端模型拉取/勾选） |
 | Tools | 已实现（工具测试 + schema 查看） |
 | 数据管理 | 已实现（数据拉取 + 缓存状态 + 冲突解决） |
 | Skills | 未实现（占位） |
@@ -1193,6 +1193,24 @@ DeepSeek Provider
 测试连接
 测试 tool call
 测试可见 reasoning
+```
+
+Provider 卡片信息区显示：
+
+```text
+Base URL
+Provider 类型
+API Key
+Token 用量
+```
+
+模型列表规则：
+
+```text
+不显示旧的“可用模型”压缩摘要行。
+连接成功且返回远端模型后，在 Token 用量下方显示模型 checkbox 列表。
+勾选模型写入 available_models，作为 Session 可选模型来源。
+管理页不提供“单次上限”编辑入口；run_token_limit 仍保留为后端运行时 token cap 能力。
 ```
 
 ### 19.3 Skills 管理
