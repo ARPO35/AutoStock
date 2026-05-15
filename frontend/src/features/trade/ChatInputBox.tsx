@@ -1,7 +1,8 @@
-import { type KeyboardEvent, useCallback } from "react";
-import { Send, StopCircle } from "lucide-react";
+import { type KeyboardEvent, useCallback, useState } from "react";
+import { Pause, Play, Settings } from "lucide-react";
 import { useTradeStore } from "@/stores/tradeStore";
 import { useDataStore } from "@/stores/dataStore";
+import { TradeConfigPopover } from "@/features/trade/TradeConfigPopover";
 
 export function ChatInputBox() {
   const draft = useTradeStore((s) => s.draft);
@@ -12,6 +13,8 @@ export function ChatInputBox() {
   const stopCurrentRun = useTradeStore((s) => s.stopCurrentRun);
   const runError = useTradeStore((s) => s.runError);
   const runNotice = useTradeStore((s) => s.runNotice);
+  const [focused, setFocused] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const sessions = useDataStore((s) => s.sessions);
   const providers = useDataStore((s) => s.providers);
@@ -22,77 +25,97 @@ export function ChatInputBox() {
   const disabled = !selectedSessionId || noProvider;
   const canSend = !busy && !disabled && draft.trim().length > 0;
 
+  const sendRun = useCallback(() => {
+    if (!canSend) return;
+    sendMessage(selectedSessionId, "run", draft.trim(), selectedSession?.model);
+  }, [canSend, draft, selectedSessionId, selectedSession?.model, sendMessage]);
+
+  const handlePrimaryAction = useCallback(() => {
+    if (busy) {
+      if (selectedSessionId) void stopCurrentRun(selectedSessionId);
+      return;
+    }
+    sendRun();
+  }, [busy, selectedSessionId, sendRun, stopCurrentRun]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (canSend) sendMessage(selectedSessionId, "run", draft.trim(), selectedSession?.model);
+        sendRun();
       }
     },
-    [canSend, draft, selectedSessionId, selectedSession?.model, sendMessage]
+    [sendRun]
   );
 
   return (
-    <footer className="border-t border-hairline p-3 bg-surface-canvas/50 flex-shrink-0">
-      <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2.5">
-        <textarea
-          className="w-full min-h-[78px] resize-y px-3 py-2.5 rounded-lg bg-surface-card border border-hairline text-text-on-dark placeholder:text-text-muted focus:border-accent-turquoise focus:ring-2 focus:ring-accent-turquoise/50 leading-relaxed text-sm"
-          value={draft}
-          disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            noProvider
-              ? "请先在顶部为当前 Session 选择 Provider 和模型。"
-              : disabled
-                ? "请先创建并选择 Session。"
-                : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"
-          }
-        />
-        <div className="flex flex-col gap-1.5">
+    <footer className="pointer-events-none relative z-20 flex-shrink-0 bg-gradient-to-t from-surface-canvas via-surface-canvas/95 to-surface-canvas/0 px-4 pb-4 pt-3">
+      <div className="pointer-events-auto mx-auto w-full max-w-[960px]">
+        <div
+          className={`relative grid grid-cols-[minmax(0,1fr)_44px_44px] items-end gap-2 border bg-surface-card/95 p-1.5 shadow-2xl transition-all duration-300 ease-out ${
+            focused
+              ? "rounded-xl border-brand-primary/60"
+              : "rounded-pill border-hairline"
+          }`}
+        >
+          <textarea
+            rows={1}
+            className={`block w-full resize-none bg-transparent px-4 text-sm leading-relaxed text-text-on-dark placeholder:text-text-muted transition-all duration-300 ease-out disabled:opacity-50 ${
+              focused ? "min-h-[96px] py-2.5" : "min-h-[42px] py-2.5"
+            }`}
+            value={draft}
+            disabled={disabled}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder={
+              noProvider
+                ? "请先为当前 Session 选择 Provider。"
+                : disabled
+                  ? "请先创建并选择 Session。"
+                  : "输入给 LLM 的问题。Shift + Enter 换行，Enter 发送。"
+            }
+          />
+
           <button
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md bg-brand-primary text-brand-ink font-semibold text-sm hover:bg-brand-primary-active disabled:opacity-50 transition-colors"
+            className={`grid h-11 w-11 place-items-center rounded-full transition-colors ${
+              busy
+                ? "border border-trading-rise/50 bg-trading-rise/10 text-trading-rise hover:bg-trading-rise/15"
+                : "bg-brand-primary text-brand-ink hover:bg-brand-primary-active"
+            } disabled:opacity-50`}
             type="button"
-            disabled={!canSend}
-            onClick={() => sendMessage(selectedSessionId, "run", draft.trim(), selectedSession?.model)}
+            disabled={busy ? !selectedSessionId : !canSend}
+            onClick={handlePrimaryAction}
+            title={busy ? "停止当前运行" : "发送"}
           >
-            <Send size={17} />
-            发送
+            {busy ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
           </button>
-          <button
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-hairline bg-surface-card text-text-body text-sm hover:bg-surface-elevated disabled:opacity-50 transition-colors"
-            type="button"
-            disabled={!canSend}
-            onClick={() => sendMessage(selectedSessionId, "event", draft.trim(), selectedSession?.model)}
-          >
-            作为事件运行
-          </button>
-          <button
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-hairline bg-surface-card text-text-body text-sm hover:bg-surface-elevated disabled:opacity-50 transition-colors"
-            type="button"
-            disabled={!canSend}
-            onClick={() => sendMessage(selectedSessionId, "write", draft.trim(), selectedSession?.model)}
-          >
-            只写入
-          </button>
-          <button
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-trading-rise/50 bg-trading-rise/10 text-trading-rise text-sm disabled:opacity-50 transition-colors"
-            type="button"
-            disabled={!busy || !selectedSessionId}
-            onClick={() => selectedSessionId && stopCurrentRun(selectedSessionId)}
-            title={busy ? "停止当前运行" : "当前没有正在运行的任务"}
-          >
-            <StopCircle size={15} />
-            停止
-          </button>
+
+          <div className="relative">
+            <button
+              className={`grid h-11 w-11 place-items-center rounded-full border transition-colors ${
+                configOpen
+                  ? "border-brand-primary/70 bg-brand-primary/10 text-brand-primary"
+                  : "border-hairline bg-surface-canvas text-text-muted hover:border-brand-primary/60 hover:text-brand-primary"
+              }`}
+              type="button"
+              onClick={() => setConfigOpen((value) => !value)}
+              title="配置"
+            >
+              <Settings size={18} />
+            </button>
+            <TradeConfigPopover open={configOpen} onClose={() => setConfigOpen(false)} />
+          </div>
         </div>
+
+        {runError && (
+          <p className="mt-2 px-4 text-xs text-trading-rise">{runError}</p>
+        )}
+        {!runError && runNotice && (
+          <p className="mt-2 px-4 text-xs text-text-muted">{runNotice}</p>
+        )}
       </div>
-      {runError && (
-        <p className="mt-2 text-trading-rise text-xs">{runError}</p>
-      )}
-      {!runError && runNotice && (
-        <p className="mt-2 text-text-muted text-xs">{runNotice}</p>
-      )}
     </footer>
   );
 }
