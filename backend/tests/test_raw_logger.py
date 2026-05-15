@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,11 +35,12 @@ def _context() -> dict[str, Any]:
         "provider_name": "Raw Provider",
         "provider_id": "provider-under-test",
         "model": "raw-model",
+        "session_created_at": "2026-05-15T12:34:56+00:00",
     }
 
 
 def _read_jsonl(log_dir: str | Path) -> list[dict[str, Any]]:
-    paths = sorted(Path(log_dir).glob("llm-api-*.jsonl"))
+    paths = sorted((Path(log_dir) / "llm").glob("*.jsonl"))
     assert paths
     rows: list[dict[str, Any]] = []
     for path in paths:
@@ -61,14 +61,72 @@ def test_raw_logger_creates_jsonl_and_keeps_api_key(monkeypatch, tmp_path) -> No
     )
 
     assert path is not None
-    assert path.parent == log_dir
-    assert re.fullmatch(r"llm-api-\d{4}-\d{2}-\d{2}\.jsonl", path.name)
+    assert path.parent == log_dir / "llm"
+    assert path.name == "session-under-test-2026-05-15--12-34-56.jsonl"
     rows = _read_jsonl(log_dir)
     assert rows[0]["session_id"] == "session-under-test"
+    assert rows[0]["session_created_at"] == "2026-05-15T12:34:56+00:00"
     assert rows[0]["call_index"] == 7
     assert rows[0]["direction"] == "outbound"
     assert rows[0]["event"] == "request"
     assert rows[0]["payload"]["provider_config"]["api_key"] == "sk-raw-secret"
+
+
+def test_raw_logger_splits_logs_by_session(monkeypatch, tmp_path) -> None:
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_ENABLED", "1")
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(log_dir))
+
+    first_context = {**_context(), "session_id": "session-one"}
+    second_context = {**_context(), "session_id": "session-two"}
+
+    first_path = write_raw_llm_log(
+        context=first_context,
+        direction="outbound",
+        event="request",
+        payload={"session": "one"},
+    )
+    second_path = write_raw_llm_log(
+        context=second_context,
+        direction="outbound",
+        event="request",
+        payload={"session": "two"},
+    )
+
+    assert first_path is not None
+    assert second_path is not None
+    assert first_path != second_path
+    assert first_path.name == "session-one-2026-05-15--12-34-56.jsonl"
+    assert second_path.name == "session-two-2026-05-15--12-34-56.jsonl"
+    assert [path.name for path in sorted((log_dir / "llm").glob("*.jsonl"))] == [
+        "session-one-2026-05-15--12-34-56.jsonl",
+        "session-two-2026-05-15--12-34-56.jsonl",
+    ]
+
+
+def test_raw_logger_appends_same_session_to_one_file(monkeypatch, tmp_path) -> None:
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_ENABLED", "1")
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(log_dir))
+
+    first_path = write_raw_llm_log(
+        context=_context(),
+        direction="outbound",
+        event="request",
+        payload={"step": 1},
+    )
+    second_path = write_raw_llm_log(
+        context=_context(),
+        direction="inbound",
+        event="response",
+        payload={"step": 2},
+    )
+
+    assert first_path == second_path
+    assert first_path is not None
+    rows = [json.loads(line) for line in first_path.read_text(encoding="utf-8").splitlines()]
+    assert [row["event"] for row in rows] == ["request", "response"]
+    assert [row["payload"]["step"] for row in rows] == [1, 2]
 
 
 def test_openai_compatible_chat_logs_request_and_response(monkeypatch, tmp_path) -> None:

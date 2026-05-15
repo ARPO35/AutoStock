@@ -115,6 +115,7 @@ class SessionRunManager:
                     if should_auto_title:
                         await self._auto_title_from_first_message(
                             session_id=session_id,
+                            session_created_at=str(session["created_at"]),
                             placeholder_name=str(session.get("name") or ""),
                             provider=provider,
                             provider_id=str(provider_id),
@@ -147,6 +148,7 @@ class SessionRunManager:
                 result = await self._run_loop(
                     run_id=run_id,
                     session_id=session_id,
+                    session_created_at=str(session["created_at"]),
                     simulator_account_id=simulator_account_id,
                     replay_clock=replay_clock,
                     provider=provider,
@@ -174,6 +176,7 @@ class SessionRunManager:
         self,
         run_id: str,
         session_id: str,
+        session_created_at: str,
         simulator_account_id: str | None,
         replay_clock: ReplayClockSnapshot | None,
         provider: ChatProvider,
@@ -215,6 +218,7 @@ class SessionRunManager:
             call_started = time.perf_counter()
             log_context = self._raw_log_context(
                 session_id=session_id,
+                session_created_at=session_created_at,
                 run_id=run_id,
                 call_index=call_index,
                 round_index=_round + 1,
@@ -544,6 +548,7 @@ class SessionRunManager:
         self,
         *,
         session_id: str,
+        session_created_at: str | None,
         run_id: str | None,
         call_index: int,
         round_index: int,
@@ -559,6 +564,7 @@ class SessionRunManager:
             "provider_name": config.name,
             "provider_id": provider_id,
             "model": config.model,
+            "session_created_at": session_created_at,
         }
 
     def _accepts_log_context(self, method: Callable[..., Any]) -> bool:
@@ -766,6 +772,7 @@ class SessionRunManager:
     async def _auto_title_from_first_message(
         self,
         session_id: str,
+        session_created_at: str,
         placeholder_name: str,
         provider: ChatProvider,
         provider_id: str | None,
@@ -790,6 +797,7 @@ class SessionRunManager:
                 tools=[],
                 log_context=self._raw_log_context(
                     session_id=session_id,
+                    session_created_at=session_created_at,
                     run_id=None,
                     call_index=1,
                     round_index=0,
