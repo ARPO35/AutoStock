@@ -27,7 +27,7 @@ export function ChatInputBox() {
 
   const sendRun = useCallback(() => {
     if (!canSend) return;
-    sendMessage(selectedSessionId, "run", draft.trim(), selectedSession?.model);
+    void sendMessage(selectedSessionId, draft.trim(), selectedSession?.model);
   }, [canSend, draft, selectedSessionId, selectedSession?.model, sendMessage]);
 
   const handlePrimaryAction = useCallback(() => {
@@ -50,7 +50,7 @@ export function ChatInputBox() {
 
   return (
     <footer className="pointer-events-none relative z-20 flex-shrink-0 bg-gradient-to-t from-surface-canvas via-surface-canvas/95 to-surface-canvas/0 px-4 pb-4 pt-3">
-      <div className="pointer-events-auto mx-auto w-full max-w-[960px]">
+      <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-[860px] sm:w-[72%] sm:min-w-[360px]">
         <div
           className={`relative grid grid-cols-[minmax(0,1fr)_44px_44px] items-end gap-2 border bg-surface-card/95 p-1.5 shadow-2xl transition-all duration-300 ease-out ${
             focused

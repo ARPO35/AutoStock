@@ -53,7 +53,7 @@ interface TradeState {
   pushEvent: (event: RuntimeEvent) => void;
 
   loadTimeline: (sessionId: string) => Promise<void>;
-  sendMessage: (sessionId: string, mode: "run" | "event" | "write", content: string, model?: string | null) => Promise<void>;
+  sendMessage: (sessionId: string, content: string, model?: string | null) => Promise<void>;
   runOnce: (sessionId: string, model?: string | null) => Promise<void>;
   stopCurrentRun: (sessionId: string) => Promise<void>;
   focusToolCall: (toolCallId: string | null, sessionId?: string | null) => void;
@@ -319,7 +319,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
   },
 
-  sendMessage: async (sessionId, mode, content, model) => {
+  sendMessage: async (sessionId, content, model) => {
     set({
       draft: "",
       busy: true,
@@ -335,20 +335,10 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       runNotice: null,
     });
 
-    if (mode === "write") {
-      try {
-        await api.createMessage(sessionId, { role: "user", content, message_type: "user" });
-        await get().loadTimeline(sessionId);
-      } finally {
-        set({ busy: false });
-      }
-      return;
-    }
-
     get()._connectWs(sessionId);
 
     api.runSession(sessionId, {
-      message: mode === "event" ? `[手动事件]\n${content}` : content,
+      message: content,
     }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       set({ runError: msg });
