@@ -12,6 +12,7 @@ from app.market.normalizer import (
     normalize_sina_quote_response,
     normalize_spot_rows,
     normalize_symbol,
+    raw_hash,
 )
 
 
@@ -33,6 +34,8 @@ class AKShareMarketProvider:
             quote = normalize_bid_ask_quote(frame, symbol=normalized_symbol, name=name)
             if quote["price"] is None:
                 raise LookupError(f"AKShare quote data has no price: {normalized_symbol}")
+            if not quote.get("name"):
+                quote = self._enrich_missing_name_from_sina(quote)
             return quote
         except Exception as exc:
             if not isinstance(exc, LookupError) and not self._should_fallback_request_error(exc):
@@ -218,6 +221,19 @@ class AKShareMarketProvider:
         if quote is None or quote["price"] is None:
             raise LookupError(f"Symbol not found in Sina quote data: {normalized_symbol}")
         return quote
+
+    def _enrich_missing_name_from_sina(self, quote: dict[str, Any]) -> dict[str, Any]:
+        symbol = normalize_symbol(quote["symbol"])
+        try:
+            sina_quote = self._sina_quotes_sync([symbol]).get(symbol)
+        except Exception:
+            return quote
+        name = (sina_quote or {}).get("name")
+        if not name:
+            return quote
+        enriched = {**quote, "name": name}
+        enriched["raw_hash"] = raw_hash(enriched)
+        return enriched
 
     def _sina_quotes_sync(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         normalized_symbols = list(dict.fromkeys(normalize_symbol(symbol) for symbol in symbols))

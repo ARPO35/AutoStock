@@ -25,6 +25,7 @@ def create_portfolio_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         account_id = _resolve_account_id(arguments, runtime_context)
+        await engine.refresh_account_valuation(account_id)
         account = engine.get_account(account_id)
         positions = engine.get_positions(account_id)
 
@@ -55,6 +56,7 @@ def create_portfolio_tool_specs(engine: SimulatorEngine) -> list[ToolSpec]:
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         account_id = _resolve_account_id(arguments, runtime_context)
+        await engine.refresh_account_valuation(account_id)
         positions = engine.get_positions(account_id)
 
         position_list = []

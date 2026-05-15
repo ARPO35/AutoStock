@@ -5,9 +5,10 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.dependencies import get_store
+from app.simulator.engine import SimulatorEngine
 from app.storage.sqlite import SQLiteStore
 
 router = APIRouter(prefix="/api/view", tags=["view"])
@@ -15,6 +16,10 @@ router = APIRouter(prefix="/api/view", tags=["view"])
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def get_simulator_engine(request: Request) -> SimulatorEngine:
+    return request.app.state.simulator_engine
 
 
 @router.get("/overview")
@@ -28,8 +33,11 @@ async def view_overview(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
+    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
+    for account in accounts:
+        await engine.refresh_account_valuation(str(account["id"]))
     snapshots = [
         _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
         for account in accounts
@@ -63,10 +71,14 @@ async def view_account_detail(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
+    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
+    accounts = _accounts(store, account_id)
+    for account in accounts:
+        await engine.refresh_account_valuation(str(account["id"]))
     snapshots = [
         _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
-        for account in _accounts(store, account_id)
+        for account in accounts
     ]
     return {
         "generated_at": utc_now(),
@@ -86,8 +98,10 @@ async def view_account_snapshot(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
+    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
     _account_or_404(store, account_id)
+    await engine.refresh_account_valuation(account_id)
     return _account_snapshot(store, account_id, start, end, symbol, session_id, model, side, status_filter)
 
 
@@ -297,7 +311,7 @@ def _positions(store: SQLiteStore, account_id: str, symbol: str | None = None) -
     if symbol:
         clauses.append("symbol = ?")
         params.append(symbol)
-    return store.fetch_all(
+    rows = store.fetch_all(
         f"""
         SELECT *
         FROM positions
@@ -306,6 +320,9 @@ def _positions(store: SQLiteStore, account_id: str, symbol: str | None = None) -
         """,
         params,
     )
+    for row in rows:
+        row["name"] = _clean_stock_name(row.get("name"))
+    return rows
 
 
 def _orders(
@@ -328,7 +345,7 @@ def _orders(
     if status_filter:
         clauses.append("o.status = ?")
         params.append(status_filter)
-    return store.fetch_all(
+    rows = store.fetch_all(
         f"""
         SELECT
             o.*,
@@ -349,6 +366,9 @@ def _orders(
         """,
         [*params, limit],
     )
+    for row in rows:
+        row["name"] = _clean_stock_name(row.get("name"))
+    return rows
 
 
 def _trades(
@@ -421,6 +441,7 @@ def _trades(
         [*params, limit],
     )
     for row in rows:
+        row["name"] = _clean_stock_name(row.get("name"))
         row["total_fee"] = round(float(row.get("fee") or 0) + float(row.get("tax") or 0), 2)
         _attach_trade_usage_attribution(row)
     return rows
@@ -1079,3 +1100,12 @@ def _extract_symbol(row: dict[str, Any]) -> str | None:
     if isinstance(result, dict) and result.get("symbol"):
         return str(result["symbol"])
     return None
+
+
+def _clean_stock_name(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text in {"", "None", "none", "null", "NULL", "nan", "NaN", "--", "-"}:
+        return ""
+    return text

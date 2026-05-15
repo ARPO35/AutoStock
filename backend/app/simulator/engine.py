@@ -72,7 +72,49 @@ class SimulatorEngine:
             """,
             (account_id,),
         )
-        return list(rows)
+        normalized_rows = list(rows)
+        for row in normalized_rows:
+            row["name"] = _clean_stock_name(row.get("name"))
+        return normalized_rows
+
+    async def refresh_account_valuation(
+        self,
+        account_id: str,
+        current_time: str | datetime | None = None,
+        force: bool = False,
+    ) -> dict[str, object]:
+        self.get_account(account_id)
+        positions = self.get_positions(account_id, current_time=current_time)
+        if positions and (force or any(_needs_position_refresh(pos) for pos in positions)):
+            symbols = [str(pos["symbol"]) for pos in positions]
+            try:
+                quotes = await self.market_provider.quotes_batch(symbols)
+            except Exception:
+                quotes = {}
+            await self._refresh_positions_valuation(
+                account_id,
+                current_time=current_time,
+                quote_overrides=quotes,
+            )
+            market_value = await self._calc_market_value(
+                account_id,
+                current_time=current_time,
+                quote_overrides=quotes,
+            )
+        else:
+            market_value = round(sum(float(pos.get("market_value") or 0) for pos in positions), 2)
+        account = self.get_account(account_id)
+        total_asset = round(float(account["cash"]) + market_value, 2)
+        now = iso_seconds(resolve_runtime_time(current_time))
+        self.store.execute(
+            """
+            UPDATE simulator_accounts
+            SET total_asset = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (total_asset, now, account_id),
+        )
+        return self.get_account(account_id)
 
     def get_orders(
         self, account_id: str, status: str | None = None
@@ -152,7 +194,7 @@ class SimulatorEngine:
             session_id=session_id,
             account_id=account_id,
             symbol=symbol,
-            name=str(quote.get("name", "")),
+            name=_clean_stock_name(quote.get("name")),
             side="buy",
             price=price,
             quantity=quantity,
@@ -220,7 +262,7 @@ class SimulatorEngine:
             session_id=session_id,
             account_id=account_id,
             symbol=symbol,
-            name=str(quote.get("name", "")),
+            name=_clean_stock_name(quote.get("name")),
             side="sell",
             price=price,
             quantity=quantity,
@@ -375,7 +417,7 @@ class SimulatorEngine:
         old_qty = int(existing["quantity"])
         old_available = int(existing["available_quantity"])
         old_avg = float(existing["avg_cost"])
-        old_name = str(existing["name"]) or name
+        old_name = _best_stock_name(existing.get("name"), name)
 
         if side == "buy":
             new_qty = old_qty + quantity
@@ -466,7 +508,7 @@ class SimulatorEngine:
                 SET name = ?, market_value = ?, unrealized_pnl = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (str(quote.get("name", pos["name"])), market_value, unrealized_pnl, now, pos["id"]),
+                (_best_stock_name(quote.get("name"), pos.get("name")), market_value, unrealized_pnl, now, pos["id"]),
             )
 
     def _rollover_t1_for_account(
@@ -586,6 +628,32 @@ def _order_dict(store: SQLiteStore, order_id: str) -> dict[str, object]:
     if row is None:
         raise LookupError(f"订单不存在: {order_id}")
     return row
+
+
+def _clean_stock_name(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text in {"", "None", "none", "null", "NULL", "nan", "NaN", "--", "-"}:
+        return ""
+    return text
+
+
+def _best_stock_name(*values: object) -> str:
+    for value in values:
+        name = _clean_stock_name(value)
+        if name:
+            return name
+    return ""
+
+
+def _needs_position_refresh(position: dict[str, object]) -> bool:
+    if not _clean_stock_name(position.get("name")):
+        return True
+    try:
+        return float(position.get("market_value") or 0) <= 0
+    except (TypeError, ValueError):
+        return True
 
 
 def _cn_date_from_iso(value: str) -> str:

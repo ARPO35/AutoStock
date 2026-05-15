@@ -134,6 +134,42 @@ class TestSimulatorBuy:
         assert int(positions[0]["quantity"]) == 1000
         assert int(positions[0]["available_quantity"]) == 0
 
+    def test_buy_with_missing_quote_name_does_not_store_none_text(self):
+        store = make_store()
+        provider = MagicMock()
+        provider.quote = AsyncMock(return_value=make_quote("000001", 12.50, name=None))
+        provider.quotes_batch = AsyncMock(return_value={"000001": make_quote("000001", 12.50, name=None)})
+        engine = SimulatorEngine(store, provider, enforce_trading_hours=False)
+
+        acc = engine.create_account("测试", initial_cash=1000000)
+        result = asyncio.run(engine.place_buy("", acc["id"], "000001", 1000))
+
+        assert result["order"]["name"] == ""
+        positions = engine.get_positions(acc["id"])
+        assert positions[0]["name"] == ""
+        stored = store.fetch_one("SELECT name FROM positions WHERE simulator_account_id = ?", (acc["id"],))
+        assert stored["name"] == ""
+
+    def test_refresh_account_valuation_backfills_missing_position_name(self):
+        store = make_store()
+        provider = MagicMock()
+        provider.quote = AsyncMock(return_value=make_quote("000001", 12.50, name=None))
+        provider.quotes_batch = AsyncMock(return_value={"000001": make_quote("000001", 12.50, name="平安银行")})
+        engine = SimulatorEngine(store, provider, enforce_trading_hours=False)
+
+        acc = engine.create_account("测试", initial_cash=1000000)
+        asyncio.run(engine.place_buy("", acc["id"], "000001", 1000))
+        store.execute(
+            "UPDATE positions SET name = 'None', market_value = 0 WHERE simulator_account_id = ?",
+            (acc["id"],),
+        )
+
+        asyncio.run(engine.refresh_account_valuation(acc["id"]))
+
+        positions = engine.get_positions(acc["id"])
+        assert positions[0]["name"] == "平安银行"
+        assert round(float(positions[0]["market_value"]), 2) == 12500.0
+
     def test_buy_insufficient_funds(self):
         store = make_store()
         provider = MagicMock()

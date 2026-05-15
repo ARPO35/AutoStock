@@ -112,6 +112,7 @@ async def account_positions(
     engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> list[dict[str, object]]:
     _get_account_or_404(engine, account_id)
+    await engine.refresh_account_valuation(account_id)
     return engine.get_positions(account_id)
 
 

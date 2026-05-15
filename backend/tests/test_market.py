@@ -465,11 +465,20 @@ def test_akshare_quote_tolerates_name_lookup_failure(monkeypatch) -> None:
     provider = AKShareMarketProvider()
     fake_ak = NameLookupFailureFakeAKShare()
     monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+    monkeypatch.setattr(
+        provider,
+        "_sina_response",
+        lambda symbols: (
+            'var hq_str_sh600000="浦发银行,10.100,10.200,10.800,10.900,'
+            '10.000,10.700,10.800,2000,21600.000,0,0,0,0,0,0,'
+            '0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-05-15,15:00:00,00,";'
+        ),
+    )
 
     quote = asyncio.run(provider.quote("600000"))
 
     assert quote["symbol"] == "600000"
-    assert quote["name"] is None
+    assert quote["name"] == SPDB_NAME
     assert quote["price"] == 10.8
     assert fake_ak.name_calls == 1
     assert fake_ak.spot_calls == 0
