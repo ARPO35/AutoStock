@@ -194,7 +194,6 @@ const defaultProviderForm: {
   name: string;
   base_url: string;
   api_key: string;
-  model: string;
   supports_tools: boolean;
   supports_strict_schema: boolean;
   strict_tool_schema: boolean;
@@ -203,7 +202,6 @@ const defaultProviderForm: {
   name: "",
   base_url: "",
   api_key: "",
-  model: "",
   supports_tools: true,
   supports_strict_schema: false,
   strict_tool_schema: false
@@ -354,7 +352,6 @@ function ProviderManagement() {
         name: form.name.trim(),
         base_url: form.base_url.trim() || null,
         api_key: form.api_key,
-        model: form.model.trim(),
         supports_tools: form.supports_tools,
         supports_strict_schema: form.supports_strict_schema,
         strict_tool_schema: form.strict_tool_schema
@@ -405,9 +402,8 @@ function ProviderManagement() {
                 </div>
               </header>
 
-              {/* 4-row editable info */}
+              {/* Provider info */}
               <div className="grid gap-1.5 text-sm">
-                {/* Row 1: Base URL */}
                 <EditableRow
                   label="Base URL"
                   value={p.base_url || "未配置"}
@@ -422,14 +418,6 @@ function ProviderManagement() {
                   <span className="text-text-muted w-[72px] shrink-0">Provider 类型</span>
                   <span className="text-text-body">{providerTypeLabel(p.provider_type)}</span>
                 </div>
-                <div className="flex items-center gap-2 text-xs py-0.5">
-                  <span className="text-text-muted w-[72px] shrink-0">可用模型</span>
-                  <span className="text-text-body font-mono truncate">
-                    {p.available_models.length > 0 ? p.available_models.join(" / ") : "连接后勾选"}
-                  </span>
-                  <span className="text-[10px] text-text-muted shrink-0">{p.available_models.length} 个</span>
-                </div>
-                {/* Row 3: API Key (masked) */}
                 <EditableRow
                   label="API Key"
                   value={p.api_key_masked || "未配置"}
@@ -441,7 +429,6 @@ function ProviderManagement() {
                   onCancel={() => cancelEdit(p.id, "api_key")}
                   placeholder="输入新 API Key（替换旧 Key）"
                 />
-                {/* Row 4: Token usage (read-only) */}
                 <div className="flex items-center gap-2 text-xs py-0.5">
                   <span className="text-text-muted w-[72px] shrink-0">Token 用量</span>
                   <span className="text-text-body font-mono">
@@ -450,20 +437,24 @@ function ProviderManagement() {
                       : "加载中..."}
                   </span>
                 </div>
-                <EditableRow
-                  label="单次上限"
-                  value={p.run_token_limit ? `${p.run_token_limit} tokens` : "未设置"}
-                  editing={isEditing(p.id, "run_token_limit")}
-                  editValue={editing[p.id]?.["run_token_limit"] ?? String(p.run_token_limit ?? "")}
-                  onDoubleClick={() => startEdit(p.id, "run_token_limit", String(p.run_token_limit ?? ""))}
-                  onChange={(v) => setEditing((prev) => ({ ...prev, [p.id]: { ...prev[p.id], run_token_limit: v } }))}
-                  onSave={() => saveEdit(p.id, "run_token_limit")}
-                  onCancel={() => cancelEdit(p.id, "run_token_limit")}
-                  placeholder="例如 200000"
-                />
+                {connectStates[p.id]?.models && connectStates[p.id]?.models!.length > 0 && (
+                  <div className="grid gap-1.5 rounded-lg border border-hairline/60 bg-surface-canvas/40 p-2 max-h-40 overflow-auto">
+                    {connectStates[p.id]?.models!.map((model) => (
+                      <label key={model} className="flex items-center gap-2 text-xs text-text-body cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-brand-primary"
+                          checked={p.available_models.includes(model)}
+                          onChange={(e) => handleToggleProviderModel(p.id, model, e.target.checked)}
+                        />
+                        <span className="font-mono truncate" title={model}>{model}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Connection / Chat Test / Model list */}
+              {/* Connection / Chat Test */}
               <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-hairline/50">
                 <div className="flex items-center gap-2">
                   {/* Connect button */}
@@ -504,22 +495,6 @@ function ProviderManagement() {
                     </span>
                   </button>
                 </div>
-                {/* Model list from connect */}
-                {connectStates[p.id]?.models && connectStates[p.id]?.models!.length > 0 && (
-                  <div className="grid gap-1.5 rounded-lg border border-hairline/60 bg-surface-canvas/40 p-2 max-h-40 overflow-auto">
-                    {connectStates[p.id]?.models!.map((model) => (
-                      <label key={model} className="flex items-center gap-2 text-xs text-text-body cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="h-3.5 w-3.5 accent-brand-primary"
-                          checked={p.available_models.includes(model)}
-                          onChange={(e) => handleToggleProviderModel(p.id, model, e.target.checked)}
-                        />
-                        <span className="font-mono truncate" title={model}>{model}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
                 {/* Chat test result */}
                 {chatTestStates[p.id]?.result && (
                   <div className={`text-[10px] leading-relaxed ${chatTestStates[p.id]?.result?.ok ? "text-trading-fall" : "text-trading-rise"}`}>
