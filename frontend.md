@@ -220,7 +220,7 @@ Session 名称
 
 ```text
 账户                     ← 已实现
-模型 / Provider          ← 已实现
+模型（隐式 Provider）    ← 已实现
 Skill                    ← 未实现 (skill_id 列预留但无效)
 是否启用默认触发器       ← 未实现
 ```
@@ -254,7 +254,7 @@ Tool Result
 Session 名称
 当前账户
 当前模型
-当前 Provider
+当前 Provider（由模型隐式决定）
 当前 Skill
 当前模式：实时 / 回放
 当前状态：空闲 / 运行中 / 排队 / 报错

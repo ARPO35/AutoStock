@@ -7,6 +7,7 @@ import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore } from "@/stores/viewStore";
 import type { AccountSnapshot, AssetPoint } from "@/api";
 import { formatMoney, humanTime, linePoints } from "@/lib/utils";
+import { resolveModelSelection } from "@/lib/providerModels";
 
 export function AccountInspectorPanel() {
   const accounts = useDataStore((s) => s.accounts);
@@ -26,6 +27,9 @@ export function AccountInspectorPanel() {
   const accountId = selectedSession?.simulator_account_id ?? null;
   const selectedAccount = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
   const selectedProvider = selectedSession?.provider_id ? providers.find((p) => p.id === selectedSession.provider_id) ?? null : null;
+  const selectedModelOption = selectedSession
+    ? resolveModelSelection(providers, selectedSession.model, selectedSession.provider_id)
+    : null;
   const snapshot = accountId ? snapshots[accountId] : null;
 
   useEffect(() => {
@@ -63,7 +67,7 @@ export function AccountInspectorPanel() {
             <p className="mb-1 text-xs font-bold tracking-wide text-brand-primary">账户观察</p>
             <h2 className="truncate text-base font-semibold text-text-on-dark">{displayName}</h2>
             <p className="mt-1 truncate text-xs text-text-muted">
-              {selectedSession ? `${selectedSession.name} / ${selectedProvider?.name ?? selectedSession.model ?? "未配置模型"}` : "请选择一个绑定模拟账户的 Session"}
+              {selectedSession ? `${selectedSession.name} / ${selectedProvider?.name ?? selectedModelOption?.providerName ?? selectedSession.model ?? "未配置模型"}` : "请选择一个绑定模拟账户的 Session"}
             </p>
           </div>
           <Eye size={17} className="mt-1 text-text-muted" />

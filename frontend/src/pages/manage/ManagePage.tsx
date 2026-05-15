@@ -38,7 +38,7 @@ import {
   conflictSummary,
   parseInputObject
 } from "@/lib/utils";
-import { providerModelOptions } from "@/lib/providerModels";
+import { providerModelOptions, resolveProviderByModelValue } from "@/lib/providerModels";
 
 /* ------------------------------------------------------------------ */
 /*  Page shell                                                        */
@@ -213,6 +213,31 @@ function providerTypeLabel(type: string): string {
   return type || "--";
 }
 
+const providerModelsCacheKey = (providerId: string) => `autostock.providerConnectModels.${providerId}`;
+
+function readCachedProviderModels(providerId: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(providerModelsCacheKey(providerId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { models?: unknown };
+    if (!Array.isArray(parsed?.models)) return [];
+    return parsed.models.map((item) => String(item)).filter((item) => item.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedProviderModels(providerId: string, models: string[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(providerModelsCacheKey(providerId), JSON.stringify({ models, updatedAt: new Date().toISOString() }));
+}
+
+function clearCachedProviderModels(providerId: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(providerModelsCacheKey(providerId));
+}
+
 function ProviderManagement() {
   const providers = useDataStore((s) => s.providers);
   const createProvider = useDataStore((s) => s.createProvider);
@@ -236,6 +261,19 @@ function ProviderManagement() {
   >({});
   // 用量数据缓存
   const [usageData, setUsageData] = useState<Record<string, ProviderUsageResponse>>({});
+
+  useEffect(() => {
+    setConnectStates((prev) => {
+      const next = { ...prev };
+      for (const provider of providers) {
+        if (next[provider.id]?.models?.length) continue;
+        const cachedModels = readCachedProviderModels(provider.id);
+        if (cachedModels.length === 0) continue;
+        next[provider.id] = { ...(next[provider.id] ?? { loading: false }), models: cachedModels };
+      }
+      return next;
+    });
+  }, [providers]);
 
   // 加载所有 Provider 用量
   useEffect(() => {
@@ -291,14 +329,25 @@ function ProviderManagement() {
   };
 
   const handleConnect = async (providerId: string) => {
-    setConnectStates((prev) => ({ ...prev, [providerId]: { loading: true } }));
+    setConnectStates((prev) => ({
+      ...prev,
+      [providerId]: {
+        loading: true,
+        models: prev[providerId]?.models,
+      }
+    }));
     try {
       const result = await api.providerModels(providerId);
+      writeCachedProviderModels(providerId, result.models);
       setConnectStates((prev) => ({ ...prev, [providerId]: { loading: false, models: result.models } }));
     } catch (err) {
       setConnectStates((prev) => ({
         ...prev,
-        [providerId]: { loading: false, error: err instanceof Error ? err.message : "连接失败" }
+        [providerId]: {
+          loading: false,
+          models: prev[providerId]?.models,
+          error: err instanceof Error ? err.message : "连接失败"
+        }
       }));
     }
   };
@@ -333,6 +382,7 @@ function ProviderManagement() {
   const handleDelete = async (providerId: string) => {
     try {
       await deleteProvider(providerId);
+      clearCachedProviderModels(providerId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
     } finally {
@@ -462,8 +512,8 @@ function ProviderManagement() {
                     type="button"
                     className={`text-xs px-2.5 py-1 rounded-md border transition-colors ${
                       connectStates[p.id]?.loading ? "border-hairline text-text-muted cursor-wait"
-                      : connectStates[p.id]?.models ? "border-trading-fall/30 text-trading-fall"
                       : connectStates[p.id]?.error ? "border-trading-rise/30 text-trading-rise"
+                      : connectStates[p.id]?.models ? "border-trading-fall/30 text-trading-fall"
                       : "border-hairline text-text-muted hover:border-brand-primary/30 hover:text-brand-primary"
                     }`}
                     onClick={() => handleConnect(p.id)}
@@ -471,7 +521,7 @@ function ProviderManagement() {
                   >
                     <span className="inline-flex items-center gap-1">
                       <Plug size={11} />
-                      {connectStates[p.id]?.loading ? "连接中..." : connectStates[p.id]?.models ? `✓ ${connectStates[p.id]?.models?.length ?? 0} 个模型` : connectStates[p.id]?.error ? `✗ ${connectStates[p.id]?.error!.slice(0, 30)}` : "连接"}
+                      {connectStates[p.id]?.loading ? "连接中..." : connectStates[p.id]?.error ? `✗ ${connectStates[p.id]?.error!.slice(0, 30)}` : connectStates[p.id]?.models ? `✓ ${connectStates[p.id]?.models?.length ?? 0} 个模型` : "连接"}
                     </span>
                   </button>
                   {/* Chat test button */}
@@ -1580,7 +1630,7 @@ function SystemSettings() {
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault();
-    const selected = modelOptions.find((option) => option.value === selectedModelValue) ?? null;
+    const selected = resolveProviderByModelValue(providers, selectedModelValue);
     setSystemProviderId(selected?.providerId ?? null);
     setSystemModel(selected ? selectedModelValue : null);
     setSaved(true);

@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowLeft, Bell, Check, Clock, FileText, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, Bell, CalendarDays, Check, Clock, FileText, SlidersHorizontal, X } from "lucide-react";
 import { api } from "@/api";
 import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
-import { providerScopedModelOptions } from "@/lib/providerModels";
+import { providerModelOptions, resolveModelSelection } from "@/lib/providerModels";
 
 type ConfigPage = "menu" | "models" | "prompt" | "time" | "triggers";
 
@@ -29,19 +29,15 @@ export function TradeConfigPopover({ open, onClose }: TradeConfigPopoverProps) {
   const [page, setPage] = useState<ConfigPage>("menu");
   const [replayDraft, setReplayDraft] = useState("");
   const [speedDraft, setSpeedDraft] = useState("1");
+  const replayInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
   const selectedAccount = selectedSession?.simulator_account_id
     ? accounts.find((a) => a.id === selectedSession.simulator_account_id) ?? null
     : null;
-  const selectedProvider = selectedSession?.provider_id
-    ? providers.find((p) => p.id === selectedSession.provider_id) ?? null
-    : null;
-  const selectedModelOptions = providerScopedModelOptions(selectedProvider);
-  const selectedModelValue = selectedSession?.model
-    ? selectedModelOptions.find((option) => option.value === selectedSession.model)?.value
-      ?? selectedModelOptions.find((option) => option.model === selectedSession.model)?.value
-      ?? ""
+  const selectedModelOptions = providerModelOptions(providers);
+  const selectedModelValue = selectedSession
+    ? resolveModelSelection(providers, selectedSession.model, selectedSession.provider_id)?.value ?? ""
     : "";
   const accountId = selectedAccount?.id ?? "";
   const replayClock = accountId ? replayClocks[accountId] : null;
@@ -86,6 +82,16 @@ export function TradeConfigPopover({ open, onClose }: TradeConfigPopoverProps) {
     });
   };
 
+  const openReplayPicker = () => {
+    const input = replayInputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+    input.focus();
+  };
+
   const headerTitle = {
     menu: "配置",
     models: "模型",
@@ -119,16 +125,15 @@ export function TradeConfigPopover({ open, onClose }: TradeConfigPopoverProps) {
 
       {page === "models" && (
         <div className="grid max-h-[320px] gap-1.5 overflow-y-auto">
-          {!selectedProvider && <p className="text-sm text-text-muted">当前 Session 尚未选择 Provider。</p>}
-          {selectedProvider && selectedModelOptions.length === 0 && (
-            <p className="text-sm text-text-muted">当前 Provider 没有可用模型列表。</p>
+          {selectedModelOptions.length === 0 && (
+            <p className="text-sm text-text-muted">暂无可用模型列表，请先在管理页配置 Provider 模型。</p>
           )}
           {selectedModelOptions.map((option) => (
             <button
               key={option.value}
               type="button"
               disabled={busy}
-              onClick={() => updateSession({ model: option.value })}
+              onClick={() => updateSession({ model: option.value, provider_id: option.providerId })}
               className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-hairline bg-surface-canvas px-3 py-2 text-left text-sm text-text-body transition-colors hover:border-brand-primary/60 hover:bg-brand-primary/5 disabled:opacity-50"
             >
               <span className="min-w-0 truncate">{option.label}</span>
@@ -169,13 +174,25 @@ export function TradeConfigPopover({ open, onClose }: TradeConfigPopoverProps) {
           </div>
           <label className="grid gap-1.5 text-xs text-text-muted">
             回放时间
-            <input
-              className="h-10 rounded-lg border border-hairline bg-surface-canvas px-3 text-sm text-text-on-dark focus:border-info focus:ring-2 focus:ring-info/50 disabled:opacity-50"
-              type="datetime-local"
-              value={replayDraft}
-              disabled={!accountId || replayClockLoading || busy}
-              onChange={(event) => setReplayDraft(event.target.value)}
-            />
+            <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
+              <input
+                ref={replayInputRef}
+                className="h-10 rounded-lg border border-hairline bg-surface-canvas px-3 text-sm text-text-on-dark focus:border-info focus:ring-2 focus:ring-info/50 disabled:opacity-50"
+                type="datetime-local"
+                value={replayDraft}
+                disabled={!accountId || replayClockLoading || busy}
+                onChange={(event) => setReplayDraft(event.target.value)}
+              />
+              <button
+                type="button"
+                className="grid h-10 w-10 place-items-center rounded-lg border border-hairline bg-surface-canvas text-text-muted transition-colors hover:border-info/60 hover:text-info disabled:opacity-50"
+                disabled={!accountId || replayClockLoading || busy}
+                onClick={openReplayPicker}
+                title="选择回放时间"
+              >
+                <CalendarDays size={15} />
+              </button>
+            </div>
           </label>
           <label className="grid gap-1.5 text-xs text-text-muted">
             速度

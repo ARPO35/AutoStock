@@ -37,6 +37,7 @@ Implemented surface:
 - `system_echo` tool for validating tool-call loops.
 - Session run endpoint with per-session locking, WebSocket runtime events, and handled LLM provider connection failures.
 - React workbench for provider setup, account creation, session chat, tools, and runtime events.
+- Session model selection now uses a full model list with implicit provider binding (no separate provider pre-selection in trade flows).
 
 Verification:
 

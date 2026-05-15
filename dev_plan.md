@@ -67,6 +67,7 @@ LLM Account
 | 主数据源 | AKShare |
 | 搜索 | 内置 Tavily 搜索和网页抽取 |
 | LLM Provider | 默认支持 OpenAI-Compatible 和 DeepSeek |
+| 模型选择 | 统一使用完整模型列表，Provider 由模型隐式绑定 |
 | DeepSeek | 默认支持 DeepSeek V4 API |
 | Tool Call | 所有功能通过 tool call 实现 |
 | Skill | 支持加载、上传、编辑、启用、禁用 |

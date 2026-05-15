@@ -24,7 +24,7 @@ import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore, type ViewSection, viewSections } from "@/stores/viewStore";
 import { api } from "@/api";
 import type { AccountSnapshot, AssetPoint, MarketAnnouncementResponse, MarketHistoryResponse, TradeRow, ViewLogRow, ViewTimelineRow } from "@/api";
-import { providerModelOptions } from "@/lib/providerModels";
+import { providerModelOptions, resolveProviderByModelValue } from "@/lib/providerModels";
 import { barClose, barTime, formatMoney, formatValue, humanTime, linePoints } from "@/lib/utils";
 
 export function ViewPage() {
@@ -362,7 +362,7 @@ function StockPanel() {
     [cacheRows, marketForm.symbol]
   );
   const llmModelOptions = useMemo(() => providerModelOptions(providers), [providers]);
-  const selectedModelOption = llmModelOptions.find((option) => option.value === analysisModelValue) ?? llmModelOptions[0] ?? null;
+  const selectedModelOption = resolveProviderByModelValue(providers, analysisModelValue) ?? llmModelOptions[0] ?? null;
 
   useEffect(() => {
     void loadDataState();
@@ -665,7 +665,7 @@ function StockPanel() {
             </Select>
           </label>
           <label className="grid gap-1.5 text-xs text-text-muted">
-            Provider / 模型
+            模型
             <Select value={analysisModelValue} onChange={(e) => setAnalysisModelValue(e.target.value)}>
               <option value="">默认第一个可用模型</option>
               {llmModelOptions.map((option) => (

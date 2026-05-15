@@ -97,10 +97,22 @@ class SessionRunManager:
                 self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
 
             provider_id = session.get("provider_id")
+            model = session.get("model")
             if not provider_id:
-                raise ValueError("会话未选择 Provider／模型，请在会话设置中选择后再运行。")
-            provider_row = self._get_provider(str(provider_id))
-            model = session.get("model") or provider_row["model"]
+                if not model:
+                    raise ValueError("会话未选择模型，请在会话设置中选择后再运行。")
+                resolved = self._resolve_provider_from_model(str(model))
+                if resolved is None:
+                    raise ValueError("未找到可用 Provider，请检查模型配置是否有效。")
+                provider_row, model = resolved
+                provider_id = str(provider_row["id"])
+                self.store.execute(
+                    "UPDATE chat_sessions SET provider_id = ?, updated_at = ? WHERE id = ?",
+                    (provider_id, utc_now(), session_id),
+                )
+            else:
+                provider_row = self._get_provider(str(provider_id))
+            model = model or provider_row["model"]
             config = replace(
                 self._provider_config(provider_row),
                 model=self._provider_api_model(provider_row, str(model)),
@@ -949,6 +961,44 @@ class SessionRunManager:
         if provider is None:
             raise LookupError("LLM provider not found.")
         return provider
+
+    def _resolve_provider_from_model(self, model_value: str) -> tuple[dict[str, Any], str] | None:
+        providers = self.store.fetch_all("SELECT * FROM llm_providers")
+        exact_matches: list[tuple[dict[str, Any], str]] = []
+        plain_matches: list[tuple[dict[str, Any], str]] = []
+        for row in providers:
+            name = str(row.get("name") or "")
+            scoped_prefix = f"{name}/"
+            available_models = self._parse_provider_models(row.get("available_models"))
+            provider_default_model = str(row.get("model") or "").strip()
+            if model_value.startswith(scoped_prefix):
+                scoped_model = model_value.removeprefix(scoped_prefix)
+                if scoped_model in available_models or scoped_model == provider_default_model:
+                    exact_matches.append((row, model_value))
+                continue
+            if model_value in available_models or model_value == provider_default_model:
+                plain_matches.append((row, model_value))
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(plain_matches) == 1:
+            return plain_matches[0]
+        return None
+
+    def _parse_provider_models(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        try:
+            parsed = json.loads(str(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        models: list[str] = []
+        for item in parsed:
+            model = str(item).strip()
+            if model:
+                models.append(model)
+        return models
 
     def _replay_clock_for_account(self, account_id: str | None) -> ReplayClockSnapshot | None:
         if not account_id:
