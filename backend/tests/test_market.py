@@ -11,7 +11,14 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.main import create_app
 from app.market.akshare_provider import AKShareMarketProvider
-from app.market.normalizer import normalize_announcement_rows, normalize_bid_ask_quote, normalize_history_rows, normalize_minute_rows, normalize_spot_rows
+from app.market.normalizer import (
+    normalize_announcement_rows,
+    normalize_bid_ask_quote,
+    normalize_history_rows,
+    normalize_minute_rows,
+    normalize_sina_quote_response,
+    normalize_spot_rows,
+)
 from app.market.replay import replay_quote_from_cache
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
@@ -214,6 +221,14 @@ class SingleQuoteFakeAKShare:
         raise AssertionError("market_quote must not fetch full-market spot data")
 
 
+class DisconnectedQuoteFakeAKShare(SingleQuoteFakeAKShare):
+    def stock_bid_ask_em(self, symbol):
+        import requests
+
+        self.bid_ask_calls.append(symbol)
+        raise requests.exceptions.ConnectionError("eastmoney disconnected")
+
+
 class NameLookupFailureFakeAKShare(SingleQuoteFakeAKShare):
     def stock_info_a_code_name(self):
         self.name_calls += 1
@@ -352,6 +367,31 @@ def test_normalizers_accept_chinese_columns() -> None:
     assert quote["source"] == "akshare.stock_bid_ask_em"
 
 
+def test_sina_quote_normalizer_accepts_realtime_payload() -> None:
+    payload = (
+        'var hq_str_sh600036="招商银行,39.360,39.430,39.810,39.980,39.290,'
+        '39.800,39.810,52269354,2075496453.000,29700,39.800,1200,39.790,'
+        '5400,39.780,800,39.770,500,39.760,4100,39.810,2300,39.820,'
+        '900,39.830,700,39.840,600,39.850,2026-05-15,15:00:00,00,";'
+    )
+
+    quote = normalize_sina_quote_response(
+        payload,
+        fetch_time="2026-05-15T07:00:00+00:00",
+    )[0]
+
+    assert quote["symbol"] == "600036"
+    assert quote["name"] == "招商银行"
+    assert quote["price"] == 39.81
+    assert quote["open"] == 39.36
+    assert quote["previous_close"] == 39.43
+    assert quote["high"] == 39.98
+    assert quote["low"] == 39.29
+    assert quote["volume"] == 52269354.0
+    assert quote["amount"] == 2075496453.0
+    assert quote["source"] == "sina.hq.sinajs.cn"
+
+
 def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
     provider = AKShareMarketProvider()
     release_event = threading.Event()
@@ -406,19 +446,57 @@ def test_akshare_quote_tolerates_name_lookup_failure(monkeypatch) -> None:
     assert fake_ak.spot_calls == 0
 
 
-def test_akshare_quotes_batch_skips_failed_symbols(monkeypatch) -> None:
+def test_akshare_quote_falls_back_to_sina_when_eastmoney_disconnects(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = DisconnectedQuoteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+    monkeypatch.setattr(
+        provider,
+        "_sina_response",
+        lambda symbols: (
+            'var hq_str_sh600036="招商银行,39.360,39.430,39.810,39.980,'
+            '39.290,39.800,39.810,52269354,2075496453.000,0,0,0,0,0,0,'
+            '0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-05-15,15:00:00,00,";'
+        ),
+    )
+
+    quote = asyncio.run(provider.quote("600036"))
+
+    assert quote["symbol"] == "600036"
+    assert quote["name"] == "招商银行"
+    assert quote["price"] == 39.81
+    assert quote["source"] == "sina.hq.sinajs.cn"
+    assert fake_ak.bid_ask_calls == ["600036"]
+    assert fake_ak.name_calls == 1
+
+
+def test_akshare_quotes_batch_uses_single_sina_request(monkeypatch) -> None:
     provider = AKShareMarketProvider()
     fake_ak = SingleQuoteFakeAKShare()
+    requested: list[list[str]] = []
     monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
 
-    quotes = asyncio.run(provider.quotes_batch(["600000", "000002", "600000"]))
+    def fake_sina_response(symbols):
+        requested.append(symbols)
+        return (
+            'var hq_str_sh600036="招商银行,39.360,39.430,39.810,39.980,'
+            '39.290,39.800,39.810,52269354,2075496453.000,0,0,0,0,0,0,'
+            '0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-05-15,15:00:00,00,";\n'
+            'var hq_str_sh601318="中国平安,46.000,45.900,46.550,46.880,'
+            '45.800,46.540,46.550,80000000,3700000000.000,0,0,0,0,0,0,'
+            '0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-05-15,15:00:00,00,";'
+        )
 
-    assert list(quotes) == ["600000"]
-    assert quotes["600000"]["name"] == SPDB_NAME
-    assert quotes["600000"]["price"] == 10.8
-    assert fake_ak.bid_ask_calls.count("600000") == 1
-    assert fake_ak.bid_ask_calls.count("000002") == 1
-    assert fake_ak.name_calls == 1
+    monkeypatch.setattr(provider, "_sina_response", fake_sina_response)
+
+    quotes = asyncio.run(provider.quotes_batch(["600036", "601318", "600036"]))
+
+    assert list(quotes) == ["600036", "601318"]
+    assert quotes["600036"]["name"] == "招商银行"
+    assert quotes["601318"]["price"] == 46.55
+    assert requested == [["600036", "601318"]]
+    assert fake_ak.bid_ask_calls == []
+    assert fake_ak.name_calls == 0
 
 
 def test_akshare_provider_enriches_bars_cache_status_and_replay_quote(monkeypatch) -> None:

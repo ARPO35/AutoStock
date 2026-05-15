@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -104,6 +105,35 @@ def normalize_bid_ask_quote(
     }
     quote["raw_hash"] = raw_hash(quote)
     return quote
+
+
+def normalize_sina_quote_response(
+    payload: str,
+    source: str = "sina.hq.sinajs.cn",
+    fetch_time: str | None = None,
+) -> list[dict[str, Any]]:
+    fetched_at = fetch_time or utc_now()
+    result: list[dict[str, Any]] = []
+    for match in re.finditer(r'var\s+hq_str_([a-z]{2})(\d{6})="([^"]*)";', payload):
+        fields = match.group(3).split(",")
+        if len(fields) < 32 or not fields[0].strip():
+            continue
+        quote = {
+            "symbol": normalize_symbol(match.group(2)),
+            "name": _text(fields[0]),
+            "price": _number(fields[3]),
+            "open": _number(fields[1]),
+            "high": _number(fields[4]),
+            "low": _number(fields[5]),
+            "previous_close": _number(fields[2]),
+            "volume": _number(fields[8]),
+            "amount": _number(fields[9]),
+            "source": source,
+            "fetch_time": fetched_at,
+        }
+        quote["raw_hash"] = raw_hash(quote)
+        result.append(quote)
+    return result
 
 
 def normalize_minute_rows(
