@@ -208,6 +208,12 @@ const defaultProviderForm: {
   strict_tool_schema: false
 };
 
+function providerTypeLabel(type: string): string {
+  if (type === "deepseek") return "DeepSeek";
+  if (type === "openai_compatible") return "OpenAI-Compatible";
+  return type || "--";
+}
+
 function ProviderManagement() {
   const providers = useDataStore((s) => s.providers);
   const createProvider = useDataStore((s) => s.createProvider);
@@ -298,6 +304,20 @@ function ProviderManagement() {
     }
   };
 
+  const handleToggleProviderModel = async (providerId: string, model: string, checked: boolean) => {
+    const provider = providers.find((p) => p.id === providerId);
+    if (!provider) return;
+    const current = provider.available_models ?? [];
+    const next = checked
+      ? Array.from(new Set([...current, model]))
+      : current.filter((item) => item !== model);
+    try {
+      await updateProvider(providerId, { available_models: next });
+    } catch {
+      // Store-level errors are surfaced elsewhere.
+    }
+  };
+
   const handleChatTest = async (providerId: string) => {
     setChatTestStates((prev) => ({ ...prev, [providerId]: { loading: true } }));
     try {
@@ -363,7 +383,10 @@ function ProviderManagement() {
             >
               {/* Card header */}
               <header className="flex items-center justify-between gap-2 mb-3">
-                <strong className="text-text-on-dark text-sm">{p.name}</strong>
+                <div className="min-w-0">
+                  <strong className="block text-text-on-dark text-sm truncate">{p.name}</strong>
+                  <span className="text-[10px] text-text-muted">{providerTypeLabel(p.provider_type)}</span>
+                </div>
                 <div className="flex items-center gap-1.5">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
                     p.has_api_key ? "border-trading-fall/30 text-trading-fall" : "border-trading-rise/30 text-trading-rise"
@@ -394,40 +417,17 @@ function ProviderManagement() {
                   onSave={() => saveEdit(p.id, "base_url")}
                   onCancel={() => cancelEdit(p.id, "base_url")}
                 />
-                {/* Row 2: Model — 连接后变下拉框 */}
-                {connectStates[p.id]?.models && connectStates[p.id]?.models!.length > 0 ? (
-                  <div className="flex items-center gap-2 text-xs py-0.5">
-                    <span className="text-text-muted w-[72px] shrink-0">模型</span>
-                    <select
-                      className="flex-1 h-7 px-2 rounded border border-hairline bg-surface-canvas text-text-on-dark text-xs focus:border-info"
-                      value={p.model}
-                      onChange={async (e) => {
-                        const m = e.target.value;
-                        try {
-                          await updateProvider(p.id, { model: m });
-                        } catch { /* store 处理 */ }
-                      }}
-                    >
-                      {connectStates[p.id]?.models!.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    <span className="text-[10px] text-text-muted">
-                      {connectStates[p.id]?.models!.length} 个
-                    </span>
-                  </div>
-                ) : (
-                  <EditableRow
-                    label="模型"
-                    value={p.model || "（连接后可获取）"}
-                    editing={isEditing(p.id, "model")}
-                    editValue={editing[p.id]?.["model"] ?? p.model}
-                    onDoubleClick={() => startEdit(p.id, "model", p.model || "")}
-                    onChange={(v) => setEditing((prev) => ({ ...prev, [p.id]: { ...prev[p.id], model: v } }))}
-                    onSave={() => saveEdit(p.id, "model")}
-                    onCancel={() => cancelEdit(p.id, "model")}
-                  />
-                )}
+                <div className="flex items-center gap-2 text-xs py-0.5">
+                  <span className="text-text-muted w-[72px] shrink-0">Provider 类型</span>
+                  <span className="text-text-body">{providerTypeLabel(p.provider_type)}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs py-0.5">
+                  <span className="text-text-muted w-[72px] shrink-0">可用模型</span>
+                  <span className="text-text-body font-mono truncate">
+                    {p.available_models.length > 0 ? p.available_models.join(" / ") : "连接后勾选"}
+                  </span>
+                  <span className="text-[10px] text-text-muted shrink-0">{p.available_models.length} 个</span>
+                </div>
                 {/* Row 3: API Key (masked) */}
                 <EditableRow
                   label="API Key"
@@ -505,9 +505,18 @@ function ProviderManagement() {
                 </div>
                 {/* Model list from connect */}
                 {connectStates[p.id]?.models && connectStates[p.id]?.models!.length > 0 && (
-                  <div className="text-[10px] text-text-muted leading-relaxed">
-                    {connectStates[p.id]?.models!.slice(0, 8).join(" / ")}
-                    {connectStates[p.id]?.models!.length > 8 && ` +${connectStates[p.id]?.models!.length - 8} 个`}
+                  <div className="grid gap-1.5 rounded-lg border border-hairline/60 bg-surface-canvas/40 p-2 max-h-40 overflow-auto">
+                    {connectStates[p.id]?.models!.map((model) => (
+                      <label key={model} className="flex items-center gap-2 text-xs text-text-body cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-brand-primary"
+                          checked={p.available_models.includes(model)}
+                          onChange={(e) => handleToggleProviderModel(p.id, model, e.target.checked)}
+                        />
+                        <span className="font-mono truncate" title={model}>{model}</span>
+                      </label>
+                    ))}
                   </div>
                 )}
                 {/* Chat test result */}

@@ -8,6 +8,7 @@ export interface Provider {
   api_key_masked: string | null;
   has_api_key: boolean;
   model: string;
+  available_models: string[];
   temperature: number;
   max_tokens: number | null;
   timeout_seconds: number;
