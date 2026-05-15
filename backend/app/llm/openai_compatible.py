@@ -103,18 +103,15 @@ class OpenAICompatibleProvider:
         request["stream_options"] = {"include_usage": True}
 
         self._log_request(context=log_context, config=config, request=request)
+        stream_log = self._new_stream_log()
         try:
             stream = await client.chat.completions.create(**request)
             async for chunk in stream:
                 raw_chunk = self._dump_model(chunk)
-                write_raw_llm_log(
-                    context=log_context,
-                    direction="inbound",
-                    event="chunk",
-                    payload=raw_chunk,
-                )
+                self._capture_stream_chunk(stream_log, raw_chunk)
                 yield raw_chunk
         except Exception as exc:
+            self._log_stream_response(context=log_context, stream_log=stream_log, partial=True)
             self._log_exception(
                 context=log_context,
                 event="stream_error",
@@ -123,12 +120,7 @@ class OpenAICompatibleProvider:
                 exc=exc,
             )
             raise
-        write_raw_llm_log(
-            context=log_context,
-            direction="inbound",
-            event="stream_end",
-            payload={},
-        )
+        self._log_stream_response(context=log_context, stream_log=stream_log, partial=False)
 
     def _message_to_payload(self, message: ChatMessage) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role}
@@ -189,6 +181,67 @@ class OpenAICompatibleProvider:
                     "repr": repr(exc),
                 },
             },
+        )
+
+    def _new_stream_log(self) -> dict[str, Any]:
+        return {
+            "content_parts": [],
+            "reasoning_parts": [],
+            "tool_calls_by_index": {},
+            "usage": None,
+        }
+
+    def _capture_stream_chunk(self, stream_log: dict[str, Any], raw_chunk: dict[str, Any]) -> None:
+        usage = raw_chunk.get("usage")
+        if usage:
+            stream_log["usage"] = usage
+
+        choices = raw_chunk.get("choices") or []
+        for choice in choices:
+            delta = choice.get("delta") or {}
+            content = delta.get("content")
+            if content:
+                stream_log["content_parts"].append(content)
+            reasoning = delta.get("reasoning_content")
+            if reasoning:
+                stream_log["reasoning_parts"].append(reasoning)
+
+            for tc_delta in delta.get("tool_calls") or []:
+                idx = tc_delta.get("index", 0)
+                tool_calls = stream_log["tool_calls_by_index"]
+                if idx not in tool_calls:
+                    tool_calls[idx] = {"index": idx, "id": "", "name": "", "arguments": ""}
+                tool_call = tool_calls[idx]
+                if tc_delta.get("id"):
+                    tool_call["id"] = tc_delta["id"]
+                fn = tc_delta.get("function") or {}
+                if fn.get("name"):
+                    tool_call["name"] = fn["name"]
+                if fn.get("arguments"):
+                    tool_call["arguments"] += fn["arguments"]
+
+    def _log_stream_response(
+        self,
+        *,
+        context: RawLogContext | None,
+        stream_log: dict[str, Any],
+        partial: bool,
+    ) -> None:
+        payload = {
+            "content": "".join(stream_log["content_parts"]),
+            "reasoning_content": "".join(stream_log["reasoning_parts"]) or None,
+            "tool_calls": [
+                stream_log["tool_calls_by_index"][idx]
+                for idx in sorted(stream_log["tool_calls_by_index"])
+            ],
+            "usage": stream_log["usage"] or {},
+            "partial": partial,
+        }
+        write_raw_llm_log(
+            context=context,
+            direction="inbound",
+            event="stream_response",
+            payload=payload,
         )
 
     def _dump_model(self, value: Any) -> dict[str, Any]:

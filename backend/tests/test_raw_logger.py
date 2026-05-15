@@ -121,7 +121,115 @@ def test_openai_compatible_chat_logs_request_and_response(monkeypatch, tmp_path)
     assert rows[1]["payload"]["id"] == "response-under-test"
 
 
-def test_openai_compatible_stream_logs_chunks_and_stream_error(monkeypatch, tmp_path) -> None:
+def test_openai_compatible_stream_logs_single_aggregated_response(
+    monkeypatch, tmp_path
+) -> None:
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_ENABLED", "1")
+    monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(log_dir))
+
+    class FakeChunk:
+        def __init__(self, raw: dict[str, Any]) -> None:
+            self.raw = raw
+
+        def model_dump(self, mode: str) -> dict[str, Any]:
+            assert mode == "json"
+            return self.raw
+
+    class SuccessfulStream:
+        async def __aiter__(self):
+            yield FakeChunk({"choices": [{"delta": {"reasoning_content": "think "}}]})
+            yield FakeChunk({"choices": [{"delta": {"content": "Hel"}}]})
+            yield FakeChunk(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call-under-test",
+                                        "function": {
+                                            "name": "system_echo",
+                                            "arguments": '{"text"',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+            yield FakeChunk(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": "lo",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"arguments": ': "hi"}'},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            )
+            yield FakeChunk(
+                {
+                    "choices": [],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                }
+            )
+
+    class FakeCompletions:
+        async def create(self, **request):
+            assert request["stream"] is True
+            return SuccessfulStream()
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI))
+
+    async def collect() -> list[dict[str, Any]]:
+        chunks = []
+        async for chunk in OpenAICompatibleProvider().chat_stream(
+            _config(),
+            [ChatMessage(role="user", content="ping")],
+            [],
+            log_context=_context(),
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect())
+
+    assert len(chunks) == 5
+    rows = _read_jsonl(log_dir)
+    assert [row["event"] for row in rows] == ["request", "stream_response"]
+    assert rows[1]["payload"] == {
+        "content": "Hello",
+        "reasoning_content": "think ",
+        "tool_calls": [
+            {
+                "index": 0,
+                "id": "call-under-test",
+                "name": "system_echo",
+                "arguments": '{"text": "hi"}',
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        "partial": False,
+    }
+
+
+def test_openai_compatible_stream_logs_partial_response_and_stream_error(
+    monkeypatch, tmp_path
+) -> None:
     log_dir = tmp_path / "logs"
     monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_ENABLED", "1")
     monkeypatch.setenv("AUTOSTOCK_LLM_RAW_LOG_DIR", str(log_dir))
@@ -169,8 +277,9 @@ def test_openai_compatible_stream_logs_chunks_and_stream_error(monkeypatch, tmp_
         raise AssertionError("stream should fail")
 
     rows = _read_jsonl(log_dir)
-    assert [row["event"] for row in rows] == ["request", "chunk", "stream_error"]
-    assert rows[1]["payload"]["choices"][0]["delta"]["content"] == "A"
+    assert [row["event"] for row in rows] == ["request", "stream_response", "stream_error"]
+    assert rows[1]["payload"]["content"] == "A"
+    assert rows[1]["payload"]["partial"] is True
     assert rows[2]["payload"]["exception"]["message"] == "stream dropped"
 
 
