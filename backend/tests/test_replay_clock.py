@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import app.simulator.replay_clock as replay_clock_module
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
@@ -77,6 +79,38 @@ def test_replay_clock_live_pause_advance_and_restore() -> None:
     restored = service.set_live(str(account["id"]))
     assert restored.mode == "live"
     assert restored.replay_time is None
+
+
+def test_replay_clock_advances_from_persisted_base_after_service_restart(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Persistent Replay")
+    account_id = str(account["id"])
+    current_now = datetime(2026, 4, 27, 2, 0, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=2)
+
+    current_now = datetime(2026, 4, 27, 2, 0, 30, tzinfo=timezone.utc)
+    advanced = ReplayClockService(store).get_clock(account_id)
+    assert advanced.effective_time.startswith("2026-04-27T10:01:00")
+
+    db_path = str(store.path)
+    store.close()
+    restarted_store = SQLiteStore(db_path)
+    try:
+        restarted_store.initialize()
+        current_now = datetime(2026, 4, 27, 2, 0, 45, tzinfo=timezone.utc)
+        restarted = ReplayClockService(restarted_store).get_clock(account_id)
+        assert restarted.mode == "replay"
+        assert restarted.speed == 2
+        assert restarted.replay_time.startswith("2026-04-27T10:00:00")
+        assert restarted.effective_time.startswith("2026-04-27T10:01:30")
+    finally:
+        restarted_store.close()
 
 
 def test_replay_clock_api_is_account_level(monkeypatch) -> None:

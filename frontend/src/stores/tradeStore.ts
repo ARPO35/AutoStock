@@ -58,6 +58,7 @@ interface TradeState {
   stopCurrentRun: (sessionId: string) => Promise<void>;
   focusToolCall: (toolCallId: string | null, sessionId?: string | null) => void;
   loadReplayClock: (accountId: string) => Promise<void>;
+  refreshReplayClock: (accountId: string) => Promise<void>;
   updateReplayClock: (accountId: string, payload: Record<string, unknown>) => Promise<ReplayClockState | null>;
   restoreReplayClockLive: (accountId: string) => Promise<ReplayClockState | null>;
   syncReplayClock: (clock: ReplayClockState | null | undefined) => void;
@@ -421,6 +422,20 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       set({ replayClockLoading: false, replayClockError: msg });
+    }
+  },
+
+  refreshReplayClock: async (accountId) => {
+    if (!accountId) return;
+    try {
+      const clock = await api.replayClock(accountId);
+      set((s) => ({
+        replayClocks: { ...s.replayClocks, [accountId]: clock },
+        replayClockError: null,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({ replayClockError: msg });
     }
   },
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Bell, Clock, PauseCircle, Play, RotateCcw, SlidersHorizontal, StopCircle } from "lucide-react";
 import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
@@ -21,13 +21,13 @@ export function SessionHeader() {
   const replayClockLoading = useTradeStore((s) => s.replayClockLoading);
   const replayClockError = useTradeStore((s) => s.replayClockError);
   const loadReplayClock = useTradeStore((s) => s.loadReplayClock);
+  const refreshReplayClock = useTradeStore((s) => s.refreshReplayClock);
   const updateReplayClock = useTradeStore((s) => s.updateReplayClock);
   const restoreReplayClockLive = useTradeStore((s) => s.restoreReplayClockLive);
   const [replayDraft, setReplayDraft] = useState("");
   const [speedDraft, setSpeedDraft] = useState("1");
   const [editingReplayTime, setEditingReplayTime] = useState(false);
   const [replayDraftDirty, setReplayDraftDirty] = useState(false);
-  const [clockTick, setClockTick] = useState(() => Date.now());
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
   const selectedAccount = selectedSession?.simulator_account_id
@@ -41,10 +41,7 @@ export function SessionHeader() {
     : promptRoles[0] ?? null;
   const accountId = selectedAccount?.id ?? "";
   const replayClock = accountId ? replayClocks[accountId] : null;
-  const displayEffectiveTime = useMemo(
-    () => deriveDisplayEffectiveTime(replayClock, clockTick),
-    [replayClock, clockTick]
-  );
+  const displayEffectiveTime = replayClock?.effective_time ?? "";
 
   useEffect(() => {
     if (accountId) void loadReplayClock(accountId);
@@ -52,9 +49,12 @@ export function SessionHeader() {
   }, [accountId, loadReplayClock]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setClockTick(Date.now()), 1000);
+    if (!accountId) return;
+    const timer = window.setInterval(() => {
+      void refreshReplayClock(accountId);
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [accountId, refreshReplayClock]);
 
   useEffect(() => {
     if (!replayClock) {
@@ -133,20 +133,18 @@ export function SessionHeader() {
 
   const handlePauseResume = async () => {
     if (!accountId) return;
-    const current = replayClock?.mode === "replay"
-      ? replayClock.effective_time
-      : new Date().toISOString();
+    const current = replayClock?.effective_time;
     if (replayClock?.mode === "replay" && replayClock.speed === 0) {
       await updateReplayClock(accountId, {
         mode: "replay",
-        replay_time: current,
+        ...(current ? { replay_time: current } : {}),
         speed: Number(speedDraft) > 0 ? Number(speedDraft) : 1,
       });
       return;
     }
     await updateReplayClock(accountId, {
       mode: "replay",
-      replay_time: current,
+      ...(current ? { replay_time: current } : {}),
       speed: 0,
     });
   };
@@ -328,26 +326,4 @@ function toDatetimeLocal(value: string | null | undefined): string {
 
 function formatClock(value: string): string {
   return value.replace("T", " ").slice(0, 19);
-}
-
-function deriveDisplayEffectiveTime(clock: { mode: string; effective_time: string; updated_at?: string | null; speed: number } | null, tickMs: number): string {
-  if (!clock?.effective_time) return "";
-  if (clock.mode !== "replay") {
-    return isoInChinaTime(tickMs);
-  }
-  const speed = Number(clock.speed ?? 1);
-  if (speed === 0) return clock.effective_time;
-
-  const baseEffective = Date.parse(clock.effective_time);
-  const baseUpdated = Date.parse(clock.updated_at || clock.effective_time);
-  if (!Number.isFinite(baseEffective) || !Number.isFinite(baseUpdated)) {
-    return clock.effective_time;
-  }
-
-  const elapsedMs = Math.max(0, tickMs - baseUpdated);
-  return isoInChinaTime(baseEffective + elapsedMs * speed);
-}
-
-function isoInChinaTime(ms: number): string {
-  return `${new Date(ms + 8 * 60 * 60 * 1000).toISOString().slice(0, 19)}+08:00`;
 }
