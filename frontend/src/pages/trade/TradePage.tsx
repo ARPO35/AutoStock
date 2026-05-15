@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AccountSessionSidebar } from "@/features/trade/AccountSessionSidebar";
 import { SessionHeader } from "@/features/trade/SessionHeader";
 import { LLMLinearTimeline } from "@/features/trade/LLMLinearTimeline";
@@ -11,10 +11,12 @@ export function TradePage() {
   const inspectorWidth = useUIStore((s) => s.inspectorWidth);
   const setInspectorWidth = useUIStore((s) => s.setInspectorWidth);
   const dragging = useRef(false);
+  const [draggingInspector, setDraggingInspector] = useState(false);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     dragging.current = true;
+    setDraggingInspector(true);
   }, []);
 
   useEffect(() => {
@@ -28,6 +30,7 @@ export function TradePage() {
     };
     const onMouseUp = () => {
       dragging.current = false;
+      setDraggingInspector(false);
     };
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
@@ -48,9 +51,18 @@ export function TradePage() {
       </div>
 
       <div
-        className="w-2 cursor-col-resize hover:bg-brand-primary/10 bg-surface-canvas transition-colors flex-shrink-0"
+        className={`group relative w-2 cursor-col-resize bg-surface-canvas transition-colors hover:bg-brand-primary/10 flex-shrink-0 ${
+          draggingInspector ? "bg-brand-primary/10" : ""
+        }`}
         onMouseDown={handleMouseDown}
-      />
+        title="Resize account inspector"
+      >
+        <span
+          className={`absolute left-1/2 top-1/2 h-14 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors ${
+            draggingInspector ? "bg-brand-primary" : "bg-hairline group-hover:bg-brand-primary"
+          }`}
+        />
+      </div>
 
       <div
         className="h-full min-h-0 overflow-hidden flex-shrink-0"
