@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.core.config import get_settings
 from app.llm.base import ChatResponse, ToolCall
 from app.main import create_app
@@ -61,6 +64,75 @@ def test_lifespan_closes_storage_handles(monkeypatch) -> None:
         response = client.get("/api/health")
         assert response.status_code == 200
 
+    assert close_calls == ["market_store", "store"]
+
+
+def test_module_asgi_entrypoint_lifespan_closes_storage_handles(monkeypatch) -> None:
+    path = _test_dir().resolve()
+    monkeypatch.setenv("AUTOSTOCK_SQLITE_PATH", str(path / "app.db"))
+    monkeypatch.setenv("AUTOSTOCK_MARKET_DUCKDB_PATH", str(path / "market.duckdb"))
+    monkeypatch.setenv("AUTOSTOCK_FRONTEND_DIST_PATH", str(path / "frontend_dist"))
+    get_settings.cache_clear()
+    monkeypatch.setattr(main_module, "_asgi_app", None)
+
+    close_calls: list[str] = []
+    original_store_close = SQLiteStore.close
+    original_market_store_close = MarketDuckDBStore.close
+
+    def close_store(self: SQLiteStore) -> None:
+        close_calls.append("store")
+        original_store_close(self)
+
+    def close_market_store(self: MarketDuckDBStore) -> None:
+        close_calls.append("market_store")
+        original_market_store_close(self)
+
+    monkeypatch.setattr(SQLiteStore, "close", close_store)
+    monkeypatch.setattr(MarketDuckDBStore, "close", close_market_store)
+
+    async def run_lifespan() -> list[dict[str, object]]:
+        events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, str]:
+            return await events.get()
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        await events.put({"type": "lifespan.startup"})
+        task = asyncio.create_task(
+            main_module.app(
+                {"type": "lifespan", "asgi": {"version": "3.0", "spec_version": "2.0"}},
+                receive,
+                send,
+            )
+        )
+        try:
+            for _ in range(100):
+                if any(message["type"] == "lifespan.startup.complete" for message in sent):
+                    break
+                await asyncio.sleep(0.01)
+            assert [message["type"] for message in sent] == ["lifespan.startup.complete"]
+
+            await events.put({"type": "lifespan.shutdown"})
+            await asyncio.wait_for(task, timeout=3)
+            return sent
+        finally:
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    try:
+        sent = asyncio.run(run_lifespan())
+    finally:
+        monkeypatch.setattr(main_module, "_asgi_app", None)
+
+    assert [message["type"] for message in sent] == [
+        "lifespan.startup.complete",
+        "lifespan.shutdown.complete",
+    ]
     assert close_calls == ["market_store", "store"]
 
 
