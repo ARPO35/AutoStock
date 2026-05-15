@@ -35,7 +35,7 @@ class AKShareMarketProvider:
                 raise LookupError(f"AKShare quote data has no price: {normalized_symbol}")
             return quote
         except Exception as exc:
-            if not self._should_fallback_quote_error(exc):
+            if not isinstance(exc, LookupError) and not self._should_fallback_request_error(exc):
                 raise
             return self._sina_quote_sync(normalized_symbol)
 
@@ -93,19 +93,27 @@ class AKShareMarketProvider:
         ak = self._akshare()
         normalized_symbol = normalize_symbol(symbol)
         name = self.name_resolver.resolve(normalized_symbol, ak)
-        frame = ak.stock_zh_a_hist(
-            symbol=normalized_symbol,
-            period="daily",
-            start_date=self._ak_date(start),
-            end_date=self._ak_date(end),
-            adjust=adjust or "",
-        )
+        try:
+            frame = ak.stock_zh_a_hist(
+                symbol=normalized_symbol,
+                period="daily",
+                start_date=self._ak_date(start),
+                end_date=self._ak_date(end),
+                adjust=adjust or "",
+            )
+            source = "akshare.stock_zh_a_hist"
+        except Exception as exc:
+            if not self._should_fallback_request_error(exc):
+                raise
+            frame = self._sina_history_frame(ak, normalized_symbol, start, end, adjust or "")
+            source = "akshare.stock_zh_a_daily"
         return normalize_history_rows(
             frame,
             symbol=normalized_symbol,
             interval=interval,
             adjust=adjust or "",
             name=name,
+            source=source,
         )
 
     _MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
@@ -223,6 +231,43 @@ class AKShareMarketProvider:
             if quote.get("symbol") in normalized_symbols and quote.get("price") is not None
         }
 
+    def _sina_history_frame(
+        self,
+        ak: Any,
+        symbol: str,
+        start: str,
+        end: str,
+        adjust: str,
+    ) -> list[dict[str, Any]]:
+        frame = ak.stock_zh_a_daily(
+            symbol=self._sina_code(symbol),
+            start_date=self._ak_date(start),
+            end_date=self._ak_date(end),
+            adjust=adjust,
+        )
+        return self._sina_history_rows(frame)
+
+    @staticmethod
+    def _sina_history_rows(rows: Any) -> list[dict[str, Any]]:
+        if rows is None:
+            return []
+        if hasattr(rows, "to_dict"):
+            records = rows.to_dict(orient="records")
+        else:
+            records = list(rows)
+
+        result: list[dict[str, Any]] = []
+        for row in records:
+            item = dict(row)
+            volume = item.get("volume")
+            if volume is not None:
+                try:
+                    item["volume"] = float(volume) / 100
+                except (TypeError, ValueError):
+                    pass
+            result.append(item)
+        return result
+
     def _sina_response(self, symbols: list[str]) -> str:
         import requests
 
@@ -250,8 +295,8 @@ class AKShareMarketProvider:
         return "sh" + normalized_symbol
 
     @staticmethod
-    def _should_fallback_quote_error(exc: Exception) -> bool:
-        if isinstance(exc, (ConnectionError, TimeoutError, RemoteDisconnected, LookupError)):
+    def _should_fallback_request_error(exc: Exception) -> bool:
+        if isinstance(exc, (ConnectionError, TimeoutError, RemoteDisconnected)):
             return True
         try:
             import requests

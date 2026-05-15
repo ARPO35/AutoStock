@@ -229,6 +229,35 @@ class DisconnectedQuoteFakeAKShare(SingleQuoteFakeAKShare):
         raise requests.exceptions.ConnectionError("eastmoney disconnected")
 
 
+class DisconnectedHistoryFakeAKShare(SingleQuoteFakeAKShare):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hist_calls: list[dict[str, str]] = []
+        self.daily_calls: list[dict[str, str]] = []
+
+    def stock_zh_a_hist(self, **kwargs):
+        import requests
+
+        self.hist_calls.append(kwargs)
+        raise requests.exceptions.ConnectionError("eastmoney disconnected")
+
+    def stock_zh_a_daily(self, **kwargs):
+        self.daily_calls.append(kwargs)
+        return FakeFrame(
+            [
+                {
+                    "date": "2026-05-15",
+                    "open": 9.0,
+                    "high": 9.22,
+                    "low": 8.93,
+                    "close": 9.07,
+                    "volume": 171982587,
+                    "amount": 1559276666,
+                }
+            ]
+        )
+
+
 class NameLookupFailureFakeAKShare(SingleQuoteFakeAKShare):
     def stock_info_a_code_name(self):
         self.name_calls += 1
@@ -497,6 +526,43 @@ def test_akshare_quotes_batch_uses_single_sina_request(monkeypatch) -> None:
     assert requested == [["600036", "601318"]]
     assert fake_ak.bid_ask_calls == []
     assert fake_ak.name_calls == 0
+
+
+def test_akshare_history_falls_back_to_sina_when_eastmoney_disconnects(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = DisconnectedHistoryFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    history = asyncio.run(provider.history("600000", "2026-05-11", "2026-05-15"))
+
+    assert len(history) == 1
+    assert history[0]["symbol"] == "600000"
+    assert history[0]["name"] == SPDB_NAME
+    assert history[0]["datetime"] == "2026-05-15"
+    assert history[0]["open"] == 9.0
+    assert history[0]["high"] == 9.22
+    assert history[0]["low"] == 8.93
+    assert history[0]["close"] == 9.07
+    assert history[0]["volume"] == 1719825.87
+    assert history[0]["amount"] == 1559276666.0
+    assert history[0]["source"] == "akshare.stock_zh_a_daily"
+    assert fake_ak.hist_calls == [
+        {
+            "symbol": "600000",
+            "period": "daily",
+            "start_date": "20260511",
+            "end_date": "20260515",
+            "adjust": "",
+        }
+    ]
+    assert fake_ak.daily_calls == [
+        {
+            "symbol": "sh600000",
+            "start_date": "20260511",
+            "end_date": "20260515",
+            "adjust": "",
+        }
+    ]
 
 
 def test_akshare_provider_enriches_bars_cache_status_and_replay_quote(monkeypatch) -> None:
