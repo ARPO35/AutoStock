@@ -240,6 +240,11 @@ function messageTimelineItem(item: SessionTimelineItem, model?: string | null): 
           ? "user"
           : "tool-result";
 
+  const usage = parseJsonObject(item.run_token_usage);
+  const latencyMs = numberOrNull(usage.latency_ms);
+  const tokenCount = numberOrNull(usage.total_tokens);
+  const completionTokens = numberOrNull(usage.completion_tokens);
+
   return {
     id: item.id,
     kind,
@@ -252,10 +257,21 @@ function messageTimelineItem(item: SessionTimelineItem, model?: string | null): 
           ? "事件"
           : "用户",
     body: item.content || "",
-    raw: { role: item.role, message_type: item.message_type },
+    runId: item.run_id,
+    raw: { role: item.role, message_type: item.message_type, run_status: item.run_status },
     model: model ?? null,
-    reasoning: item.reasoning_content ?? null
+    reasoning: item.reasoning_content ?? null,
+    latencyMs: role === "assistant" ? latencyMs : null,
+    tokenCount: role === "assistant" ? tokenCount : null,
+    tps: role === "assistant" && completionTokens != null && latencyMs != null && latencyMs > 0
+      ? completionTokens / (latencyMs / 1000)
+      : null
   };
+}
+
+function numberOrNull(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function classifyToolResult(

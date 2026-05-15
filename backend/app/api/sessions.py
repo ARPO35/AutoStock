@@ -97,6 +97,8 @@ class TimelineItemRead(BaseModel):
     parent_message_id: str | None = None
     created_at: str | None = None
     run_id: str | None = None
+    run_status: str | None = None
+    run_token_usage: str | None = None
     tool_call_id: str | None = None
     tool_name: str | None = None
     arguments_json: str | None = None
@@ -259,9 +261,15 @@ async def session_timeline(
 
     for row in store.fetch_all(
         """
-        SELECT *
-        FROM chat_messages
-        WHERE session_id = ?
+        SELECT
+            m.*,
+            r.id AS final_run_id,
+            r.status AS final_run_status,
+            r.token_usage AS final_run_token_usage
+        FROM chat_messages m
+        LEFT JOIN chat_runs r
+          ON r.final_message_id = m.id
+        WHERE m.session_id = ?
         """,
         (session_id,),
     ):
@@ -277,6 +285,9 @@ async def session_timeline(
                 "trigger_id": row.get("trigger_id"),
                 "parent_message_id": row.get("parent_message_id"),
                 "created_at": row["created_at"],
+                "run_id": row.get("final_run_id"),
+                "run_status": row.get("final_run_status"),
+                "run_token_usage": row.get("final_run_token_usage"),
                 "_sort_time": row["created_at"],
                 "_sort_rank": _timeline_message_rank(row),
             }

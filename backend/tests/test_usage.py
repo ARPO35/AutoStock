@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.llm.base import ChatResponse, ToolCall
 from app.sessions.runtime import SessionRunManager
 from app.usage import normalize_usage
@@ -93,6 +95,12 @@ def test_session_run_records_token_usage_and_cap_warning(monkeypatch) -> None:
     assert provider_usage.status_code == 200
     assert provider_usage.json()["total_tokens"] == 16
     assert provider_usage.json()["llm_calls"] == 1
+
+    timeline = client.get(f"/api/sessions/{session['id']}/timeline")
+    assert timeline.status_code == 200
+    assistant_item = next(item for item in timeline.json() if item["role"] == "assistant")
+    assert assistant_item["run_id"] == run.json()["run_id"]
+    assert json.loads(assistant_item["run_token_usage"])["total_tokens"] == 16
 
 
 def test_auto_title_llm_call_is_recorded_as_session_usage(monkeypatch) -> None:

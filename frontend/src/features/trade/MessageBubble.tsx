@@ -29,10 +29,19 @@ function UserBubble({ item }: { item: TimelineItem }) {
 }
 
 function AssistantBubble({ item }: { item: TimelineItem }) {
+  if (item.reasoning && !item.body?.trim()) {
+    return <ReasoningBubble item={item} />;
+  }
+
   const model = item.model || "--";
   const latency = item.latencyMs != null ? formatLatency(item.latencyMs) : "--";
   const tps = item.tps != null ? formatTps(item.tps) : "--";
   const tokens = item.tokenCount != null ? formatTokens(item.tokenCount) : "--";
+  const hasUsage = !item.streaming && (
+    item.latencyMs != null ||
+    item.tps != null ||
+    item.tokenCount != null
+  );
 
   return (
     <div className="flex justify-start">
@@ -77,17 +86,42 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
             {item.body || (item.streaming ? "..." : "")}
           </ReactMarkdown>
         </div>
-        <div className="flex items-center gap-1 mt-1.5 text-text-muted text-[11px] select-none">
-          <span>{item.time || "--"}</span>
-          {item.time && <span className="text-hairline">·</span>}
-          <span>{model}</span>
-          <span className="text-hairline">·</span>
-          <span>{latency}</span>
-          <span className="text-hairline">·</span>
-          <span>{tps}</span>
-          <span className="text-hairline">·</span>
-          <span>{tokens}</span>
-        </div>
+        {hasUsage && (
+          <div className="flex items-center gap-1 mt-1.5 text-text-muted text-[11px] select-none">
+            <span>{item.time || "--"}</span>
+            {item.time && <span className="text-hairline">·</span>}
+            <span>{model}</span>
+            <span className="text-hairline">·</span>
+            <span>{latency}</span>
+            <span className="text-hairline">·</span>
+            <span>{tps}</span>
+            <span className="text-hairline">·</span>
+            <span>{tokens}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReasoningBubble({ item }: { item: TimelineItem }) {
+  return (
+    <div className="flex justify-start ml-4">
+      <div className="max-w-[90%]">
+        <details className="group/think">
+          <summary className="flex items-center gap-1.5 cursor-pointer text-text-muted text-xs hover:text-text-muted-strong list-none select-none">
+            <ChevronRight size={13} className="transition-transform group-open/think:rotate-90" />
+            <span className="text-text-muted-strong">
+              {item.streaming ? "思考中……" : "思考完成"}
+              {item.reasoningDurationMs != null ? ` ${formatLatency(item.reasoningDurationMs)}` : ""}
+            </span>
+          </summary>
+          <div className="ml-3 mt-1 border-l border-hairline py-1 pl-3">
+            <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-text-muted">
+              {item.reasoning}
+            </p>
+          </div>
+        </details>
       </div>
     </div>
   );

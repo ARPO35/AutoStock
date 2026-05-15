@@ -66,6 +66,8 @@ export function LLMLinearTimeline() {
 
   useEffect(() => {
     if (selectedSessionId) {
+      manuallyUnlockedRef.current = false;
+      setAutoScrollEnabled(true);
       loadTimeline(selectedSessionId);
     }
   }, [selectedSessionId, loadTimeline]);
@@ -74,7 +76,14 @@ export function LLMLinearTimeline() {
     const el = scrollRef.current;
     if (!el) return;
     lastScrollTopRef.current = el.scrollTop;
+    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (loadingTimeline || !selectedSessionId) return;
+    if (!autoScrollEnabled) return;
+    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [loadingTimeline, selectedSessionId, autoScrollEnabled]);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;

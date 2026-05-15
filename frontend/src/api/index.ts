@@ -108,6 +108,8 @@ export interface SessionTimelineItem {
   reasoning_content?: string | null;
   created_at?: string | null;
   run_id?: string | null;
+  run_status?: string | null;
+  run_token_usage?: string | null;
   tool_call_id?: string | null;
   tool_name?: string | null;
   arguments_json?: string | null;
