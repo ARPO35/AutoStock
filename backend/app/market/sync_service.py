@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import time as perf_time
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal
@@ -9,6 +10,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.market.normalizer import normalize_symbol
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.simulator.valuation import PortfolioValuationService
 from app.storage.sqlite import SQLiteStore
 
@@ -299,11 +301,40 @@ class MarketSyncService:
         interval: str = "daily",
         adjust: str = "",
     ) -> dict[str, int] | None:
+        started = perf_time.perf_counter()
         bars = await self.market_store.query_history_async(symbol, start, end, interval, adjust)
         if _covers_range(bars, start, end):
+            write_stock_data_api_log(
+                "market_sync.ensure_history",
+                {
+                    "symbol": normalize_symbol(symbol),
+                    "start": start,
+                    "end": end,
+                    "interval": interval,
+                    "adjust": adjust,
+                    "cache_hit": True,
+                    "fetch_stats": None,
+                    "duration_ms": _elapsed_ms(started),
+                },
+            )
             return None
         fetched = await self.market_provider.history(symbol, start, end, interval, adjust)
-        return await self.market_store.insert_bars_async(fetched)
+        stats = await self.market_store.insert_bars_async(fetched)
+        write_stock_data_api_log(
+            "market_sync.ensure_history",
+            {
+                "symbol": normalize_symbol(symbol),
+                "start": start,
+                "end": end,
+                "interval": interval,
+                "adjust": adjust,
+                "cache_hit": False,
+                "fetched": len(fetched),
+                "fetch_stats": stats,
+                "duration_ms": _elapsed_ms(started),
+            },
+        )
+        return stats
 
     async def ensure_minute(
         self,
@@ -312,12 +343,39 @@ class MarketSyncService:
         end: str,
         period: str = "1",
     ) -> dict[str, int] | None:
+        started = perf_time.perf_counter()
         interval = f"{period}m"
         bars = await self.market_store.query_history_async(symbol, start, end, interval, "")
         if _covers_range(bars, start, end):
+            write_stock_data_api_log(
+                "market_sync.ensure_minute",
+                {
+                    "symbol": normalize_symbol(symbol),
+                    "start": start,
+                    "end": end,
+                    "period": period,
+                    "cache_hit": True,
+                    "fetch_stats": None,
+                    "duration_ms": _elapsed_ms(started),
+                },
+            )
             return None
         fetched = await self.market_provider.minute(symbol, start, end, period=period)
-        return await self.market_store.insert_bars_async(fetched)
+        stats = await self.market_store.insert_bars_async(fetched)
+        write_stock_data_api_log(
+            "market_sync.ensure_minute",
+            {
+                "symbol": normalize_symbol(symbol),
+                "start": start,
+                "end": end,
+                "period": period,
+                "cache_hit": False,
+                "fetched": len(fetched),
+                "fetch_stats": stats,
+                "duration_ms": _elapsed_ms(started),
+            },
+        )
+        return stats
 
     async def ensure_announcements(
         self,
@@ -325,11 +383,36 @@ class MarketSyncService:
         start: str,
         end: str,
     ) -> dict[str, int] | None:
+        started = perf_time.perf_counter()
         announcements = await self.market_store.query_announcements_async(symbol, start, end)
         if announcements:
+            write_stock_data_api_log(
+                "market_sync.ensure_announcements",
+                {
+                    "symbol": normalize_symbol(symbol),
+                    "start": start,
+                    "end": end,
+                    "cache_hit": True,
+                    "fetch_stats": None,
+                    "duration_ms": _elapsed_ms(started),
+                },
+            )
             return None
         fetched = await self.market_provider.announcement(symbol, start, end)
-        return await self.market_store.insert_announcements_async(fetched)
+        stats = await self.market_store.insert_announcements_async(fetched)
+        write_stock_data_api_log(
+            "market_sync.ensure_announcements",
+            {
+                "symbol": normalize_symbol(symbol),
+                "start": start,
+                "end": end,
+                "cache_hit": False,
+                "fetched": len(fetched),
+                "fetch_stats": stats,
+                "duration_ms": _elapsed_ms(started),
+            },
+        )
+        return stats
 
     def target_symbols(self, scope: SyncScope) -> list[str]:
         symbols: list[str] = []
@@ -430,8 +513,19 @@ class MarketSyncService:
         symbols: list[str],
         task: Any,
     ) -> dict[str, Any]:
+        started = perf_time.perf_counter()
         run_id = uuid4().hex
         started_at = utc_now()
+        write_stock_data_api_log(
+            "market_sync.run.start",
+            {
+                "run_id": run_id,
+                "job_type": job_type,
+                "scope": scope,
+                "symbols": symbols,
+                "symbol_count": len(symbols),
+            },
+        )
         self.store.execute(
             """
             INSERT INTO market_sync_runs (
@@ -464,6 +558,19 @@ class MarketSyncService:
                     run_id,
                 ),
             )
+            write_stock_data_api_log(
+                "market_sync.run.finish",
+                {
+                    "run_id": run_id,
+                    "job_type": job_type,
+                    "scope": scope,
+                    "symbols": symbols,
+                    "symbol_count": len(symbols),
+                    "status": "success",
+                    "fetch_stats": stats.as_dict(),
+                    "duration_ms": _elapsed_ms(started),
+                },
+            )
         except Exception as exc:
             finished_at = utc_now()
             self.store.execute(
@@ -473,6 +580,20 @@ class MarketSyncService:
                 WHERE id = ?
                 """,
                 (str(exc), finished_at, run_id),
+            )
+            write_stock_data_api_log(
+                "market_sync.run.finish",
+                {
+                    "run_id": run_id,
+                    "job_type": job_type,
+                    "scope": scope,
+                    "symbols": symbols,
+                    "symbol_count": len(symbols),
+                    "status": "error",
+                    "duration_ms": _elapsed_ms(started),
+                },
+                ok=False,
+                error=exc,
             )
             raise
         row = self.store.fetch_one("SELECT * FROM market_sync_runs WHERE id = ?", (run_id,))
@@ -552,3 +673,7 @@ def _covers_range(rows: list[dict[str, Any]], start: str, end: str) -> bool:
 
 def _parse_date(value: str):
     return datetime.fromisoformat(value[:10]).date()
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((perf_time.perf_counter() - started) * 1000)

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_market_provider, get_market_store
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.market.sync_service import MarketSyncService
 
 router = APIRouter(prefix="/api/data", tags=["data"])
@@ -86,17 +87,48 @@ async def fetch_history(
         )
         stats = await market_store.insert_bars_async(bars)
     except NotImplementedError as exc:
+        _log_data_api(
+            "api.data.fetch_history",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            interval=payload.interval,
+            adjust=payload.adjust,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        _log_data_api(
+            "api.data.fetch_history",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            interval=payload.interval,
+            adjust=payload.adjust,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": payload.symbol,
         "interval": payload.interval,
         "adjust": payload.adjust,
         "fetched": len(bars),
         **stats,
     }
+    _log_data_api(
+        "api.data.fetch_history",
+        symbol=payload.symbol,
+        start=payload.start,
+        end=payload.end,
+        interval=payload.interval,
+        adjust=payload.adjust,
+        fetched=len(bars),
+        store_stats=stats,
+    )
+    return result
 
 
 @router.get("/cache-status")
@@ -195,15 +227,37 @@ async def run_sync(
 ) -> dict[str, object]:
     try:
         if payload.job_type == "quote":
-            return await sync_service.sync_quotes(payload.scope)
-        if payload.job_type == "minute":
-            return await sync_service.sync_minutes(payload.scope, period=payload.period)
-        if payload.job_type == "daily":
-            return await sync_service.sync_daily(payload.scope)
-        if payload.job_type == "announcement":
-            return await sync_service.sync_announcements(payload.scope)
-        return await sync_service.sync_all_a_quotes()
+            result = await sync_service.sync_quotes(payload.scope)
+        elif payload.job_type == "minute":
+            result = await sync_service.sync_minutes(payload.scope, period=payload.period)
+        elif payload.job_type == "daily":
+            result = await sync_service.sync_daily(payload.scope)
+        elif payload.job_type == "announcement":
+            result = await sync_service.sync_announcements(payload.scope)
+        else:
+            result = await sync_service.sync_all_a_quotes()
+        _log_data_api(
+            "api.data.sync_run",
+            job_type=payload.job_type,
+            scope=payload.scope,
+            period=payload.period,
+            run_id=result.get("id"),
+            status=result.get("status"),
+            fetched=result.get("fetched"),
+            inserted=result.get("inserted"),
+            skipped=result.get("skipped"),
+            conflicted=result.get("conflicted"),
+        )
+        return result
     except Exception as exc:
+        _log_data_api(
+            "api.data.sync_run",
+            job_type=payload.job_type,
+            scope=payload.scope,
+            period=payload.period,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
@@ -253,19 +307,56 @@ async def fetch_minute(
         )
         stats = await market_store.insert_bars_async(bars)
     except NotImplementedError as exc:
+        _log_data_api(
+            "api.data.fetch_minute",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            period=payload.period,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as exc:
+        _log_data_api(
+            "api.data.fetch_minute",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            period=payload.period,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        _log_data_api(
+            "api.data.fetch_minute",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            period=payload.period,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": payload.symbol,
         "interval": f"{payload.period}m",
         "adjust": "",
         "fetched": len(bars),
         **stats,
     }
+    _log_data_api(
+        "api.data.fetch_minute",
+        symbol=payload.symbol,
+        start=payload.start,
+        end=payload.end,
+        period=payload.period,
+        fetched=len(bars),
+        store_stats=stats,
+    )
+    return result
 
 
 @router.post("/fetch-announcement", response_model=FetchAnnouncementResponse)
@@ -282,14 +373,51 @@ async def fetch_announcement(
         )
         stats = await market_store.insert_announcements_async(announcements)
     except NotImplementedError as exc:
+        _log_data_api(
+            "api.data.fetch_announcement",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as exc:
+        _log_data_api(
+            "api.data.fetch_announcement",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        _log_data_api(
+            "api.data.fetch_announcement",
+            symbol=payload.symbol,
+            start=payload.start,
+            end=payload.end,
+            ok=False,
+            error=exc,
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": payload.symbol,
         "fetched": len(announcements),
         **stats,
     }
+    _log_data_api(
+        "api.data.fetch_announcement",
+        symbol=payload.symbol,
+        start=payload.start,
+        end=payload.end,
+        fetched=len(announcements),
+        store_stats=stats,
+    )
+    return result
+
+
+def _log_data_api(event: str, ok: bool = True, error: object = None, **payload: object) -> None:
+    write_stock_data_api_log(event, payload, ok=ok, error=error)

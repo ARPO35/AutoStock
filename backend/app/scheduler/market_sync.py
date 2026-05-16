@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.market.sync_service import MarketSyncService
 
 logger = logging.getLogger(__name__)
@@ -92,14 +94,45 @@ def create_market_sync_scheduler(sync_service: MarketSyncService) -> Any | None:
 
 async def _run_trading_job(sync_service: MarketSyncService, func: Any, *args: Any, **kwargs: Any) -> None:
     if not sync_service.is_trading_time():
+        write_stock_data_api_log(
+            "scheduler.market_sync.skip",
+            {
+                "job": getattr(func, "__name__", repr(func)),
+                "reason": "outside_trading_time",
+                "args": args,
+                "kwargs": kwargs,
+            },
+        )
         return
     await _run_job(func, *args, **kwargs)
 
 
 async def _run_job(func: Any, *args: Any, **kwargs: Any) -> None:
+    started = time.perf_counter()
+    job_name = getattr(func, "__name__", repr(func))
     try:
         result = func(*args, **kwargs)
         if asyncio.iscoroutine(result):
             await result
-    except Exception:
+        write_stock_data_api_log(
+            "scheduler.market_sync.run",
+            {
+                "job": job_name,
+                "args": args,
+                "kwargs": kwargs,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+            },
+        )
+    except Exception as exc:
+        write_stock_data_api_log(
+            "scheduler.market_sync.run",
+            {
+                "job": job_name,
+                "args": args,
+                "kwargs": kwargs,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+            },
+            ok=False,
+            error=exc,
+        )
         logger.exception("Market sync job failed.")

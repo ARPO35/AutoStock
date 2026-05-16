@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from typing import Any
 
 from app.market.replay import clamp_end_to_effective, effective_datetime, is_replay_context, replay_quote_from_cache
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.tools.registry import ToolSpec
 
 REPLAY_HISTORY_LOOKBACK_DAYS = 180
@@ -215,7 +217,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 "required": ["symbol"],
                 "additionalProperties": False,
             },
-            handler=market_quote,
+            handler=_logged_handler("market_quote", market_quote),
             strict=True,
         ),
         ToolSpec(
@@ -238,7 +240,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 "required": ["symbol"],
                 "additionalProperties": False,
             },
-            handler=market_history,
+            handler=_logged_handler("market_history", market_history),
             strict=True,
         ),
         ToolSpec(
@@ -260,7 +262,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 "required": ["symbol"],
                 "additionalProperties": False,
             },
-            handler=market_minute,
+            handler=_logged_handler("market_minute", market_minute),
             strict=True,
         ),
         ToolSpec(
@@ -281,7 +283,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 "required": ["symbol", "start", "end"],
                 "additionalProperties": False,
             },
-            handler=market_announcement,
+            handler=_logged_handler("market_announcement", market_announcement),
             strict=True,
         ),
         ToolSpec(
@@ -300,7 +302,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
                 "required": ["symbol", "start", "end"],
                 "additionalProperties": False,
             },
-            handler=data_fetch_history,
+            handler=_logged_handler("data_fetch_history", data_fetch_history),
             strict=True,
         ),
     ]
@@ -361,3 +363,83 @@ def _replay_history_start(runtime_context: dict[str, Any] | None) -> str:
 def _replay_minute_start(runtime_context: dict[str, Any] | None) -> str:
     effective = effective_datetime(runtime_context)
     return f"{effective.date().isoformat()} {MARKET_OPEN_TIME}"
+
+
+def _logged_handler(name: str, handler: Any) -> Any:
+    async def wrapper(
+        arguments: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        payload = {
+            "tool_name": name,
+            "arguments": _summarize_arguments(arguments),
+            "runtime": _summarize_runtime(runtime_context),
+        }
+        try:
+            result = await handler(arguments, runtime_context)
+        except Exception as exc:
+            write_stock_data_api_log(
+                f"tool.{name}",
+                {**payload, "duration_ms": _elapsed_ms(started)},
+                ok=False,
+                error=exc,
+            )
+            raise
+        write_stock_data_api_log(
+            f"tool.{name}",
+            {
+                **payload,
+                "result": _summarize_tool_result(result),
+                "duration_ms": _elapsed_ms(started),
+            },
+        )
+        return result
+
+    return wrapper
+
+
+def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"symbol", "start", "end", "interval", "adjust", "period", "allow_fetch_missing"}
+    return {key: arguments.get(key) for key in allowed if key in arguments}
+
+
+def _summarize_runtime(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not runtime_context:
+        return {}
+    return {
+        "session_id": runtime_context.get("session_id"),
+        "run_id": runtime_context.get("run_id"),
+        "time_mode": runtime_context.get("time_mode"),
+        "effective_time": runtime_context.get("effective_time"),
+    }
+
+
+def _summarize_tool_result(result: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        key: result.get(key)
+        for key in (
+            "symbol",
+            "interval",
+            "adjust",
+            "cache_hit",
+            "fetch_stats",
+            "fetched",
+            "inserted",
+            "skipped",
+            "conflicted",
+        )
+        if key in result
+    }
+    if "bars" in result:
+        summary["bars"] = len(result.get("bars") or [])
+    if "announcements" in result:
+        summary["announcements"] = len(result.get("announcements") or [])
+    if "price" in result:
+        summary["has_price"] = result.get("price") is not None
+        summary["source"] = result.get("source")
+    return summary
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)

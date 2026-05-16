@@ -4,13 +4,16 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.llm.base import ChatMessage, LLMProviderConfig
 from app.llm.openai_compatible import OpenAICompatibleProvider
 from app.llm.raw_logger import write_raw_llm_log
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.sessions.runtime import SessionRunManager
 from test_mvp import make_client
 
@@ -41,6 +44,15 @@ def _context() -> dict[str, Any]:
 
 def _read_jsonl(log_dir: str | Path) -> list[dict[str, Any]]:
     paths = sorted((Path(log_dir) / "llm").glob("*.jsonl"))
+    assert paths
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+    return rows
+
+
+def _read_stock_data_log(log_root: str | Path) -> list[dict[str, Any]]:
+    paths = sorted((Path(log_root) / "stock_data_api").glob("*.log"))
     assert paths
     rows: list[dict[str, Any]] = []
     for path in paths:
@@ -127,6 +139,54 @@ def test_raw_logger_appends_same_session_to_one_file(monkeypatch, tmp_path) -> N
     rows = [json.loads(line) for line in first_path.read_text(encoding="utf-8").splitlines()]
     assert [row["event"] for row in rows] == ["request", "response"]
     assert [row["payload"]["step"] for row in rows] == [1, 2]
+
+
+def test_stock_data_logger_writes_daily_log_jsonl(monkeypatch, tmp_path) -> None:
+    log_root = tmp_path / "logs"
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(log_root))
+
+    path = write_stock_data_api_log(
+        "api.market.quote",
+        {"symbol": "600000", "rows": 1},
+        ok=True,
+    )
+
+    assert path is not None
+    assert path.parent == log_root / "stock_data_api"
+    assert path.name == f"{datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()}.log"
+    rows = _read_stock_data_log(log_root)
+    assert rows == [
+        {
+            "timestamp": rows[0]["timestamp"],
+            "event": "api.market.quote",
+            "ok": True,
+            "payload": {"symbol": "600000", "rows": 1},
+            "error": None,
+        }
+    ]
+
+
+def test_stock_data_logger_captures_error_and_swallows_write_failure(monkeypatch, tmp_path) -> None:
+    log_root = tmp_path / "logs"
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(log_root))
+
+    path = write_stock_data_api_log(
+        "akshare.quote",
+        {"symbol": "600000"},
+        ok=False,
+        error=RuntimeError("provider failed"),
+    )
+
+    assert path is not None
+    rows = _read_stock_data_log(log_root)
+    assert rows[0]["ok"] is False
+    assert rows[0]["error"] == {"type": "RuntimeError", "message": "provider failed"}
+
+    blocked_root = tmp_path / "not-a-directory"
+    blocked_root.write_text("block mkdir", encoding="utf-8")
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(blocked_root))
+
+    assert write_stock_data_api_log("api.market.quote", {"symbol": "600000"}) is None
 
 
 def test_openai_compatible_chat_logs_request_and_response(monkeypatch, tmp_path) -> None:

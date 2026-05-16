@@ -24,6 +24,7 @@ from app.market.normalizer import (
 )
 from app.market.replay import replay_quote_from_cache
 from app.market.sync_service import QuoteSyncCoordinator, is_trading_time
+from app.scheduler.market_sync import _run_job
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
 
@@ -435,6 +436,15 @@ def make_client(monkeypatch):
     return client, provider
 
 
+def _read_stock_events(log_root: Path) -> list[dict[str, object]]:
+    paths = sorted((log_root / "stock_data_api").glob("*.log"))
+    assert paths
+    events: list[dict[str, object]] = []
+    for path in paths:
+        events.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+    return events
+
+
 def test_duckdb_insert_skip_and_conflict() -> None:
     store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
     store.initialize()
@@ -759,6 +769,44 @@ def test_akshare_minute_reports_clear_error_when_both_providers_fail(monkeypatch
     assert "Sina minute fallback failed" in message
 
 
+def test_stock_data_api_logs_provider_fallback_and_failure(monkeypatch) -> None:
+    log_root = (_test_dir() / "logs").resolve()
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(log_root))
+    provider = AKShareMarketProvider()
+    fake_ak = FailedMinuteFallbackFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    try:
+        asyncio.run(provider.minute("600000", "2026-05-15", "2026-05-15", period="1"))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("minute should fail when both providers are unavailable")
+
+    rows = _read_stock_events(log_root)
+    retry_events = [row for row in rows if row["event"] == "akshare.minute.retry"]
+    assert len(retry_events) == 2
+    assert retry_events[-1]["payload"]["will_retry"] is False
+    sina_failure = next(row for row in rows if row["event"] == "sina.minute")
+    assert sina_failure["ok"] is False
+    assert sina_failure["error"]["message"] == "sina minute unavailable"
+
+
+def test_stock_data_api_logs_scheduler_job_failure(monkeypatch) -> None:
+    log_root = (_test_dir() / "logs").resolve()
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(log_root))
+
+    async def failing_job() -> None:
+        raise RuntimeError("scheduler failed")
+
+    asyncio.run(_run_job(failing_job))
+
+    rows = _read_stock_events(log_root)
+    failure = next(row for row in rows if row["event"] == "scheduler.market_sync.run")
+    assert failure["ok"] is False
+    assert failure["error"]["message"] == "scheduler failed"
+
+
 def test_replay_quote_derives_from_sina_minute_fallback_when_eastmoney_disconnects(monkeypatch) -> None:
     provider = AKShareMarketProvider()
     fake_ak = DisconnectedMinuteFakeAKShare()
@@ -842,6 +890,40 @@ def test_fetch_history_api_and_cache_hit(monkeypatch) -> None:
     assert history.status_code == 200
     assert history.json()["cache_hit"] is True
     assert provider.history_calls == 1
+
+
+def test_stock_data_api_logs_api_tool_and_sync_events(monkeypatch) -> None:
+    log_root = (_test_dir() / "logs").resolve()
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(log_root))
+    client, _ = make_client(monkeypatch)
+    payload = {"symbol": "600000", "start": "2026-04-27", "end": "2026-04-27"}
+
+    fetched = client.post("/api/data/fetch-history", json=payload)
+    history = client.get("/api/market/history", params=payload)
+    executor = ToolExecutor(client.app.state.tool_registry)
+    quote = asyncio.run(executor.execute("market_quote", '{"symbol": "600000"}'))
+    run = client.post(
+        "/api/data/sync/run",
+        json={"job_type": "daily", "scope": "all"},
+    )
+
+    assert fetched.status_code == 200
+    assert history.status_code == 200
+    assert quote.ok is True
+    assert run.status_code == 200
+
+    rows = _read_stock_events(log_root)
+    events = [row["event"] for row in rows]
+    assert "api.data.fetch_history" in events
+    assert "api.market.history" in events
+    assert "tool.market_quote" in events
+    assert "market_sync.run.start" in events
+    assert "market_sync.run.finish" in events
+    assert "api.data.sync_run" in events
+    api_history = next(row for row in rows if row["event"] == "api.market.history")
+    assert api_history["payload"]["cache_hit"] is True
+    tool_quote = next(row for row in rows if row["event"] == "tool.market_quote")
+    assert tool_quote["payload"]["result"]["has_price"] is True
 
 
 def test_data_api_reuses_shared_market_sync_service(monkeypatch) -> None:

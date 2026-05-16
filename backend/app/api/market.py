@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_market_provider, get_market_store
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.market.sync_service import MarketSyncService
 
 router = APIRouter(prefix="/api/market", tags=["market"])
@@ -48,11 +49,37 @@ async def history(
                 adjust=adjust,
             )
         except NotImplementedError as exc:
+            _log_market_api(
+                "api.market.history",
+                symbol=symbol,
+                start=start,
+                end=end,
+                interval=interval,
+                adjust=adjust,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(bars),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except Exception as exc:
+            _log_market_api(
+                "api.market.history",
+                symbol=symbol,
+                start=start,
+                end=end,
+                interval=interval,
+                adjust=adjust,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(bars),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": symbol,
         "interval": interval,
         "adjust": adjust,
@@ -60,6 +87,19 @@ async def history(
         "fetch_stats": fetch_stats,
         "bars": bars,
     }
+    _log_market_api(
+        "api.market.history",
+        symbol=symbol,
+        start=start,
+        end=end,
+        interval=interval,
+        adjust=adjust,
+        allow_fetch_missing=allow_fetch_missing,
+        cache_hit=bool(bars),
+        fetch_stats=fetch_stats,
+        rows=len(bars),
+    )
+    return result
 
 
 @router.get("/quote")
@@ -72,9 +112,18 @@ async def quote(
         result = await market_provider.quote(symbol)
         await market_store.insert_quote_async(result)
     except LookupError as exc:
+        _log_market_api("api.market.quote", symbol=symbol, ok=False, error=exc)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:
+        _log_market_api("api.market.quote", symbol=symbol, ok=False, error=exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    _log_market_api(
+        "api.market.quote",
+        symbol=symbol,
+        source=result.get("source"),
+        has_price=result.get("price") is not None,
+        stored=True,
+    )
     return result
 
 
@@ -112,13 +161,49 @@ async def minute(
                 adjust="",
             )
         except NotImplementedError as exc:
+            _log_market_api(
+                "api.market.minute",
+                symbol=symbol,
+                start=start,
+                end=end,
+                period=period,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(bars),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except ValueError as exc:
+            _log_market_api(
+                "api.market.minute",
+                symbol=symbol,
+                start=start,
+                end=end,
+                period=period,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(bars),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except Exception as exc:
+            _log_market_api(
+                "api.market.minute",
+                symbol=symbol,
+                start=start,
+                end=end,
+                period=period,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(bars),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": symbol,
         "interval": interval,
         "adjust": "",
@@ -126,6 +211,18 @@ async def minute(
         "fetch_stats": fetch_stats,
         "bars": bars,
     }
+    _log_market_api(
+        "api.market.minute",
+        symbol=symbol,
+        start=start,
+        end=end,
+        period=period,
+        allow_fetch_missing=allow_fetch_missing,
+        cache_hit=bool(bars),
+        fetch_stats=fetch_stats,
+        rows=len(bars),
+    )
+    return result
 
 
 @router.get("/announcement")
@@ -160,18 +257,62 @@ async def announcement(
                 end=end,
             )
         except NotImplementedError as exc:
+            _log_market_api(
+                "api.market.announcement",
+                symbol=symbol,
+                start=start,
+                end=end,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(announcements),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except ValueError as exc:
+            _log_market_api(
+                "api.market.announcement",
+                symbol=symbol,
+                start=start,
+                end=end,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(announcements),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except Exception as exc:
+            _log_market_api(
+                "api.market.announcement",
+                symbol=symbol,
+                start=start,
+                end=end,
+                allow_fetch_missing=allow_fetch_missing,
+                cache_hit=bool(announcements),
+                fetch_stats=fetch_stats,
+                ok=False,
+                error=exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return {
+    result = {
         "symbol": symbol,
         "cache_hit": bool(announcements),
         "fetch_stats": fetch_stats,
         "announcements": announcements,
     }
+    _log_market_api(
+        "api.market.announcement",
+        symbol=symbol,
+        start=start,
+        end=end,
+        allow_fetch_missing=allow_fetch_missing,
+        cache_hit=bool(announcements),
+        fetch_stats=fetch_stats,
+        rows=len(announcements),
+    )
+    return result
 
 
 _VALID_MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
@@ -192,3 +333,7 @@ def _covers_range(rows: list[dict[str, object]], start: str | None, end: str | N
     first = str(rows[0].get("datetime") or "")
     last = str(rows[-1].get("datetime") or "")
     return first <= start and last >= end
+
+
+def _log_market_api(event: str, ok: bool = True, error: object = None, **payload: object) -> None:
+    write_stock_data_api_log(event, payload, ok=ok, error=error)
