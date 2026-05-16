@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -17,6 +18,30 @@ MARKET_OPEN = time(9, 30)
 MARKET_MIDDAY_START = time(11, 30)
 MARKET_MIDDAY_END = time(13, 0)
 MARKET_CLOSE = time(15, 0)
+QUOTE_CACHE_TTL_SECONDS = 3.0
+
+
+def _date_range(start: date, end: date):
+    current = start
+    while current <= end:
+        yield current
+        current += timedelta(days=1)
+
+
+SSE_2026_CLOSED_RANGES = (
+    ("2026-01-01", "2026-01-03"),
+    ("2026-02-15", "2026-02-23"),
+    ("2026-04-04", "2026-04-06"),
+    ("2026-05-01", "2026-05-05"),
+    ("2026-06-19", "2026-06-21"),
+    ("2026-09-25", "2026-09-27"),
+    ("2026-10-01", "2026-10-07"),
+)
+SSE_2026_CLOSED_DATES = frozenset(
+    current.isoformat()
+    for start, end in SSE_2026_CLOSED_RANGES
+    for current in _date_range(date.fromisoformat(start), date.fromisoformat(end))
+)
 
 
 def utc_now() -> str:
@@ -45,11 +70,111 @@ class SyncStats:
         }
 
 
+class TradingCalendar:
+    def __init__(self, market_provider: Any | None = None) -> None:
+        self.market_provider = market_provider
+        self._trade_dates: set[str] | None = None
+        self._max_trade_date: str | None = None
+        self._loaded = False
+
+    def is_trading_day(self, value: date) -> bool:
+        if value.weekday() >= 5:
+            return False
+        text = value.isoformat()
+        dates = self._load_trade_dates()
+        if dates and self._max_trade_date and text <= self._max_trade_date:
+            return text in dates
+        if text in SSE_2026_CLOSED_DATES:
+            return False
+        return True
+
+    def _load_trade_dates(self) -> set[str]:
+        if self._loaded:
+            return self._trade_dates or set()
+        self._loaded = True
+        provider = self.market_provider
+        sync_func = getattr(provider, "trading_dates_sync", None)
+        if sync_func is None:
+            return set()
+        try:
+            dates = {str(item)[:10] for item in sync_func() if item}
+        except Exception:
+            dates = set()
+        self._trade_dates = dates
+        self._max_trade_date = max(dates) if dates else None
+        return dates
+
+
+class QuoteSyncCoordinator:
+    def __init__(self, ttl_seconds: float = QUOTE_CACHE_TTL_SECONDS) -> None:
+        self.ttl_seconds = ttl_seconds
+        self._lock = asyncio.Lock()
+        self._inflight: dict[str, asyncio.Task[dict[str, dict[str, Any]]]] = {}
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    async def fetch_quotes(self, symbols: list[str], market_provider: Any) -> dict[str, dict[str, Any]]:
+        unique_symbols = list(dict.fromkeys(normalize_symbol(symbol) for symbol in symbols if symbol))
+        if not unique_symbols:
+            return {}
+
+        now = asyncio.get_running_loop().time()
+        results: dict[str, dict[str, Any]] = {}
+        tasks: dict[asyncio.Task[dict[str, dict[str, Any]]], list[str]] = {}
+        async with self._lock:
+            for symbol in unique_symbols:
+                cached = self._cache.get(symbol)
+                if cached and cached[0] >= now:
+                    results[symbol] = cached[1]
+                    continue
+                task = self._inflight.get(symbol)
+                if task is None:
+                    task = asyncio.create_task(self._fetch_batch([symbol], market_provider))
+                    self._inflight[symbol] = task
+                tasks.setdefault(task, []).append(symbol)
+
+        for task, task_symbols in tasks.items():
+            try:
+                fetched = await task
+            except Exception:
+                async with self._lock:
+                    for symbol in task_symbols:
+                        if self._inflight.get(symbol) is task:
+                            self._inflight.pop(symbol, None)
+                raise
+            expires_at = asyncio.get_running_loop().time() + self.ttl_seconds
+            async with self._lock:
+                for symbol, quote in fetched.items():
+                    self._cache[symbol] = (expires_at, quote)
+                for symbol in task_symbols:
+                    if self._inflight.get(symbol) is task:
+                        self._inflight.pop(symbol, None)
+            results.update({symbol: fetched[symbol] for symbol in task_symbols if symbol in fetched})
+        return {symbol: results[symbol] for symbol in unique_symbols if symbol in results}
+
+    async def _fetch_batch(self, symbols: list[str], market_provider: Any) -> dict[str, dict[str, Any]]:
+        if hasattr(market_provider, "quotes_batch"):
+            quotes = await market_provider.quotes_batch(symbols)
+            return {normalize_symbol(symbol): quote for symbol, quote in quotes.items()}
+        result: dict[str, dict[str, Any]] = {}
+        for symbol in symbols:
+            result[symbol] = await market_provider.quote(symbol)
+        return result
+
+
 class MarketSyncService:
-    def __init__(self, store: SQLiteStore, market_store: Any, market_provider: Any) -> None:
+    def __init__(
+        self,
+        store: SQLiteStore,
+        market_store: Any,
+        market_provider: Any,
+        quote_coordinator: QuoteSyncCoordinator | None = None,
+        trading_calendar: TradingCalendar | None = None,
+    ) -> None:
         self.store = store
         self.market_store = market_store
         self.market_provider = market_provider
+        self.quote_coordinator = quote_coordinator or QuoteSyncCoordinator()
+        self.trading_calendar = trading_calendar or TradingCalendar(market_provider)
 
     def list_watchlist(self) -> list[dict[str, Any]]:
         return self.store.fetch_all(
@@ -153,6 +278,9 @@ class MarketSyncService:
     async def sync_all_a_quotes(self) -> dict[str, Any]:
         return await self._recorded_run("all_a_quote", "all", [], self._sync_all_a_quotes())
 
+    def is_trading_time(self, now: datetime | None = None) -> bool:
+        return is_trading_time(now, calendar=self.trading_calendar)
+
     async def ensure_history(
         self,
         symbol: str,
@@ -227,11 +355,8 @@ class MarketSyncService:
         stats = SyncStats()
         if not symbols:
             return stats
-        if hasattr(self.market_provider, "quotes_batch"):
-            quotes_map = await self.market_provider.quotes_batch(symbols)
-            quotes = list(quotes_map.values())
-        else:
-            quotes = [await self.market_provider.quote(symbol) for symbol in symbols]
+        quotes_map = await self.quote_coordinator.fetch_quotes(symbols, self.market_provider)
+        quotes = [quotes_map[symbol] for symbol in symbols if symbol in quotes_map]
         store_stats = await self.market_store.insert_quotes_async(quotes)
         stats.add_store_stats(store_stats, fetched=len(quotes))
         return stats
@@ -339,9 +464,10 @@ class MarketSyncService:
         return row
 
 
-def is_trading_time(now: datetime | None = None) -> bool:
+def is_trading_time(now: datetime | None = None, calendar: TradingCalendar | None = None) -> bool:
     local = now.astimezone(SHANGHAI_TZ) if now else _today_local()
-    if local.weekday() >= 5:
+    trading_calendar = calendar or TradingCalendar()
+    if not trading_calendar.is_trading_day(local.date()):
         return False
     current = local.time()
     return (MARKET_OPEN <= current <= MARKET_MIDDAY_START) or (

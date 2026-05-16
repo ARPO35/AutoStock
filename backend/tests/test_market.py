@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from datetime import datetime
 from http.client import RemoteDisconnected
 from pathlib import Path
 from uuid import uuid4
@@ -21,6 +22,7 @@ from app.market.normalizer import (
     normalize_spot_rows,
 )
 from app.market.replay import replay_quote_from_cache
+from app.market.sync_service import QuoteSyncCoordinator, is_trading_time
 from app.storage.duckdb import MarketDuckDBStore
 from app.tools.executor import ToolExecutor
 
@@ -257,6 +259,27 @@ class DisconnectedHistoryFakeAKShare(SingleQuoteFakeAKShare):
                 }
             ]
         )
+
+
+class SlowQuoteProvider:
+    def __init__(self) -> None:
+        self.quote_calls = 0
+
+    async def quote(self, symbol):
+        self.quote_calls += 1
+        await asyncio.sleep(0.01)
+        return normalize_spot_rows(
+            FakeFrame(
+                [
+                    {
+                        "代码": symbol,
+                        "名称": "浦发银行",
+                        "最新价": 10.8,
+                    }
+                ]
+            ),
+            fetch_time="2026-04-27T09:35:00+00:00",
+        )[0]
 
 
 class MinuteSuccessFakeAKShare(SingleQuoteFakeAKShare):
@@ -818,6 +841,47 @@ def test_fetch_history_api_and_cache_hit(monkeypatch) -> None:
     assert history.status_code == 200
     assert history.json()["cache_hit"] is True
     assert provider.history_calls == 1
+
+
+def test_data_api_reuses_shared_market_sync_service(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+    original_service = client.app.state.market_sync_service
+    client.app.state.market_provider = provider
+
+    response = client.get("/api/data/watchlist")
+
+    assert response.status_code == 200
+    assert client.app.state.market_sync_service is not original_service
+    shared_service = client.app.state.market_sync_service
+
+    response = client.get("/api/data/sync-runs")
+
+    assert response.status_code == 200
+    assert client.app.state.market_sync_service is shared_service
+
+
+def test_trading_time_uses_2026_sse_holiday_fallback() -> None:
+    assert is_trading_time(datetime.fromisoformat("2026-05-06T09:35:00+08:00")) is True
+    assert is_trading_time(datetime.fromisoformat("2026-05-01T09:35:00+08:00")) is False
+    assert is_trading_time(datetime.fromisoformat("2026-05-16T09:35:00+08:00")) is False
+    assert is_trading_time(datetime.fromisoformat("2026-05-06T12:00:00+08:00")) is False
+
+
+def test_quote_sync_coordinator_reuses_inflight_symbol() -> None:
+    provider = SlowQuoteProvider()
+    coordinator = QuoteSyncCoordinator(ttl_seconds=30)
+
+    async def run():
+        return await asyncio.gather(
+            coordinator.fetch_quotes(["600000"], provider),
+            coordinator.fetch_quotes(["600000"], provider),
+        )
+
+    first, second = asyncio.run(run())
+
+    assert first["600000"]["price"] == 10.8
+    assert second["600000"]["price"] == 10.8
+    assert provider.quote_calls == 1
 
 
 def test_history_api_fetches_when_allowed(monkeypatch) -> None:

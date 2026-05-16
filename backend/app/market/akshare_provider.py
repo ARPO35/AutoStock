@@ -73,6 +73,23 @@ class AKShareMarketProvider:
         frame = ak.stock_zh_a_spot_em()
         return normalize_spot_rows(frame)
 
+    async def trading_dates(self) -> set[str]:
+        return await run_in_threadpool(self.trading_dates_sync)
+
+    def trading_dates_sync(self) -> set[str]:
+        ak = self._akshare()
+        frame = ak.tool_trade_date_hist_sina()
+        if frame is None:
+            return set()
+        records = frame.to_dict(orient="records") if hasattr(frame, "to_dict") else list(frame)
+        result: set[str] = set()
+        for row in records:
+            value = dict(row).get("trade_date") if isinstance(row, dict) else row
+            if value is None:
+                continue
+            result.add(str(value)[:10])
+        return result
+
     async def history(
         self,
         symbol: str,

@@ -53,11 +53,20 @@ class SyncTriggerRequest(BaseModel):
 
 
 def get_sync_service(request: Request) -> MarketSyncService:
-    return MarketSyncService(
-        store=request.app.state.store,
-        market_store=request.app.state.market_store,
-        market_provider=request.app.state.market_provider,
-    )
+    service = getattr(request.app.state, "market_sync_service", None)
+    if (
+        service is None
+        or service.store is not request.app.state.store
+        or service.market_store is not request.app.state.market_store
+        or service.market_provider is not request.app.state.market_provider
+    ):
+        service = MarketSyncService(
+            store=request.app.state.store,
+            market_store=request.app.state.market_store,
+            market_provider=request.app.state.market_provider,
+        )
+        request.app.state.market_sync_service = service
+    return service
 
 
 @router.post("/fetch-history", response_model=FetchHistoryResponse)
