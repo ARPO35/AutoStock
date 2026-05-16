@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from http.client import RemoteDisconnected
 from pathlib import Path
 from uuid import uuid4
 
@@ -256,6 +257,84 @@ class DisconnectedHistoryFakeAKShare(SingleQuoteFakeAKShare):
                 }
             ]
         )
+
+
+class MinuteSuccessFakeAKShare(SingleQuoteFakeAKShare):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hist_min_calls: list[dict[str, str]] = []
+        self.sina_minute_calls: list[dict[str, str]] = []
+
+    def stock_zh_a_hist_min_em(self, **kwargs):
+        self.hist_min_calls.append(kwargs)
+        return FakeFrame(
+            [
+                {
+                    "时间": "2026-05-15 09:35:00",
+                    "开盘": 10.0,
+                    "最高": 10.3,
+                    "最低": 9.9,
+                    "收盘": 10.2,
+                    "成交量": 500,
+                    "成交额": 5100,
+                }
+            ]
+        )
+
+    def stock_zh_a_minute(self, **kwargs):
+        self.sina_minute_calls.append(kwargs)
+        raise AssertionError("Sina minute fallback must not be called after Eastmoney succeeds")
+
+
+class DisconnectedMinuteFakeAKShare(SingleQuoteFakeAKShare):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hist_min_calls: list[dict[str, str]] = []
+        self.sina_minute_calls: list[dict[str, str]] = []
+
+    def stock_zh_a_hist_min_em(self, **kwargs):
+        self.hist_min_calls.append(kwargs)
+        raise RemoteDisconnected("eastmoney disconnected")
+
+    def stock_zh_a_minute(self, **kwargs):
+        self.sina_minute_calls.append(kwargs)
+        return FakeFrame(
+            [
+                {
+                    "day": "2026-05-15 09:25:00",
+                    "open": 9.8,
+                    "high": 9.9,
+                    "low": 9.7,
+                    "close": 9.8,
+                    "volume": 300,
+                    "amount": 2940,
+                },
+                {
+                    "day": "2026-05-15 09:35:00",
+                    "open": 10.0,
+                    "high": 10.3,
+                    "low": 9.9,
+                    "close": 10.2,
+                    "volume": 500,
+                    "amount": 5100,
+                },
+                {
+                    "day": "2026-05-15 15:01:00",
+                    "open": 10.4,
+                    "high": 10.4,
+                    "low": 10.3,
+                    "close": 10.3,
+                    "volume": 200,
+                    "amount": 2060,
+                },
+            ]
+        )
+
+
+class FailedMinuteFallbackFakeAKShare(DisconnectedMinuteFakeAKShare):
+    def stock_zh_a_minute(self, **kwargs):
+        self.sina_minute_calls.append(kwargs)
+        raise RuntimeError("sina minute unavailable")
 
 
 class NameLookupFailureFakeAKShare(SingleQuoteFakeAKShare):
@@ -574,6 +653,110 @@ def test_akshare_history_falls_back_to_sina_when_eastmoney_disconnects(monkeypat
     ]
 
 
+def test_akshare_minute_uses_eastmoney_without_sina_fallback(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = MinuteSuccessFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    minute = asyncio.run(
+        provider.minute(
+            "600000",
+            "2026-05-15 09:30:00",
+            "2026-05-15 15:00:00",
+            period="1",
+        )
+    )
+
+    assert len(minute) == 1
+    assert minute[0]["source"] == "akshare.stock_zh_a_hist_min_em"
+    assert fake_ak.hist_min_calls == [
+        {
+            "symbol": "600000",
+            "start_date": "2026-05-15 09:30:00",
+            "end_date": "2026-05-15 15:00:00",
+            "period": "1",
+            "adjust": "",
+        }
+    ]
+    assert fake_ak.sina_minute_calls == []
+
+
+def test_akshare_minute_falls_back_to_sina_after_eastmoney_disconnects(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = DisconnectedMinuteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    minute = asyncio.run(provider.minute("600000", "2026-05-15", "2026-05-15", period="1"))
+
+    assert len(minute) == 1
+    assert minute[0]["datetime"] == "2026-05-15 09:35:00"
+    assert minute[0]["open"] == 10.0
+    assert minute[0]["close"] == 10.2
+    assert minute[0]["source"] == "akshare.stock_zh_a_minute"
+    assert fake_ak.hist_min_calls == [
+        {
+            "symbol": "600000",
+            "start_date": "2026-05-15 09:30:00",
+            "end_date": "2026-05-15 15:00:00",
+            "period": "1",
+            "adjust": "",
+        },
+        {
+            "symbol": "600000",
+            "start_date": "2026-05-15 09:30:00",
+            "end_date": "2026-05-15 15:00:00",
+            "period": "1",
+            "adjust": "",
+        },
+    ]
+    assert fake_ak.sina_minute_calls == [
+        {
+            "symbol": "sh600000",
+            "period": "1",
+            "adjust": "",
+        }
+    ]
+
+
+def test_akshare_minute_reports_clear_error_when_both_providers_fail(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = FailedMinuteFallbackFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    try:
+        asyncio.run(provider.minute("600000", "2026-05-15", "2026-05-15", period="1"))
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("minute should fail when both providers are unavailable")
+
+    assert "Minute market data providers are unavailable" in message
+    assert "Eastmoney minute data failed after a short retry" in message
+    assert "Sina minute fallback failed" in message
+
+
+def test_replay_quote_derives_from_sina_minute_fallback_when_eastmoney_disconnects(monkeypatch) -> None:
+    provider = AKShareMarketProvider()
+    fake_ak = DisconnectedMinuteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+    store = MarketDuckDBStore(":memory:")
+    store.initialize()
+
+    quote = asyncio.run(
+        replay_quote_from_cache(
+            store,
+            "600000",
+            {"time_mode": "replay", "effective_time": "2026-05-15 10:00:00"},
+            provider,
+        )
+    )
+
+    assert quote["price"] == 10.2
+    assert quote["datetime"] == "2026-05-15 09:35:00"
+    assert quote["source"] == "replay.derived.minute"
+    assert fake_ak.sina_minute_calls == [{"symbol": "sh600000", "period": "1", "adjust": ""}]
+
+
 def test_akshare_provider_enriches_bars_cache_status_and_replay_quote(monkeypatch) -> None:
     provider = AKShareMarketProvider()
     fake_ak = NamedBarsFakeAKShare()
@@ -762,6 +945,31 @@ def test_minute_normalizer_accepts_chinese_columns() -> None:
     assert bars[0]["datetime"] == "2026-04-27 09:35:00"
 
 
+def test_minute_normalizer_accepts_sina_day_column() -> None:
+    bars = normalize_minute_rows(
+        FakeFrame(
+            [
+                {
+                    "day": "2026-05-15 09:35:00",
+                    "open": "10.0",
+                    "high": "10.3",
+                    "low": "9.9",
+                    "close": "10.2",
+                    "volume": "500",
+                    "amount": "5100",
+                }
+            ]
+        ),
+        symbol="600000",
+        period="1",
+        fetch_time="2026-05-15T01:35:00+00:00",
+    )
+
+    assert bars[0]["datetime"] == "2026-05-15 09:35:00"
+    assert bars[0]["open"] == 10.0
+    assert bars[0]["amount"] == 5100.0
+
+
 def test_announcement_normalizer_accepts_chinese_columns() -> None:
     announcements = normalize_announcement_rows(
         FakeFrame(
@@ -807,6 +1015,38 @@ def test_minute_tool_returns_json(monkeypatch) -> None:
     assert result.result["interval"] == "5m"
     assert len(result.result["bars"]) == 2
     assert provider.minute_calls == 1
+
+
+def test_minute_tool_uses_provider_sina_fallback_when_eastmoney_disconnects(monkeypatch) -> None:
+    client, _ = make_client(monkeypatch)
+    provider = AKShareMarketProvider()
+    fake_ak = DisconnectedMinuteFakeAKShare()
+    monkeypatch.setattr(provider, "_akshare", lambda: fake_ak)
+
+    from app.tools.registry import create_default_registry
+
+    client.app.state.market_provider = provider
+    client.app.state.tool_registry = create_default_registry(
+        market_store=client.app.state.market_store,
+        market_provider=provider,
+    )
+    executor = ToolExecutor(client.app.state.tool_registry)
+
+    result = asyncio.run(
+        executor.execute(
+            "market_minute",
+            (
+                '{"symbol": "600000", "start": "2026-05-15", '
+                '"end": "2026-05-15", "period": "1", '
+                '"allow_fetch_missing": true}'
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert len(result.result["bars"]) == 1
+    assert result.result["bars"][0]["source"] == "akshare.stock_zh_a_minute"
+    assert fake_ak.sina_minute_calls == [{"symbol": "sh600000", "period": "1", "adjust": ""}]
 
 
 def test_announcement_tool_returns_json(monkeypatch) -> None:

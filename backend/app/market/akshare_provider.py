@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from http.client import RemoteDisconnected
 from typing import Any
 
@@ -120,6 +121,7 @@ class AKShareMarketProvider:
         )
 
     _MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
+    _MINUTE_RETRY_DELAYS = (0.05,)
 
     async def minute(
         self,
@@ -152,23 +154,60 @@ class AKShareMarketProvider:
         normalized_symbol = normalize_symbol(symbol)
         name = self.name_resolver.resolve(normalized_symbol, ak)
 
-        start_dt = self._minute_datetime(start)
-        end_dt = self._minute_datetime(end)
+        start_dt = self._minute_datetime(start, is_end=False)
+        end_dt = self._minute_datetime(end, is_end=True)
 
-        frame = ak.stock_zh_a_hist_min_em(
-            symbol=normalized_symbol,
-            start_date=start_dt,
-            end_date=end_dt,
-            period=period,
-            adjust=adjust or "",
-        )
-        return normalizer_func(
-            frame,
-            symbol=normalized_symbol,
-            period=period,
-            adjust=adjust or "",
-            name=name,
-        )
+        eastmoney_error: Exception | None = None
+        for attempt in range(len(self._MINUTE_RETRY_DELAYS) + 1):
+            try:
+                frame = ak.stock_zh_a_hist_min_em(
+                    symbol=normalized_symbol,
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    period=period,
+                    adjust=adjust or "",
+                )
+                return normalizer_func(
+                    frame,
+                    symbol=normalized_symbol,
+                    period=period,
+                    adjust=adjust or "",
+                    name=name,
+                    source="akshare.stock_zh_a_hist_min_em",
+                )
+            except Exception as exc:
+                if not self._should_fallback_request_error(exc):
+                    raise
+                eastmoney_error = exc
+                if attempt < len(self._MINUTE_RETRY_DELAYS):
+                    time.sleep(self._MINUTE_RETRY_DELAYS[attempt])
+
+        try:
+            frame = ak.stock_zh_a_minute(
+                symbol=self._sina_code(normalized_symbol),
+                period=period,
+                adjust=adjust or "",
+            )
+            bars = normalizer_func(
+                frame,
+                symbol=normalized_symbol,
+                period=period,
+                adjust=adjust or "",
+                name=name,
+                source="akshare.stock_zh_a_minute",
+            )
+            return [
+                bar for bar in bars
+                if start_dt <= str(bar.get("datetime") or "") <= end_dt
+            ]
+        except Exception as sina_error:
+            raise RuntimeError(
+                "Minute market data providers are unavailable for "
+                f"{normalized_symbol} period {period} between {start_dt} and {end_dt}. "
+                "Eastmoney minute data failed after a short retry and Sina minute fallback failed; "
+                "retry later or rely on existing cached minute bars. "
+                f"Eastmoney error: {eastmoney_error}. Sina error: {sina_error}."
+            ) from sina_error
 
     async def announcement(
         self,
@@ -199,11 +238,11 @@ class AKShareMarketProvider:
         return normalizer_func(frame, symbol=normalized_symbol)
 
     @staticmethod
-    def _minute_datetime(value: str) -> str:
+    def _minute_datetime(value: str, *, is_end: bool = False) -> str:
         text = value.strip()
         if " " in text:
             return text
-        return f"{text} 09:30:00"
+        return f"{text} {'15:00:00' if is_end else '09:30:00'}"
 
     def _akshare(self) -> Any:
         try:

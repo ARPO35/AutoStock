@@ -155,7 +155,7 @@ def normalize_minute_rows(
             "name": name,
             "interval": interval,
             "datetime": _datetime_string(
-                row.get("时间") or row.get("time") or row.get("datetime")
+                row.get("时间") or row.get("time") or row.get("datetime") or row.get("day")
             ),
             "open": _number(row.get("开盘") or row.get("open")),
             "high": _number(row.get("最高") or row.get("high")),
