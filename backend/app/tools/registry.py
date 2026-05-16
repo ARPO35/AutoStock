@@ -98,7 +98,11 @@ def create_default_registry(
         from app.tools.order_tools import create_order_tool_specs
         from app.tools.portfolio_tools import create_portfolio_tool_specs
 
-        for spec in create_order_tool_specs(simulator_engine, market_store=market_store):
+        for spec in create_order_tool_specs(
+            simulator_engine,
+            market_store=market_store,
+            market_provider=market_provider,
+        ):
             registry.register(spec)
         for spec in create_portfolio_tool_specs(simulator_engine):
             registry.register(spec)

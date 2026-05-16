@@ -217,6 +217,108 @@ def test_replay_market_tools_clamp_and_do_not_fetch() -> None:
     assert "disabled during replay" in (fetch.error or "")
 
 
+def test_replay_market_quote_fetches_missing_minute_bars_to_effective_time() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.quote = AsyncMock()
+    provider.history = AsyncMock()
+    provider.minute = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600703",
+                "name": "三安光电",
+                "interval": "1m",
+                "datetime": "2026-05-15 15:00:00",
+                "open": 13.48,
+                "high": 13.5,
+                "low": 13.45,
+                "close": 13.49,
+                "volume": 2000,
+                "amount": 26980,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-15T07:00:00+00:00",
+                "raw_hash": "minute-600703",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+
+    quote = asyncio.run(
+        executor.execute(
+            "market_quote",
+            '{"symbol":"600703"}',
+            {"time_mode": "replay", "effective_time": "2026-05-16T01:52:21+08:00"},
+        )
+    )
+
+    assert quote.ok is True
+    assert quote.result["price"] == 13.49
+    assert quote.result["datetime"] == "2026-05-15 15:00:00"
+    assert quote.result["source"] == "replay.derived.minute"
+    assert provider.quote.await_count == 0
+    assert provider.minute.await_args.kwargs == {
+        "symbol": "600703",
+        "start": "2026-05-09 09:30:00",
+        "end": "2026-05-16 01:52:21",
+        "period": "1",
+    }
+    assert provider.history.await_count == 0
+
+
+def test_replay_market_quote_falls_back_to_daily_when_minute_fetch_fails() -> None:
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.quote = AsyncMock()
+    provider.minute = AsyncMock(side_effect=RuntimeError("minute unavailable"))
+    provider.history = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600703",
+                "name": "三安光电",
+                "interval": "daily",
+                "datetime": "2026-05-15",
+                "open": 13.2,
+                "high": 13.6,
+                "low": 13.1,
+                "close": 13.49,
+                "volume": 500000,
+                "amount": 6745000,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-15T08:00:00+00:00",
+                "raw_hash": "daily-600703",
+            }
+        ]
+    )
+    registry = create_default_registry(market_store=market_store, market_provider=provider)
+    executor = ToolExecutor(registry)
+
+    quote = asyncio.run(
+        executor.execute(
+            "market_quote",
+            '{"symbol":"600703"}',
+            {"time_mode": "replay", "effective_time": "2026-05-16T01:52:21+08:00"},
+        )
+    )
+
+    assert quote.ok is True
+    assert quote.result["price"] == 13.49
+    assert quote.result["datetime"] == "2026-05-15"
+    assert quote.result["source"] == "replay.derived.daily"
+    assert provider.quote.await_count == 0
+    assert provider.history.await_args.kwargs == {
+        "symbol": "600703",
+        "start": "2026-05-06",
+        "end": "2026-05-16",
+        "interval": "daily",
+        "adjust": "",
+    }
+
+
 def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:
     market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
     market_store.initialize()

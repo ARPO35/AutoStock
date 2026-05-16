@@ -8,13 +8,17 @@ from app.simulator.rules import TradingRuleError
 from app.tools.registry import ToolSpec
 
 
-def create_order_tool_specs(engine: SimulatorEngine, market_store: Any | None = None) -> list[ToolSpec]:
+def create_order_tool_specs(
+    engine: SimulatorEngine,
+    market_store: Any | None = None,
+    market_provider: Any | None = None,
+) -> list[ToolSpec]:
     async def _runtime_quote(symbol: str, runtime_context: dict[str, Any] | None) -> dict[str, Any] | None:
         if not is_replay_context(runtime_context):
             return None
         if market_store is None:
             raise TradingRuleError("Replay order tools require market cache storage.")
-        return await replay_quote_from_cache(market_store, symbol, runtime_context)
+        return await replay_quote_from_cache(market_store, symbol, runtime_context, market_provider)
 
     def _filled_order_result(
         *,

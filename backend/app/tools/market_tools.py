@@ -17,7 +17,7 @@ def create_market_tool_specs(market_store: Any, market_provider: Any) -> list[To
     ) -> dict[str, Any]:
         symbol = str(arguments["symbol"])
         if is_replay_context(runtime_context):
-            return await replay_quote_from_cache(market_store, symbol, runtime_context)
+            return await replay_quote_from_cache(market_store, symbol, runtime_context, market_provider)
         quote = await market_provider.quote(symbol)
         await market_store.insert_quote_async(quote)
         return quote
