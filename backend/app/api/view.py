@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.dependencies import get_store
-from app.simulator.engine import SimulatorEngine
+from app.scheduler.account_valuation import AccountValuationRefreshService
 from app.storage.sqlite import SQLiteStore
 
 router = APIRouter(prefix="/api/view", tags=["view"])
@@ -18,8 +18,24 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_simulator_engine(request: Request) -> SimulatorEngine:
-    return request.app.state.simulator_engine
+def get_account_valuation_service(request: Request) -> AccountValuationRefreshService:
+    service = getattr(request.app.state, "account_valuation_refresh_service", None)
+    if (
+        service is None
+        or service.store is not request.app.state.store
+        or service.market_store is not request.app.state.market_store
+        or service.market_provider is not request.app.state.market_provider
+    ):
+        market_sync_service = getattr(request.app.state, "market_sync_service", None)
+        service = AccountValuationRefreshService(
+            store=request.app.state.store,
+            market_store=request.app.state.market_store,
+            market_provider=request.app.state.market_provider,
+            quote_coordinator=getattr(market_sync_service, "quote_coordinator", None),
+            websocket_manager=getattr(request.app.state, "websocket_manager", None),
+        )
+        request.app.state.account_valuation_refresh_service = service
+    return service
 
 
 @router.get("/overview")
@@ -33,11 +49,8 @@ async def view_overview(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
-    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
-    for account in accounts:
-        await engine.refresh_account_valuation(str(account["id"]))
     snapshots = [
         _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
         for account in accounts
@@ -71,11 +84,8 @@ async def view_account_detail(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
-    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
-    for account in accounts:
-        await engine.refresh_account_valuation(str(account["id"]))
     snapshots = [
         _account_snapshot(store, str(account["id"]), start, end, symbol, session_id, model, side, status_filter)
         for account in accounts
@@ -98,11 +108,36 @@ async def view_account_snapshot(
     side: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     store: SQLiteStore = Depends(get_store),
-    engine: SimulatorEngine = Depends(get_simulator_engine),
 ) -> dict[str, Any]:
     _account_or_404(store, account_id)
-    await engine.refresh_account_valuation(account_id)
     return _account_snapshot(store, account_id, start, end, symbol, session_id, model, side, status_filter)
+
+
+@router.post("/accounts/{account_id}/valuation/refresh")
+async def refresh_account_valuation(
+    account_id: str,
+    store: SQLiteStore = Depends(get_store),
+    valuation_service: AccountValuationRefreshService = Depends(get_account_valuation_service),
+) -> dict[str, Any]:
+    _account_or_404(store, account_id)
+    try:
+        result = await valuation_service.refresh_account(account_id, source="valuation")
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    snapshot = _account_snapshot(store, account_id, None, None, None)
+    return {
+        "generated_at": result["generated_at"],
+        "account": snapshot["account"],
+        "metrics": snapshot["metrics"],
+        "valuation_point": result.get("valuation_point"),
+        "clock": result["clock"],
+        "symbols": result.get("symbols", []),
+        "source": result["source"],
+    }
 
 
 @router.get("/trades")

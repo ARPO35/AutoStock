@@ -115,6 +115,18 @@ class PortfolioValuationService:
             """,
             (total_asset, valuation_time, account_id),
         )
+        valuation_point_id = uuid4().hex
+        valuation_point = {
+            "id": valuation_point_id,
+            "simulator_account_id": account_id,
+            "time": valuation_time,
+            "cash": float(account["cash"]),
+            "market_value": market_value,
+            "unrealized_pnl": unrealized_pnl,
+            "total_asset": total_asset,
+            "source": source,
+            "symbols": sorted(quotes),
+        }
         self.store.execute(
             """
             INSERT INTO account_valuation_points (
@@ -124,7 +136,7 @@ class PortfolioValuationService:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                uuid4().hex,
+                valuation_point_id,
                 account_id,
                 valuation_time,
                 float(account["cash"]),
@@ -142,6 +154,7 @@ class PortfolioValuationService:
             "unrealized_pnl": unrealized_pnl,
             "total_asset": total_asset,
             "symbols": sorted(quotes),
+            "valuation_point": valuation_point,
         }
 
     async def _quotes_for_account(

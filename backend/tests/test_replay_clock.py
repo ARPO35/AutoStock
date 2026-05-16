@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import create_app
+from app.scheduler.account_valuation import AccountValuationRefreshService
 from app.simulator.engine import SimulatorEngine
 from app.simulator.replay_clock import ReplayClockService
 from app.simulator.rules import TradingRuleError
@@ -389,6 +390,58 @@ def test_replay_account_valuation_fetches_missing_bars_to_effective_time() -> No
     assert point["time"].startswith("2026-05-16T01:52:21")
     assert point["total_asset"] == 103490
     assert point["symbols_json"] == '["600703"]'
+
+
+def test_account_valuation_refresh_service_uses_account_clock_intervals() -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Clocked Valuation", initial_cash=100000)
+    account_id = str(account["id"])
+    store.execute(
+        """
+        INSERT INTO positions (
+            id, simulator_account_id, symbol, name, quantity,
+            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
+        )
+        VALUES (?, ?, '000001', 'Ping An', 1000, 1000, 10, 10000, 0, ?)
+        """,
+        (uuid4().hex, account_id, "2026-04-27T09:30:00+08:00"),
+    )
+    store.execute(
+        """
+        UPDATE simulator_accounts
+        SET cash = 90000, total_asset = 100000
+        WHERE id = ?
+        """,
+        (account_id,),
+    )
+    provider = MagicMock()
+    provider.quotes_batch = AsyncMock(return_value={"000001": _quote(price=10.8)})
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    service = AccountValuationRefreshService(store, market_store, provider)
+
+    first = asyncio.run(service.refresh_due_accounts(now=0))
+    skipped = asyncio.run(service.refresh_due_accounts(now=59))
+    second = asyncio.run(service.refresh_due_accounts(now=60))
+
+    assert len(first) == 1
+    assert skipped == []
+    assert len(second) == 1
+    assert provider.quotes_batch.await_count == 2
+
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=2)
+    replay_clock = ReplayClockService(store).get_clock(account_id)
+    assert service.interval_for_clock(replay_clock) == 30
+
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=100)
+    fast_clock = ReplayClockService(store).get_clock(account_id)
+    assert service.interval_for_clock(fast_clock) == 5
+
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=0)
+    paused_clock = ReplayClockService(store).get_clock(account_id)
+    assert service.interval_for_clock(paused_clock) is None
+    assert asyncio.run(service.refresh_due_accounts(now=120)) == []
 
 
 def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:

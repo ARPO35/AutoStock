@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from test_mvp import make_client
@@ -141,6 +142,9 @@ def _seed_trade(client):
 def test_view_account_snapshot_uses_simulator_account口径(monkeypatch) -> None:
     client = make_client(monkeypatch)
     account, _ = _seed_trade(client)
+    provider = MagicMock()
+    provider.quotes_batch = AsyncMock(return_value={"000001": {"symbol": "000001", "name": "Ping An Bank", "price": 99}})
+    client.app.state.market_provider = provider
 
     response = client.get(f"/api/view/accounts/{account['id']}/snapshot")
     assert response.status_code == 200
@@ -156,6 +160,35 @@ def test_view_account_snapshot_uses_simulator_account口径(monkeypatch) -> None
     assert body["recent_trades"][0]["name"] == "Ping An Bank"
     assert body["recent_trades"][0]["turnover"] == 10000
     assert body["asset_points"][-1]["source"] == "current"
+    assert provider.quotes_batch.await_count == 0
+    points = client.app.state.store.fetch_all(
+        "SELECT * FROM account_valuation_points WHERE simulator_account_id = ?",
+        (account["id"],),
+    )
+    assert points == []
+
+
+def test_manual_account_valuation_refresh_updates_metrics_and_writes_point(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    account, _ = _seed_trade(client)
+    provider = MagicMock()
+    provider.quotes_batch = AsyncMock(
+        return_value={"000001": {"symbol": "000001", "name": "Ping An Bank", "price": 12.3}}
+    )
+    client.app.state.market_provider = provider
+
+    response = client.post(f"/api/view/accounts/{account['id']}/valuation/refresh")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["metrics"]["market_value"] == 12300
+    assert body["metrics"]["floating_pnl"] == 2300
+    assert body["metrics"]["total_asset"] == 102295
+    assert body["symbols"] == ["000001"]
+    assert body["clock"]["mode"] == "live"
+    assert body["valuation_point"]["total_asset"] == 102295
+    assert body["valuation_point"]["symbols"] == ["000001"]
+    assert provider.quotes_batch.await_count == 1
 
 
 def test_view_assets_include_persisted_valuation_points(monkeypatch) -> None:

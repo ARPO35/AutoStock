@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.core.websocket_manager import WebSocketManager
 from app.market.akshare_provider import AKShareMarketProvider
 from app.market.sync_service import MarketSyncService
+from app.scheduler.account_valuation import AccountValuationRefreshService
 from app.scheduler.market_sync import create_market_sync_scheduler
 from app.sessions.runtime import SessionRunManager
 from app.simulator.engine import SimulatorEngine
@@ -47,9 +48,13 @@ def create_app() -> FastAPI:
         scheduler = app.state.market_sync_scheduler
         if scheduler is not None and not scheduler.running:
             scheduler.start()
+        account_valuation_service = app.state.account_valuation_refresh_service
+        account_valuation_service.start()
         try:
             yield
         finally:
+            account_valuation_service = app.state.account_valuation_refresh_service
+            await account_valuation_service.stop()
             scheduler = app.state.market_sync_scheduler
             if scheduler is not None:
                 with suppress(Exception):
@@ -78,6 +83,13 @@ def create_app() -> FastAPI:
         websocket_manager=app.state.websocket_manager,
     )
     app.state.market_sync_scheduler = create_market_sync_scheduler(app.state.market_sync_service)
+    app.state.account_valuation_refresh_service = AccountValuationRefreshService(
+        store=app.state.store,
+        market_store=app.state.market_store,
+        market_provider=app.state.market_provider,
+        quote_coordinator=app.state.market_sync_service.quote_coordinator,
+        websocket_manager=app.state.websocket_manager,
+    )
     app.state.tavily_service = TavilyService(store=app.state.store, settings=settings)
     app.state.simulator_engine = SimulatorEngine(
         store=app.state.store,
