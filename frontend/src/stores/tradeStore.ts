@@ -622,7 +622,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       currentReasoning,
       currentContent,
       currentToolCalls,
-      reasoningStartTime,
       activeReasoningDurationMs,
       lastModel,
       lastRunLatencyMs,
@@ -658,15 +657,11 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
 
     if (currentReasoning || currentContent) {
-      const currentReasoningDurationMs = activeReasoningDurationMs
-        ?? (currentReasoning && reasoningStartTime != null
-          ? Date.now() - reasoningStartTime
-          : null);
       items.push(syntheticAssistantMessage(
         currentContent,
         lastModel,
         currentReasoning || null,
-        currentReasoningDurationMs,
+        activeReasoningDurationMs,
         "current",
       ));
     }

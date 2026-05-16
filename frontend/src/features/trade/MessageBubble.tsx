@@ -1,10 +1,11 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronRight } from "lucide-react";
 import type { TimelineItem } from "@/types";
 import { ToolCallCard } from "@/features/trade/ToolCallCard";
 
-export function MessageBubble({ item }: { item: TimelineItem }) {
+function MessageBubbleView({ item }: { item: TimelineItem }) {
   if (item.role === "user") return <UserBubble item={item} />;
   if (item.role === "assistant") return <AssistantBubble item={item} />;
   if (item.role === "tool-call") return <ToolCallBubble item={item} />;
@@ -12,6 +13,24 @@ export function MessageBubble({ item }: { item: TimelineItem }) {
   if (item.role === "tool-result") return null;
   return <ErrorBubble item={item} />;
 }
+
+export const MessageBubble = memo(MessageBubbleView, (prev, next) => (
+  prev.item.id === next.item.id &&
+  prev.item.role === next.item.role &&
+  prev.item.body === next.item.body &&
+  prev.item.reasoning === next.item.reasoning &&
+  prev.item.reasoningDurationMs === next.item.reasoningDurationMs &&
+  prev.item.streaming === next.item.streaming &&
+  prev.item.status === next.item.status &&
+  prev.item.argsSummary === next.item.argsSummary &&
+  prev.item.time === next.item.time &&
+  prev.item.model === next.item.model &&
+  prev.item.latencyMs === next.item.latencyMs &&
+  prev.item.tps === next.item.tps &&
+  prev.item.tokenCount === next.item.tokenCount &&
+  prev.item.toolCallId === next.item.toolCallId &&
+  prev.item.toolName === next.item.toolName
+));
 
 function UserBubble({ item }: { item: TimelineItem }) {
   return (
@@ -53,9 +72,9 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
               <span className="text-text-muted-strong">
                 {item.streaming && item.reasoningDurationMs == null
                   ? "思考中……"
-                  : "思考完成"}
+                  : "已思考"}
                 {item.reasoningDurationMs != null
-                  ? ` ${formatLatency(item.reasoningDurationMs)}`
+                  ? ` ${formatReasoningDuration(item.reasoningDurationMs)}`
                   : ""}
               </span>
             </summary>
@@ -82,9 +101,15 @@ function AssistantBubble({ item }: { item: TimelineItem }) {
           [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:my-1.5
           [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:my-1
         ">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {item.body || (item.streaming ? "..." : "")}
-          </ReactMarkdown>
+          {item.streaming ? (
+            <p className="my-1 whitespace-pre-wrap break-words">
+              {item.body || "..."}
+            </p>
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {item.body || ""}
+            </ReactMarkdown>
+          )}
         </div>
         {hasUsage && (
           <div className="flex items-center gap-1 mt-1.5 text-text-muted text-[11px] select-none">
@@ -112,8 +137,10 @@ function ReasoningBubble({ item }: { item: TimelineItem }) {
           <summary className="flex items-center gap-1.5 cursor-pointer text-text-muted text-xs hover:text-text-muted-strong list-none select-none">
             <ChevronRight size={13} className="transition-transform group-open/think:rotate-90" />
             <span className="text-text-muted-strong">
-              {item.streaming ? "思考中……" : "思考完成"}
-              {item.reasoningDurationMs != null ? ` ${formatLatency(item.reasoningDurationMs)}` : ""}
+              {item.streaming && item.reasoningDurationMs == null ? "思考中……" : "已思考"}
+              {item.reasoningDurationMs != null
+                ? ` ${formatReasoningDuration(item.reasoningDurationMs)}`
+                : ""}
             </span>
           </summary>
           <div className="ml-3 mt-1 border-l border-hairline py-1 pl-3">
@@ -162,6 +189,18 @@ function ErrorBubble({ item }: { item: TimelineItem }) {
 function formatLatency(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatReasoningDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m${seconds}s`;
 }
 
 function formatTps(tps: number): string {

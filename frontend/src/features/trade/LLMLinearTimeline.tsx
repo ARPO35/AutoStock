@@ -31,6 +31,7 @@ export function LLMLinearTimeline() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
   const manuallyUnlockedRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 
   const RELOCK_THRESHOLD_PX = 48;
@@ -64,6 +65,20 @@ export function LLMLinearTimeline() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   };
 
+  const scheduleScrollToBottom = (behavior: ScrollBehavior) => {
+    if (scrollFrameRef.current != null) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+    });
+  };
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     if (selectedSessionId) {
       manuallyUnlockedRef.current = false;
@@ -76,19 +91,24 @@ export function LLMLinearTimeline() {
     const el = scrollRef.current;
     if (!el) return;
     lastScrollTopRef.current = el.scrollTop;
-    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    scheduleScrollToBottom("auto");
   }, [selectedSessionId]);
 
   useEffect(() => {
     if (loadingTimeline || !selectedSessionId) return;
     if (!autoScrollEnabled) return;
-    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    scheduleScrollToBottom("auto");
   }, [loadingTimeline, selectedSessionId, autoScrollEnabled]);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [timeline.length, busy, currentContent, autoScrollEnabled]);
+    scheduleScrollToBottom("auto");
+  }, [currentContent, currentReasoning, currentToolCalls, autoScrollEnabled]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled) return;
+    scheduleScrollToBottom("smooth");
+  }, [timeline.length, busy, autoScrollEnabled]);
 
   useEffect(() => {
     if (!focusedToolCallId) return;
