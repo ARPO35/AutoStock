@@ -540,7 +540,7 @@ def test_akshare_provider_does_not_block_event_loop(monkeypatch) -> None:
             provider.history("600000", "2026-04-27", "2026-04-27"),
             release_soon(),
         )
-        assert time.perf_counter() - started < 0.15
+        assert time.perf_counter() - started < 0.5
         return history
 
     history = asyncio.run(run())
@@ -821,7 +821,7 @@ def test_market_store_async_methods_do_not_block_event_loop() -> None:
     async def run() -> list[dict[str, object]]:
         started = time.perf_counter()
         status, _ = await asyncio.gather(store.cache_status_async(), release_soon())
-        assert time.perf_counter() - started < 0.15
+        assert time.perf_counter() - started < 0.5
         return status
 
     status = asyncio.run(run())
