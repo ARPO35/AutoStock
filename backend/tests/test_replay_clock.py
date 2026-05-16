@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.scheduler.account_valuation import AccountValuationRefreshService
 from app.simulator.engine import SimulatorEngine
-from app.simulator.replay_clock import ReplayClockService
+from app.simulator.replay_clock import ReplayClockService, parse_clock_time
 from app.simulator.rules import TradingRuleError
 from app.simulator.valuation import PortfolioValuationService
 from app.storage.duckdb import MarketDuckDBStore
@@ -56,6 +56,32 @@ def _engine(store: SQLiteStore, enforce_trading_hours: bool = False) -> Simulato
     provider.quote = AsyncMock(return_value=_quote())
     provider.quotes_batch = AsyncMock(return_value={"000001": _quote()})
     return SimulatorEngine(store, provider, enforce_trading_hours=enforce_trading_hours)
+
+
+def _insert_position(
+    store: SQLiteStore,
+    account_id: str,
+    symbol: str = "000001",
+    updated_at: str = "2026-04-27T09:30:00+08:00",
+) -> None:
+    store.execute(
+        """
+        INSERT INTO positions (
+            id, simulator_account_id, symbol, name, quantity,
+            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
+        )
+        VALUES (?, ?, ?, 'Ping An', 1000, 1000, 10, 10000, 0, ?)
+        """,
+        (uuid4().hex, account_id, symbol, updated_at),
+    )
+    store.execute(
+        """
+        UPDATE simulator_accounts
+        SET cash = 90000, total_asset = 100000
+        WHERE id = ?
+        """,
+        (account_id,),
+    )
 
 
 def test_replay_clock_live_pause_advance_and_restore() -> None:
@@ -397,24 +423,7 @@ def test_account_valuation_refresh_service_uses_account_clock_intervals() -> Non
     engine = _engine(store)
     account = engine.create_account("Clocked Valuation", initial_cash=100000)
     account_id = str(account["id"])
-    store.execute(
-        """
-        INSERT INTO positions (
-            id, simulator_account_id, symbol, name, quantity,
-            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
-        )
-        VALUES (?, ?, '000001', 'Ping An', 1000, 1000, 10, 10000, 0, ?)
-        """,
-        (uuid4().hex, account_id, "2026-04-27T09:30:00+08:00"),
-    )
-    store.execute(
-        """
-        UPDATE simulator_accounts
-        SET cash = 90000, total_asset = 100000
-        WHERE id = ?
-        """,
-        (account_id,),
-    )
+    _insert_position(store, account_id)
     provider = MagicMock()
     provider.quotes_batch = AsyncMock(return_value={"000001": _quote(price=10.8)})
     market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
@@ -432,16 +441,245 @@ def test_account_valuation_refresh_service_uses_account_clock_intervals() -> Non
 
     ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=2)
     replay_clock = ReplayClockService(store).get_clock(account_id)
-    assert service.interval_for_clock(replay_clock) == 30
+    assert service.interval_for_clock(replay_clock) == 60
 
     ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=100)
     fast_clock = ReplayClockService(store).get_clock(account_id)
-    assert service.interval_for_clock(fast_clock) == 5
+    assert service.interval_for_clock(fast_clock) == 60
 
     ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=0)
     paused_clock = ReplayClockService(store).get_clock(account_id)
     assert service.interval_for_clock(paused_clock) is None
     assert asyncio.run(service.refresh_due_accounts(now=120)) == []
+
+
+def test_replay_auto_valuation_uses_simulated_sixty_second_cadence(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Replay Cadence", initial_cash=100000)
+    account_id = str(account["id"])
+    _insert_position(store, account_id)
+    current_now = datetime(2026, 4, 27, 2, 0, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=5)
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    market_store.insert_bars(
+        [
+            {
+                "symbol": "000001",
+                "name": "Ping An",
+                "interval": "1m",
+                "datetime": "2026-04-27 10:00:00",
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 1000,
+                "amount": 10000,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-04-27T02:00:00+00:00",
+                "raw_hash": "cadence-1",
+            },
+            {
+                "symbol": "000001",
+                "name": "Ping An",
+                "interval": "1m",
+                "datetime": "2026-04-27 10:01:00",
+                "open": 11.0,
+                "high": 11.0,
+                "low": 11.0,
+                "close": 11.0,
+                "volume": 1000,
+                "amount": 11000,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-04-27T02:01:00+00:00",
+                "raw_hash": "cadence-2",
+            },
+        ]
+    )
+    provider = MagicMock()
+    provider.quote = AsyncMock()
+    provider.minute = AsyncMock()
+    provider.history = AsyncMock()
+    service = AccountValuationRefreshService(store, market_store, provider)
+
+    first = asyncio.run(service.refresh_due_accounts(now=0))
+    current_now = current_now + timedelta(seconds=5)
+    skipped = asyncio.run(service.refresh_due_accounts(now=5))
+    current_now = current_now + timedelta(seconds=7)
+    second = asyncio.run(service.refresh_due_accounts(now=12))
+
+    assert len(first) == 1
+    assert skipped == []
+    assert len(second) == 1
+    points = store.fetch_all(
+        """
+        SELECT time, total_asset
+        FROM account_valuation_points
+        WHERE simulator_account_id = ?
+        ORDER BY time ASC
+        """,
+        (account_id,),
+    )
+    assert [point["time"] for point in points] == [
+        "2026-04-27T10:00:00+08:00",
+        "2026-04-27T10:01:00+08:00",
+    ]
+    first_time = parse_clock_time(points[0]["time"])
+    second_time = parse_clock_time(points[1]["time"])
+    assert (second_time - first_time).total_seconds() == 60
+    assert provider.quote.await_count == 0
+
+
+def test_replay_auto_valuation_schedules_due_accounts_concurrently(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    slow_account = engine.create_account("Slow Replay", initial_cash=100000)
+    fast_account = engine.create_account("Fast Replay", initial_cash=100000)
+    slow_account_id = str(slow_account["id"])
+    fast_account_id = str(fast_account["id"])
+    _insert_position(store, slow_account_id)
+    _insert_position(store, fast_account_id)
+    current_now = datetime(2026, 4, 27, 2, 0, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(slow_account_id, "2026-04-27T10:00:00+08:00", speed=1)
+    ReplayClockService(store).set_replay(fast_account_id, "2026-04-27T10:00:00+08:00", speed=1)
+    service = AccountValuationRefreshService(store, MagicMock(), MagicMock())
+
+    async def scenario() -> list[dict]:
+        started: list[str] = []
+        both_started = asyncio.Event()
+        release_slow = asyncio.Event()
+
+        async def fake_refresh(account_id: str, source: str = "valuation", valuation_time: str | None = None) -> dict:
+            started.append(account_id)
+            if len(started) == 2:
+                both_started.set()
+            if account_id == slow_account_id:
+                await release_slow.wait()
+            return {
+                "account_id": account_id,
+                "symbols": ["000001"],
+                "total_asset": 100000,
+                "market_value": 10000,
+                "unrealized_pnl": 0,
+                "valuation_point": {"time": valuation_time},
+            }
+
+        service.valuation_service.refresh_account = fake_refresh
+        task = asyncio.create_task(service.refresh_due_accounts(now=0))
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert set(started) == {slow_account_id, fast_account_id}
+        release_slow.set()
+        return await task
+
+    results = asyncio.run(scenario())
+    assert {result["account_id"] for result in results} == {slow_account_id, fast_account_id}
+
+
+def test_replay_auto_valuation_does_not_repeat_stale_due_after_slow_refresh(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Stale Due Replay", initial_cash=100000)
+    account_id = str(account["id"])
+    _insert_position(store, account_id)
+    current_now = [datetime(2026, 4, 27, 2, 0, 0, tzinfo=timezone.utc)]
+
+    def fake_utc_now() -> datetime:
+        return current_now[0]
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:00:00+08:00", speed=5)
+    service = AccountValuationRefreshService(store, MagicMock(), MagicMock())
+
+    async def scenario() -> tuple[list[dict], list[dict], list[str | None]]:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        valuation_times: list[str | None] = []
+
+        async def fake_refresh(account_id: str, source: str = "valuation", valuation_time: str | None = None) -> dict:
+            valuation_times.append(valuation_time)
+            started.set()
+            await release.wait()
+            return {
+                "symbols": ["000001"],
+                "total_asset": 100000,
+                "market_value": 10000,
+                "unrealized_pnl": 0,
+                "valuation_point": {"time": valuation_time},
+            }
+
+        service.valuation_service.refresh_account = fake_refresh
+        first_task = asyncio.create_task(service.refresh_due_accounts(now=0))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        current_now[0] = current_now[0] + timedelta(seconds=1)
+        release.set()
+        first = await first_task
+        skipped = await service.refresh_due_accounts(now=1)
+        return first, skipped, valuation_times
+
+    first, skipped, valuation_times = asyncio.run(scenario())
+
+    assert len(first) == 1
+    assert skipped == []
+    assert valuation_times == ["2026-04-27T10:00:00+08:00"]
+
+
+def test_replay_auto_valuation_limits_catch_up_points(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Replay Catchup", initial_cash=100000)
+    account_id = str(account["id"])
+    _insert_position(store, account_id)
+    current_now = datetime(2026, 4, 27, 2, 10, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T10:10:00+08:00", speed=1)
+    store.execute(
+        """
+        INSERT INTO account_valuation_points (
+            id, simulator_account_id, time, cash, market_value,
+            unrealized_pnl, total_asset, source, symbols_json
+        )
+        VALUES (?, ?, '2026-04-27T10:00:00+08:00', 90000, 10000, 0, 100000, 'valuation', '["000001"]')
+        """,
+        (uuid4().hex, account_id),
+    )
+    service = AccountValuationRefreshService(store, MagicMock(), MagicMock())
+    valuation_times: list[str | None] = []
+
+    async def fake_refresh(account_id: str, source: str = "valuation", valuation_time: str | None = None) -> dict:
+        valuation_times.append(valuation_time)
+        return {
+            "symbols": ["000001"],
+            "total_asset": 100000,
+            "market_value": 10000,
+            "unrealized_pnl": 0,
+            "valuation_point": {"time": valuation_time},
+        }
+
+    service.valuation_service.refresh_account = fake_refresh
+    results = asyncio.run(service.refresh_due_accounts(now=0))
+
+    assert len(results) == 2
+    assert valuation_times == [
+        "2026-04-27T10:01:00+08:00",
+        "2026-04-27T10:02:00+08:00",
+    ]
 
 
 def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:

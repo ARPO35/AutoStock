@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.market.normalizer import normalize_symbol
 from app.market.replay import is_replay_context, replay_quote_from_cache
-from app.simulator.replay_clock import ReplayClockService
+from app.simulator.replay_clock import ReplayClockService, iso_seconds, parse_clock_time
 from app.storage.sqlite import SQLiteStore
 
 
@@ -66,6 +66,7 @@ class PortfolioValuationService:
         refresh_symbols: list[str] | None = None,
         quote_overrides: dict[str, dict[str, Any]] | None = None,
         source: str = "valuation",
+        valuation_time: str | datetime | None = None,
     ) -> dict[str, Any]:
         account = self._account_or_raise(account_id)
         positions = self._positions(account_id)
@@ -74,8 +75,14 @@ class PortfolioValuationService:
             for symbol in (refresh_symbols or [str(pos["symbol"]) for pos in positions])
             if symbol
         }
-        quotes = await self._quotes_for_account(account_id, positions, normalized_refresh, quote_overrides)
-        valuation_time = self._valuation_time(account_id)
+        quotes = await self._quotes_for_account(
+            account_id,
+            positions,
+            normalized_refresh,
+            quote_overrides,
+            valuation_time=valuation_time,
+        )
+        valuation_time_text = self._valuation_time(account_id, valuation_time=valuation_time)
 
         for pos in positions:
             symbol = normalize_symbol(str(pos["symbol"]))
@@ -98,7 +105,7 @@ class PortfolioValuationService:
                     _best_stock_name(quote.get("name"), pos.get("name")),
                     market_value,
                     unrealized_pnl,
-                    valuation_time,
+                    valuation_time_text,
                     pos["id"],
                 ),
             )
@@ -113,13 +120,13 @@ class PortfolioValuationService:
             SET total_asset = ?, updated_at = ?
             WHERE id = ?
             """,
-            (total_asset, valuation_time, account_id),
+            (total_asset, valuation_time_text, account_id),
         )
         valuation_point_id = uuid4().hex
         valuation_point = {
             "id": valuation_point_id,
             "simulator_account_id": account_id,
-            "time": valuation_time,
+            "time": valuation_time_text,
             "cash": float(account["cash"]),
             "market_value": market_value,
             "unrealized_pnl": unrealized_pnl,
@@ -138,7 +145,7 @@ class PortfolioValuationService:
             (
                 valuation_point_id,
                 account_id,
-                valuation_time,
+                valuation_time_text,
                 float(account["cash"]),
                 market_value,
                 unrealized_pnl,
@@ -163,9 +170,15 @@ class PortfolioValuationService:
         positions: list[dict[str, Any]],
         refresh_symbols: set[str],
         quote_overrides: dict[str, dict[str, Any]] | None,
+        valuation_time: str | datetime | None = None,
     ) -> dict[str, dict[str, Any]]:
         clock = ReplayClockService(self.store).get_clock(account_id)
         runtime_context = clock.runtime_context()
+        if is_replay_context(runtime_context) and valuation_time is not None:
+            runtime_context = {
+                **runtime_context,
+                "effective_time": iso_seconds(parse_clock_time(valuation_time)),
+            }
         target_symbols = [
             normalize_symbol(str(pos["symbol"]))
             for pos in positions
@@ -197,7 +210,9 @@ class PortfolioValuationService:
             result.update(fetched)
         return result
 
-    def _valuation_time(self, account_id: str) -> str:
+    def _valuation_time(self, account_id: str, valuation_time: str | datetime | None = None) -> str:
+        if valuation_time is not None:
+            return iso_seconds(parse_clock_time(valuation_time))
         clock = ReplayClockService(self.store).get_clock(account_id)
         if clock.mode == "replay":
             return clock.effective_time
