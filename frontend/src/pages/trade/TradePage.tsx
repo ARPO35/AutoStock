@@ -46,8 +46,10 @@ export function TradePage() {
 
       <div className="flex-1 min-w-[520px] flex flex-col min-h-0">
         <SessionHeader />
-        <LLMLinearTimeline />
-        <ChatInputBox />
+        <div className="flex-1 min-h-0 relative">
+          <LLMLinearTimeline />
+          <ChatInputBox />
+        </div>
       </div>
 
       <div

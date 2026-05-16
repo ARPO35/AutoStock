@@ -126,15 +126,22 @@ export function AccountSessionSidebar() {
                   <p className="text-text-muted text-xs">暂无 Session。</p>
                 ) : (
                   account.sessions.map((s) => (
-                    <button
+<div
                       key={s.id}
-                      className={`grid grid-cols-[8px_minmax(0,1fr)_14px_18px] items-center gap-2 p-2 rounded-lg border text-left text-sm transition-colors group ${
+                      role="button"
+                      tabIndex={0}
+                      className={`grid grid-cols-[8px_minmax(0,1fr)_14px_18px] items-center gap-2 p-2 rounded-lg border text-left text-sm cursor-pointer transition-colors group ${
                         s.id === selectedSessionId
                           ? "border-brand-primary/40 bg-brand-primary/10"
                           : "border-transparent hover:border-hairline hover:bg-surface-card"
                       }`}
                       onClick={() => setSelectedSessionId(s.id)}
-                      type="button"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedSessionId(s.id);
+                        }
+                      }}
                     >
                       <StatusDot status={s.status} />
                       <span>
@@ -155,7 +162,7 @@ export function AccountSessionSidebar() {
                       >
                         <Trash2 size={13} />
                       </button>
-                    </button>
+                    </div>
                   ))
                 )}
               </div>

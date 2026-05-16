@@ -48,13 +48,13 @@ export function ChatInputBox() {
   );
 
   return (
-    <footer className="pointer-events-none relative z-20 flex-shrink-0 bg-gradient-to-t from-surface-canvas via-surface-canvas/95 to-surface-canvas/0 px-4 pb-4 pt-3">
+    <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-surface-canvas via-surface-canvas/50 via-40% to-transparent px-4 pb-4 pt-5">
       <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-[860px] sm:w-[72%] sm:min-w-[360px]">
         <div
           className={`relative border bg-surface-card/95 p-1.5 shadow-2xl transition-all duration-300 ease-out ${
             focused
               ? "rounded-xl border-brand-primary/60"
-              : "rounded-pill border-hairline"
+              : "rounded-3xl border-hairline"
           }`}
         >
           <textarea
@@ -62,7 +62,7 @@ export function ChatInputBox() {
             className={`block w-full resize-none bg-transparent text-sm leading-relaxed text-text-on-dark placeholder:text-text-muted transition-all duration-300 ease-out disabled:opacity-50 ${
               focused
                 ? "min-h-[96px] py-2.5 px-4"
-                : "min-h-[42px] py-2.5 pr-[108px] pl-4"
+                : "min-h-[42px] overflow-y-hidden py-2.5 pr-[108px] pl-4"
             }`}
             value={draft}
             disabled={disabled}
@@ -96,6 +96,7 @@ export function ChatInputBox() {
                     : "border-hairline bg-surface-canvas text-text-muted hover:border-brand-primary/60 hover:text-brand-primary"
                 }`}
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setConfigOpen((value) => !value)}
                 title="配置"
               >
@@ -111,6 +112,7 @@ export function ChatInputBox() {
                   : "bg-brand-primary text-brand-ink hover:bg-brand-primary-active"
               } disabled:opacity-50`}
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               disabled={busy ? !selectedSessionId : !canSend}
               onClick={handlePrimaryAction}
               title={busy ? "停止当前运行" : "发送"}

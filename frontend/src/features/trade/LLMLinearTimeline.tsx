@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTradeStore } from "@/stores/tradeStore";
+import { useUIStore } from "@/stores/uiStore";
 import { EmptyState, LoadingDots, Spinner } from "@/components/ui/Shared";
 import { MessageBubble } from "@/features/trade/MessageBubble";
 
@@ -32,7 +33,13 @@ export function LLMLinearTimeline() {
   const lastScrollTopRef = useRef(0);
   const manuallyUnlockedRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const restoreScrollTop = useRef<number | null>((() => {
+    const sid = useTradeStore.getState().selectedSessionId;
+    if (!sid) return null;
+    const saved = useUIStore.getState().tradeScrollPositions[sid];
+    return saved !== undefined ? saved : null;
+  })());
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(restoreScrollTop.current === null);
 
   const RELOCK_THRESHOLD_PX = 48;
 
@@ -80,18 +87,55 @@ export function LLMLinearTimeline() {
   }, []);
 
   useEffect(() => {
+    if (restoreScrollTop.current === null) return;
+    if (loadingTimeline || !selectedSessionId) return;
+    const el = scrollRef.current;
+    if (!el || el.scrollHeight <= el.clientHeight) return;
+    const pos = restoreScrollTop.current;
+    const raf = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      restoreScrollTop.current = null;
+      el.scrollTop = pos;
+      lastScrollTopRef.current = pos;
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (dist <= RELOCK_THRESHOLD_PX) {
+        setAutoScrollEnabled(true);
+        manuallyUnlockedRef.current = false;
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [loadingTimeline, selectedSessionId, timeline.length]);
+
+  useEffect(() => () => {
+    const el = scrollRef.current;
+    const sid = useTradeStore.getState().selectedSessionId;
+    if (el && sid) {
+      useUIStore.getState().setTradeScrollPosition(sid, el.scrollTop);
+    }
+  }, []);
+
+  useEffect(() => {
     if (selectedSessionId) {
-      manuallyUnlockedRef.current = false;
-      setAutoScrollEnabled(true);
-      loadTimeline(selectedSessionId);
+      if (restoreScrollTop.current !== null) {
+        loadTimeline(selectedSessionId);
+      } else {
+        manuallyUnlockedRef.current = false;
+        setAutoScrollEnabled(true);
+        loadTimeline(selectedSessionId);
+      }
     }
   }, [selectedSessionId, loadTimeline]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    lastScrollTopRef.current = el.scrollTop;
-    scheduleScrollToBottom("auto");
+    if (restoreScrollTop.current !== null) {
+      lastScrollTopRef.current = 0;
+    } else {
+      lastScrollTopRef.current = el.scrollTop;
+      scheduleScrollToBottom("auto");
+    }
   }, [selectedSessionId]);
 
   useEffect(() => {
@@ -121,7 +165,7 @@ export function LLMLinearTimeline() {
 
   if (!selectedSessionId) {
     return (
-      <div className="flex-1 min-h-0 grid place-items-center p-4">
+      <div className="h-full grid place-items-center p-4">
         <EmptyState
           title="暂无会话"
           description="创建账户和 Session 后，这里会显示对话消息、工具调用与工具结果。"
@@ -132,7 +176,7 @@ export function LLMLinearTimeline() {
 
   if (loadingTimeline) {
     return (
-      <div className="flex-1 min-h-0 grid place-items-center p-4">
+      <div className="h-full grid place-items-center p-4">
         <Spinner size={24} />
       </div>
     );
@@ -140,7 +184,7 @@ export function LLMLinearTimeline() {
 
   if (timeline.length === 0 && !busy) {
     return (
-      <div className="flex-1 min-h-0 grid place-items-center p-4">
+      <div className="h-full grid place-items-center p-4">
         <EmptyState
           title="暂无消息"
           description="发送消息或运行 Session 后，这里会显示对话消息。"
@@ -150,9 +194,9 @@ export function LLMLinearTimeline() {
   }
 
   return (
-    <div className="flex-1 min-h-0 relative">
+    <div className="h-full relative">
       <div className="h-full overflow-y-auto" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
-        <div className="flex flex-col gap-3 p-4 min-h-full">
+        <div className="flex flex-col gap-3 p-4 pb-28 min-h-full">
           {timeline.map((item) => {
             const highlighted = Boolean(item.toolCallId && item.toolCallId === focusedToolCallId);
             return (

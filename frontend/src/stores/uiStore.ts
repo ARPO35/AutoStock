@@ -16,6 +16,7 @@ interface UIState {
   error: string | null;
   systemProviderId: string | null;
   systemModel: string | null;
+  tradeScrollPositions: Record<string, number>;
 
   setRoute: (route: RouteKey) => void;
   setViewTab: (tab: string) => void;
@@ -27,6 +28,7 @@ interface UIState {
   setError: (error: string | null) => void;
   setSystemProviderId: (id: string | null) => void;
   setSystemModel: (model: string | null) => void;
+  setTradeScrollPosition: (sessionId: string, scrollTop: number) => void;
 }
 
 function routeFromPath(pathname: string): RouteKey {
@@ -48,6 +50,11 @@ export const useUIStore = create<UIState>((set) => ({
   error: null,
   systemProviderId: (() => window.localStorage.getItem("autostock.systemProviderId") || null)(),
   systemModel: (() => window.localStorage.getItem("autostock.systemModel") || null)(),
+  tradeScrollPositions: (() => {
+    try {
+      return JSON.parse(window.localStorage.getItem("autostock.tradeScrollPositions") || "{}");
+    } catch { return {}; }
+  })(),
 
   setRoute: (route) => set({ route }),
   setViewTab: (viewTab) => set({ viewTab }),
@@ -69,6 +76,13 @@ export const useUIStore = create<UIState>((set) => ({
     set({ systemModel: model });
     if (model) window.localStorage.setItem("autostock.systemModel", model);
     else window.localStorage.removeItem("autostock.systemModel");
+  },
+  setTradeScrollPosition: (sessionId, scrollTop) => {
+    set((s) => {
+      const next = { ...s.tradeScrollPositions, [sessionId]: scrollTop };
+      window.localStorage.setItem("autostock.tradeScrollPositions", JSON.stringify(next));
+      return { tradeScrollPositions: next };
+    });
   }
 }));
 

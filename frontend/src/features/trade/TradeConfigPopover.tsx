@@ -63,7 +63,7 @@ export function TradeConfigPopover({ open, onClose }: TradeConfigPopoverProps) {
     }
     setReplayDraft(toDatetimeLocal(replayClock.effective_time));
     setSpeedDraft(String(replayClock.speed ?? 1));
-  }, [replayClock?.account_id, replayClock?.effective_time, replayClock?.speed]);
+  }, [open, accountId, !!replayClock]);
 
   if (!open) return null;
 
