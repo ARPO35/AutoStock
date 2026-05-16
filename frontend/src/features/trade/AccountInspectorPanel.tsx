@@ -5,7 +5,7 @@ import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared
 import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore } from "@/stores/viewStore";
-import type { AccountSnapshot, AssetPoint } from "@/api";
+import type { AccountSnapshot, AssetPoint, RuntimeEvent } from "@/api";
 import { formatMoney, humanTime, linePoints } from "@/lib/utils";
 import { resolveModelSelection } from "@/lib/providerModels";
 
@@ -34,6 +34,29 @@ export function AccountInspectorPanel() {
 
   useEffect(() => {
     if (accountId) void loadSnapshot(accountId);
+  }, [accountId, loadSnapshot]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/accounts/${accountId}`);
+    ws.onmessage = (evt) => {
+      let event: RuntimeEvent;
+      try {
+        event = JSON.parse(evt.data as string) as RuntimeEvent;
+      } catch {
+        return;
+      }
+      if (event.type !== "portfolio_updated" || event.account_id !== accountId) return;
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        void loadSnapshot(accountId);
+      }, 250);
+    };
+    return () => {
+      ws.onmessage = null;
+      try { ws.close(); } catch { /* ignore */ }
+    };
   }, [accountId, loadSnapshot]);
 
   useEffect(() => {

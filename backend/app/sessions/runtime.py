@@ -509,15 +509,20 @@ class SessionRunManager:
                             },
                         )
                 if call.name.startswith(("order_", "portfolio_")) and simulator_account_id:
+                    portfolio_payload = {
+                        "run_id": run_id,
+                        "account_id": simulator_account_id,
+                        "tool_call_id": tool_call_id,
+                        "tool_name": call.name,
+                    }
                     await self._send(
                         session_id,
                         "portfolio_updated",
-                        {
-                            "run_id": run_id,
-                            "account_id": simulator_account_id,
-                            "tool_call_id": tool_call_id,
-                            "tool_name": call.name,
-                        },
+                        portfolio_payload,
+                    )
+                    await self.websocket_manager.send_account_event(
+                        simulator_account_id,
+                        {"type": "portfolio_updated", "session_id": session_id, **portfolio_payload},
                     )
 
     async def _provider_chat(

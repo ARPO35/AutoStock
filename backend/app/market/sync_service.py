@@ -171,6 +171,7 @@ class MarketSyncService:
         quote_coordinator: QuoteSyncCoordinator | None = None,
         trading_calendar: TradingCalendar | None = None,
         valuation_service: PortfolioValuationService | None = None,
+        websocket_manager: Any | None = None,
     ) -> None:
         self.store = store
         self.market_store = market_store
@@ -183,6 +184,7 @@ class MarketSyncService:
             market_provider=market_provider,
             quote_coordinator=self.quote_coordinator,
         )
+        self.websocket_manager = websocket_manager
 
     def list_watchlist(self) -> list[dict[str, Any]]:
         return self.store.fetch_all(
@@ -366,11 +368,12 @@ class MarketSyncService:
         quotes_map = await self.quote_coordinator.fetch_quotes(symbols, self.market_provider)
         quotes = [quotes_map[symbol] for symbol in symbols if symbol in quotes_map]
         store_stats = await self.market_store.insert_quotes_async(quotes)
-        await self.valuation_service.refresh_accounts_for_symbols(
+        refreshed_accounts = await self.valuation_service.refresh_accounts_for_symbols(
             symbols=list(quotes_map),
             quote_overrides=quotes_map,
             source="valuation",
         )
+        await self._broadcast_portfolio_updates(refreshed_accounts, list(quotes_map))
         stats.add_store_stats(store_stats, fetched=len(quotes))
         return stats
 
@@ -475,6 +478,32 @@ class MarketSyncService:
         row = self.store.fetch_one("SELECT * FROM market_sync_runs WHERE id = ?", (run_id,))
         assert row is not None
         return row
+
+    async def _broadcast_portfolio_updates(
+        self,
+        refreshed_accounts: list[dict[str, Any]],
+        symbols: list[str],
+    ) -> None:
+        if self.websocket_manager is None:
+            return
+        for item in refreshed_accounts:
+            account = item.get("account") or {}
+            account_id = str(account.get("id") or "")
+            if not account_id:
+                continue
+            await self.websocket_manager.send_account_event(
+                account_id,
+                {
+                    "type": "portfolio_updated",
+                    "account_id": account_id,
+                    "source": "valuation",
+                    "symbols": symbols,
+                    "total_asset": item.get("total_asset"),
+                    "market_value": item.get("market_value"),
+                    "unrealized_pnl": item.get("unrealized_pnl"),
+                    "generated_at": utc_now(),
+                },
+            )
 
 
 def is_trading_time(now: datetime | None = None, calendar: TradingCalendar | None = None) -> bool:

@@ -285,7 +285,7 @@ function TradesPanel() {
 function AssetsPanel() {
   const data = useViewStore((s) => s.assets);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
-  if (!data) return <EmptyState title="暂无资产曲线" description="账户创建后会生成初始点，成交后会生成交易点。" />;
+  if (!data) return <EmptyState title="暂无资产曲线" description="账户创建、成交或估值更新后会生成资产点。" />;
   const visibleSeries = data.series.filter((series) => !hidden[series.account_id]);
   return (
     <div className="grid gap-3">
@@ -1029,7 +1029,7 @@ function AssetPointTable({ points }: { points: AssetPoint[] }) {
               <td className="py-1.5 text-text-muted">{formatMoney(point.cash)}</td>
               <td className="py-1.5 text-text-muted">{formatMoney(point.market_value)}</td>
               <td className="py-1.5 text-text-on-dark">{formatMoney(point.total_asset)}</td>
-              <td className="py-1.5 text-text-muted">{point.source}</td>
+              <td className="py-1.5 text-text-muted">{assetPointSourceLabel(point.source)}</td>
             </tr>
           ))}
         </tbody>
@@ -1064,6 +1064,14 @@ function formatStockLabel(symbol: string, name?: string | null): string {
   const code = symbol.match(/\d{6}/)?.[0] ?? symbol;
   const cleanName = name?.trim();
   return cleanName ? `${cleanName}（${code}）` : code;
+}
+
+function assetPointSourceLabel(source: string): string {
+  if (source === "initial") return "初始";
+  if (source === "trade") return "成交";
+  if (source === "current") return "当前";
+  if (source === "valuation") return "估值";
+  return source;
 }
 
 function CacheRows({ rows }: { rows: Array<{ symbol: string; name?: string | null; interval: string; adjust: string; start_datetime: string; end_datetime: string; bar_count: number }> }) {

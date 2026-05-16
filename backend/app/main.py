@@ -70,13 +70,14 @@ def create_app() -> FastAPI:
     app.state.store = store
     app.state.market_store = market_store
     app.state.market_provider = AKShareMarketProvider()
+    app.state.websocket_manager = WebSocketManager()
     app.state.market_sync_service = MarketSyncService(
         store=app.state.store,
         market_store=app.state.market_store,
         market_provider=app.state.market_provider,
+        websocket_manager=app.state.websocket_manager,
     )
     app.state.market_sync_scheduler = create_market_sync_scheduler(app.state.market_sync_service)
-    app.state.websocket_manager = WebSocketManager()
     app.state.tavily_service = TavilyService(store=app.state.store, settings=settings)
     app.state.simulator_engine = SimulatorEngine(
         store=app.state.store,

@@ -64,6 +64,7 @@ def get_sync_service(request: Request) -> MarketSyncService:
             store=request.app.state.store,
             market_store=request.app.state.market_store,
             market_provider=request.app.state.market_provider,
+            websocket_manager=getattr(request.app.state, "websocket_manager", None),
         )
         request.app.state.market_sync_service = service
     return service

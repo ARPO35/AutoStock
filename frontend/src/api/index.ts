@@ -461,8 +461,10 @@ export interface AssetPoint {
   cash: number;
   market_value: number;
   total_asset: number;
-  source: "initial" | "trade" | "current" | string;
+  source: "initial" | "trade" | "current" | "valuation" | string;
   trade_id?: string;
+  unrealized_pnl?: number;
+  symbols?: string[];
 }
 
 export interface AccountSnapshot {

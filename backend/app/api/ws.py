@@ -14,3 +14,14 @@ async def session_websocket(session_id: str, websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         await manager.disconnect(session_id, websocket)
+
+
+@router.websocket("/ws/accounts/{account_id}")
+async def account_websocket(account_id: str, websocket: WebSocket) -> None:
+    manager = websocket.app.state.websocket_manager
+    await manager.connect_account(account_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await manager.disconnect_account(account_id, websocket)

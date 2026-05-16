@@ -963,12 +963,18 @@ def test_position_quote_sync_refreshes_account_valuation(monkeypatch) -> None:
         (now, account["id"]),
     )
 
-    run = client.post(
-        "/api/data/sync/run",
-        json={"job_type": "quote", "scope": "positions"},
-    )
+    with client.websocket_connect(f"/ws/accounts/{account['id']}") as websocket:
+        run = client.post(
+            "/api/data/sync/run",
+            json={"job_type": "quote", "scope": "positions"},
+        )
+        event = websocket.receive_json()
 
     assert run.status_code == 200
+    assert event["type"] == "portfolio_updated"
+    assert event["account_id"] == account["id"]
+    assert event["source"] == "valuation"
+    assert event["symbols"] == ["600000"]
     assert provider.quote_calls == 1
     account_row = store.fetch_one("SELECT total_asset FROM simulator_accounts WHERE id = ?", (account["id"],))
     position_row = store.fetch_one(
