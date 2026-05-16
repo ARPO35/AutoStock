@@ -304,7 +304,8 @@ function eventDetail(event: RuntimeEvent): string {
   if (event.type === "portfolio_updated") {
     const total = typeof event.total_asset === "number" ? formatMoney(event.total_asset) : "--";
     const symbols = event.symbols?.length ? event.symbols.join(", ") : event.source ?? "valuation";
-    return `${total} / ${symbols}`;
+    const eventTime = event.valuation_point?.time ?? event.clock?.effective_time ?? event.generated_at;
+    return `${total} / ${symbols} / ${humanTime(eventTime)}`;
   }
   return event.tool_name ?? event.status ?? event.error ?? event.run_id ?? "--";
 }
