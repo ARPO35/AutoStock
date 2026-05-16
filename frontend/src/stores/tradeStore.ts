@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { StoreApi } from "zustand";
 import type { ReplayClockState, SessionTimelineItem, RuntimeEvent } from "@/api";
 import type { TimelineItem } from "@/types";
 import { api } from "@/api";
@@ -19,6 +20,7 @@ interface StreamedRound {
   reasoning: string;
   content: string;
   toolCalls: StreamingToolCall[];
+  reasoningDurationMs: number | null;
 }
 
 interface TradeState {
@@ -43,6 +45,8 @@ interface TradeState {
   currentReasoning: string;
   currentContent: string;
   currentToolCalls: StreamingToolCall[];
+  reasoningStartTime: number | null;
+  activeReasoningDurationMs: number | null;
 
   _ws: WebSocket | null;
 
@@ -71,6 +75,142 @@ interface TradeState {
 
 let _optId = 0;
 let _roundId = 0;
+let _streamReasoningBuffer = "";
+let _streamContentBuffer = "";
+let _streamFlushFrame: number | null = null;
+let _streamFlushTimer: number | null = null;
+
+type TradeSet = StoreApi<TradeState>["setState"];
+
+const STREAM_FLUSH_MAX_MS = 50;
+
+function isAssistantStreamEvent(event: RuntimeEvent): boolean {
+  return event.type === "assistant_token" || event.type === "assistant_reasoning";
+}
+
+function appendStreamTokens(
+  set: TradeSet,
+  reasoningToken: string,
+  contentToken: string,
+) {
+  if (!reasoningToken && !contentToken) return;
+
+  set((s) => {
+    const now = Date.now();
+    let streamedRounds = s.streamedRounds;
+    let currentReasoning = s.currentReasoning;
+    let currentContent = s.currentContent;
+    let currentToolCalls = s.currentToolCalls;
+    let reasoningStartTime = s.reasoningStartTime;
+    let activeReasoningDurationMs = s.activeReasoningDurationMs;
+
+    if (reasoningToken) {
+      if (currentToolCalls.length > 0) {
+        _roundId += 1;
+        streamedRounds = [...streamedRounds, {
+          id: `round-${_roundId}`,
+          reasoning: currentReasoning,
+          content: currentContent,
+          toolCalls: currentToolCalls,
+          reasoningDurationMs: activeReasoningDurationMs,
+        }];
+        currentReasoning = reasoningToken;
+        currentContent = "";
+        currentToolCalls = [];
+        reasoningStartTime = now;
+        activeReasoningDurationMs = null;
+      } else {
+        reasoningStartTime = reasoningStartTime ?? (currentReasoning ? null : now);
+        currentReasoning += reasoningToken;
+      }
+    }
+
+    if (contentToken) {
+      const reasoningDurationMs =
+        activeReasoningDurationMs
+        ?? (currentReasoning && reasoningStartTime != null
+          ? now - reasoningStartTime
+          : null);
+      if (currentToolCalls.length > 0) {
+        _roundId += 1;
+        streamedRounds = [...streamedRounds, {
+          id: `round-${_roundId}`,
+          reasoning: currentReasoning,
+          content: currentContent,
+          toolCalls: currentToolCalls,
+          reasoningDurationMs,
+        }];
+        currentReasoning = "";
+        currentContent = contentToken;
+        currentToolCalls = [];
+        reasoningStartTime = null;
+        activeReasoningDurationMs = null;
+      } else {
+        currentContent += contentToken;
+        activeReasoningDurationMs = reasoningDurationMs;
+        reasoningStartTime = reasoningDurationMs != null ? null : reasoningStartTime;
+      }
+    }
+
+    return {
+      streamedRounds,
+      currentReasoning,
+      currentContent,
+      currentToolCalls,
+      reasoningStartTime,
+      activeReasoningDurationMs,
+    };
+  });
+}
+
+function cancelScheduledStreamFlush() {
+  if (_streamFlushFrame != null) {
+    window.cancelAnimationFrame(_streamFlushFrame);
+    _streamFlushFrame = null;
+  }
+  if (_streamFlushTimer != null) {
+    window.clearTimeout(_streamFlushTimer);
+    _streamFlushTimer = null;
+  }
+}
+
+function flushStreamBuffer(set: TradeSet) {
+  cancelScheduledStreamFlush();
+  const reasoningToken = _streamReasoningBuffer;
+  const contentToken = _streamContentBuffer;
+  _streamReasoningBuffer = "";
+  _streamContentBuffer = "";
+  appendStreamTokens(set, reasoningToken, contentToken);
+}
+
+function scheduleStreamFlush(set: TradeSet) {
+  if (_streamFlushFrame == null) {
+    _streamFlushFrame = window.requestAnimationFrame(() => {
+      flushStreamBuffer(set);
+    });
+  }
+  if (_streamFlushTimer == null) {
+    _streamFlushTimer = window.setTimeout(() => {
+      flushStreamBuffer(set);
+    }, STREAM_FLUSH_MAX_MS);
+  }
+}
+
+function queueStreamToken(set: TradeSet, event: RuntimeEvent) {
+  if (event.type === "assistant_reasoning") {
+    _streamReasoningBuffer += event.token ?? "";
+  }
+  if (event.type === "assistant_token") {
+    _streamContentBuffer += event.token ?? "";
+  }
+  scheduleStreamFlush(set);
+}
+
+function resetStreamBuffer() {
+  cancelScheduledStreamFlush();
+  _streamReasoningBuffer = "";
+  _streamContentBuffer = "";
+}
 
 function syntheticUserMessage(content: string): TimelineItem {
   _optId += 1;
@@ -127,6 +267,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   currentReasoning: "",
   currentContent: "",
   currentToolCalls: [],
+  reasoningStartTime: null,
+  activeReasoningDurationMs: null,
 
   _ws: null,
 
@@ -138,6 +280,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       currentReasoning: "",
       currentContent: "",
       currentToolCalls: [],
+      reasoningStartTime: null,
+      activeReasoningDurationMs: null,
       runError: null,
       runNotice: null,
       focusedToolCallId: null,
@@ -160,6 +304,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         currentReasoning: "",
         currentContent: "",
         currentToolCalls: [],
+        reasoningStartTime: null,
+        activeReasoningDurationMs: null,
         loadingTimeline: false,
         busy: false,
         runNotice: null,
@@ -190,62 +336,39 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       } catch {
         return;
       }
+      if (isAssistantStreamEvent(event)) {
+        queueStreamToken(set, event);
+        return;
+      }
+
+      flushStreamBuffer(set);
       get().pushEvent(event);
 
       if (event.type === "run_started" && event.clock?.account_id) {
         get().syncReplayClock(event.clock);
       }
 
-      if (event.type === "assistant_reasoning") {
-        set((s) => {
-          if (s.currentToolCalls.length > 0) {
-            _roundId += 1;
-            return {
-              streamedRounds: [...s.streamedRounds, {
-                id: `round-${_roundId}`,
-                reasoning: s.currentReasoning,
-                content: s.currentContent,
-                toolCalls: s.currentToolCalls,
-              }],
-              currentReasoning: event.token ?? "",
-              currentContent: "",
-              currentToolCalls: [],
-            };
-          }
-          return { currentReasoning: s.currentReasoning + (event.token ?? "") };
-        });
-      }
-
-      if (event.type === "assistant_token") {
-        set((s) => {
-          if (s.currentToolCalls.length > 0) {
-            _roundId += 1;
-            return {
-              streamedRounds: [...s.streamedRounds, {
-                id: `round-${_roundId}`,
-                reasoning: s.currentReasoning,
-                content: s.currentContent,
-                toolCalls: s.currentToolCalls,
-              }],
-              currentReasoning: "",
-              currentContent: event.token ?? "",
-              currentToolCalls: [],
-            };
-          }
-          return { currentContent: s.currentContent + (event.token ?? "") };
-        });
-      }
-
       if (event.type === "tool_call_started") {
-        set((s) => ({
-          currentToolCalls: [...s.currentToolCalls, {
-            toolCallId: event.tool_call_id ?? "",
-            toolName: event.tool_name ?? "",
-            arguments_json: event.arguments_json ?? "{}",
-            status: "running",
-            rawResult: null,
-          }],
-        }));
+        set((s) => {
+          const now = Date.now();
+          const reasoningDurationMs =
+            s.activeReasoningDurationMs
+            ?? (s.currentReasoning && s.reasoningStartTime != null
+              ? now - s.reasoningStartTime
+              : null);
+
+          return {
+            currentToolCalls: [...s.currentToolCalls, {
+              toolCallId: event.tool_call_id ?? "",
+              toolName: event.tool_name ?? "",
+              arguments_json: event.arguments_json ?? "{}",
+              status: "running",
+              rawResult: null,
+            }],
+            activeReasoningDurationMs: reasoningDurationMs,
+            reasoningStartTime: reasoningDurationMs != null ? null : s.reasoningStartTime,
+          };
+        });
       }
 
       if (event.type === "tool_call_finished") {
@@ -266,8 +389,18 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       if (event.type === "run_finished") {
         const cancelled = String(event.status ?? "").toLowerCase().includes("cancel");
         set((s) => {
+          const now = Date.now();
+          const reasoningDurationMs =
+            s.activeReasoningDurationMs
+            ?? (s.currentReasoning && s.reasoningStartTime != null
+              ? now - s.reasoningStartTime
+              : null);
           if (!s.currentReasoning && !s.currentContent && s.currentToolCalls.length === 0) {
-            return { runNotice: cancelled ? "已停止当前运行" : s.runNotice };
+            return {
+              runNotice: cancelled ? "已停止当前运行" : s.runNotice,
+              reasoningStartTime: null,
+              activeReasoningDurationMs: null,
+            };
           }
           _roundId += 1;
           return {
@@ -276,10 +409,13 @@ export const useTradeStore = create<TradeState>((set, get) => ({
               reasoning: s.currentReasoning,
               content: s.currentContent,
               toolCalls: s.currentToolCalls,
+              reasoningDurationMs,
             }],
             currentReasoning: "",
             currentContent: "",
             currentToolCalls: [],
+            reasoningStartTime: null,
+            activeReasoningDurationMs: null,
             runNotice: cancelled ? "已停止当前运行" : s.runNotice,
           };
         });
@@ -309,6 +445,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
 
   _disconnectWs: () => {
+    flushStreamBuffer(set);
     const ws = get()._ws;
     if (ws) {
       ws.onmessage = null;
@@ -320,6 +457,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
 
   sendMessage: async (sessionId, content, model) => {
+    resetStreamBuffer();
     set({
       draft: "",
       busy: true,
@@ -328,6 +466,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       currentReasoning: "",
       currentContent: "",
       currentToolCalls: [],
+      reasoningStartTime: null,
+      activeReasoningDurationMs: null,
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -351,6 +491,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
 
   runOnce: async (sessionId, model) => {
+    resetStreamBuffer();
     set({
       busy: true,
       optimisticUserMessage: null,
@@ -358,6 +499,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       currentReasoning: "",
       currentContent: "",
       currentToolCalls: [],
+      reasoningStartTime: null,
+      activeReasoningDurationMs: null,
       lastModel: model ?? null,
       lastRunLatencyMs: null,
       events: [],
@@ -479,6 +622,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       currentReasoning,
       currentContent,
       currentToolCalls,
+      reasoningStartTime,
+      activeReasoningDurationMs,
       lastModel,
       lastRunLatencyMs,
     } = get();
@@ -503,7 +648,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
           round.content,
           lastModel,
           round.reasoning || null,
-          null,
+          round.reasoningDurationMs,
           round.id,
         ));
       }
@@ -513,11 +658,15 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
 
     if (currentReasoning || currentContent) {
+      const currentReasoningDurationMs = activeReasoningDurationMs
+        ?? (currentReasoning && reasoningStartTime != null
+          ? Date.now() - reasoningStartTime
+          : null);
       items.push(syntheticAssistantMessage(
         currentContent,
         lastModel,
         currentReasoning || null,
-        null,
+        currentReasoningDurationMs,
         "current",
       ));
     }
