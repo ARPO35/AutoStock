@@ -79,7 +79,7 @@ export interface ToolSchema {
 
 export interface RuntimeEvent {
   type: string;
-  session_id: string;
+  session_id?: string;
   run_id?: string;
   account_id?: string;
   clock?: ReplayClockState | null;
@@ -96,6 +96,13 @@ export interface RuntimeEvent {
   status?: string;
   message?: Message;
   token?: string;
+  source?: string;
+  symbols?: string[];
+  total_asset?: number;
+  market_value?: number;
+  unrealized_pnl?: number;
+  generated_at?: string;
+  valuation_point?: AssetPoint & { id?: string; simulator_account_id?: string };
 }
 
 export interface SessionTimelineItem {
@@ -478,6 +485,16 @@ export interface AccountSnapshot {
   session_contributions?: SessionContributionRow[];
 }
 
+export interface AccountValuationRefreshResponse {
+  generated_at: string;
+  account: Account;
+  metrics: AccountMetrics;
+  valuation_point: (AssetPoint & { id?: string; simulator_account_id?: string }) | null;
+  clock: ReplayClockState;
+  symbols: string[];
+  source: string;
+}
+
 export interface ViewLogRow {
   id: string;
   run_id?: string | null;
@@ -736,6 +753,10 @@ export const api = {
     request<ViewAccountsResponse>(`/api/view/accounts${viewQuery(filters)}`),
   accountSnapshot: (accountId: string, filters?: Omit<ViewFilters, "account_id">) =>
     request<AccountSnapshot>(`/api/view/accounts/${accountId}/snapshot${viewQuery(filters)}`),
+  accountValuationRefresh: (accountId: string) =>
+    request<AccountValuationRefreshResponse>(`/api/view/accounts/${accountId}/valuation/refresh`, {
+      method: "POST"
+    }),
   viewTrades: (filters?: ViewFilters & { limit?: number }) =>
     request<ViewTradesResponse>(`/api/view/trades${viewQuery(filters)}`),
   viewAssets: (filters?: ViewFilters) =>

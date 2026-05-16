@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, Eye, History, LineChart, RefreshCw, Table2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
+import { api } from "@/api";
 import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore } from "@/stores/viewStore";
-import type { AccountSnapshot, AssetPoint, RuntimeEvent } from "@/api";
+import type { AccountSnapshot, AssetPoint, ReplayClockState, RuntimeEvent } from "@/api";
 import { formatMoney, humanTime, linePoints } from "@/lib/utils";
 import { resolveModelSelection } from "@/lib/providerModels";
 
@@ -15,12 +16,17 @@ export function AccountInspectorPanel() {
   const providers = useDataStore((s) => s.providers);
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const events = useTradeStore((s) => s.events);
+  const pushEvent = useTradeStore((s) => s.pushEvent);
   const busy = useTradeStore((s) => s.busy);
   const focusToolCall = useTradeStore((s) => s.focusToolCall);
+  const replayClocks = useTradeStore((s) => s.replayClocks);
+  const loadReplayClock = useTradeStore((s) => s.loadReplayClock);
+  const syncReplayClock = useTradeStore((s) => s.syncReplayClock);
   const snapshots = useViewStore((s) => s.snapshots);
   const loadSnapshot = useViewStore((s) => s.loadSnapshot);
   const loading = useViewStore((s) => s.loading);
   const [tradesOpen, setTradesOpen] = useState(true);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const refreshTimerRef = useRef<number | null>(null);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
@@ -31,10 +37,13 @@ export function AccountInspectorPanel() {
     ? resolveModelSelection(providers, selectedSession.model, selectedSession.provider_id)
     : null;
   const snapshot = accountId ? snapshots[accountId] : null;
+  const clock = accountId ? replayClocks[accountId] ?? null : null;
 
   useEffect(() => {
-    if (accountId) void loadSnapshot(accountId);
-  }, [accountId, loadSnapshot]);
+    if (!accountId) return;
+    void loadSnapshot(accountId);
+    void loadReplayClock(accountId);
+  }, [accountId, loadSnapshot, loadReplayClock]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -48,6 +57,8 @@ export function AccountInspectorPanel() {
         return;
       }
       if (event.type !== "portfolio_updated" || event.account_id !== accountId) return;
+      pushEvent(event);
+      if (event.clock) syncReplayClock(event.clock);
       if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = window.setTimeout(() => {
         void loadSnapshot(accountId);
@@ -57,7 +68,7 @@ export function AccountInspectorPanel() {
       ws.onmessage = null;
       try { ws.close(); } catch { /* ignore */ }
     };
-  }, [accountId, loadSnapshot]);
+  }, [accountId, loadSnapshot, pushEvent, syncReplayClock]);
 
   useEffect(() => {
     const latest = events[0];
@@ -81,6 +92,17 @@ export function AccountInspectorPanel() {
   }, [accountId, busy, loadSnapshot]);
 
   const displayName = snapshot?.account.name ?? selectedAccount?.name ?? "未选择账户";
+  const handleRefresh = async () => {
+    if (!accountId) return;
+    setManualRefreshing(true);
+    try {
+      const result = await api.accountValuationRefresh(accountId);
+      syncReplayClock(result.clock);
+      await loadSnapshot(accountId);
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
 
   return (
     <aside className="h-full min-h-0 overflow-y-auto overflow-x-hidden border-l border-hairline bg-surface-canvas">
@@ -105,10 +127,12 @@ export function AccountInspectorPanel() {
         ) : snapshot ? (
           <SnapshotContent
             snapshot={snapshot}
+            clock={clock}
             events={events}
             tradesOpen={tradesOpen}
             onToggleTrades={() => setTradesOpen((value) => !value)}
-            onRefresh={() => void loadSnapshot(accountId)}
+            refreshing={manualRefreshing}
+            onRefresh={() => void handleRefresh()}
             onFocusToolCall={(toolCallId, sessionId) => focusToolCall(toolCallId, sessionId)}
           />
         ) : (
@@ -125,21 +149,31 @@ function formatStockCode(symbol: string): string {
 
 function SnapshotContent({
   snapshot,
+  clock,
   events,
   tradesOpen,
   onToggleTrades,
+  refreshing,
   onRefresh,
   onFocusToolCall
 }: {
   snapshot: AccountSnapshot;
+  clock: ReplayClockState | null;
   events: ReturnType<typeof useTradeStore.getState>["events"];
   tradesOpen: boolean;
   onToggleTrades: () => void;
+  refreshing: boolean;
   onRefresh: () => void;
   onFocusToolCall: (toolCallId: string, sessionId?: string | null) => void;
 }) {
   const metrics = snapshot.metrics;
   const pnlTone = metrics.total_pnl > 0 ? "rise" : metrics.total_pnl < 0 ? "fall" : "flat";
+  const latestValuationTime = useMemo(() => latestValuationPoint(snapshot.asset_points)?.time ?? snapshot.account.updated_at, [snapshot]);
+  const accountEvents = useMemo(
+    () => events.filter((event) => !event.account_id || event.account_id === snapshot.account.id),
+    [events, snapshot.account.id]
+  );
+  const clockDisplay = clockSummary(clock);
   const tradeStats = useMemo(() => {
     const trades = snapshot.recent_trades;
     const turnover = trades.reduce((sum, row) => sum + Number(row.turnover ?? Number(row.price) * Number(row.quantity)), 0);
@@ -160,13 +194,22 @@ function SnapshotContent({
             <p className="text-xs text-text-muted">账户净值</p>
             <strong className="mt-1 block text-2xl text-text-on-dark">{formatMoney(metrics.total_asset)}</strong>
           </div>
-          <Button variant="secondary" size="sm" icon={<RefreshCw size={13} />} onClick={onRefresh}>
-            刷新
+          <Button variant="secondary" size="sm" icon={<RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />} onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? "刷新中" : "刷新"}
           </Button>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <Metric label="总盈亏" value={formatMoney(metrics.total_pnl)} tone={pnlTone} />
           <Metric label="收益率" value={`${metrics.total_return_pct.toFixed(2)}%`} tone={pnlTone} />
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-hairline bg-surface-card p-2">
+        <div className="grid grid-cols-2 gap-2">
+          <Metric label="最近估值" value={humanTime(latestValuationTime)} />
+          <Metric label="Clock" value={clockDisplay.mode} />
+          <Metric label="刷新状态" value={clockDisplay.status} />
+          <Metric label="账户时间" value={humanTime(clock?.effective_time)} />
         </div>
       </section>
 
@@ -218,14 +261,14 @@ function SnapshotContent({
 
       <section className="border-t border-hairline pt-3">
         <PanelHeader icon={<Activity size={16} />} title="实时事件" />
-        {events.length === 0 ? (
+        {accountEvents.length === 0 ? (
           <p className="text-sm text-text-muted">暂无 WebSocket 事件。</p>
         ) : (
           <div className="grid gap-1.5">
-            {events.slice(0, 8).map((event, index) => (
+            {accountEvents.slice(0, 8).map((event, index) => (
               <div key={`${event.type}-${index}`} className="flex items-center justify-between gap-2 border-b border-hairline/50 py-1.5 text-xs">
-                <span className="text-text-on-dark">{event.type}</span>
-                <span className="truncate text-text-muted">{event.tool_name ?? event.status ?? event.error ?? event.run_id ?? "--"}</span>
+                <span className="text-text-on-dark">{eventLabel(event)}</span>
+                <span className="truncate text-text-muted">{eventDetail(event)}</span>
               </div>
             ))}
           </div>
@@ -233,6 +276,37 @@ function SnapshotContent({
       </section>
     </div>
   );
+}
+
+function latestValuationPoint(points: AssetPoint[]): AssetPoint | null {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (points[index].source === "valuation") return points[index];
+  }
+  return null;
+}
+
+function clockSummary(clock: ReplayClockState | null): { mode: string; status: string } {
+  if (!clock || clock.mode === "live") return { mode: "Live", status: "live" };
+  if (clock.speed <= 0) return { mode: "Replay", status: "replay paused" };
+  return { mode: "Replay", status: "replay running" };
+}
+
+function eventLabel(event: RuntimeEvent): string {
+  if (event.type === "portfolio_updated") return "估值更新";
+  if (event.type === "order_created") return "订单";
+  if (event.type === "trade_created") return "成交";
+  if (event.type === "tool_call_finished") return "工具完成";
+  if (event.type === "run_finished") return "运行结束";
+  return event.type;
+}
+
+function eventDetail(event: RuntimeEvent): string {
+  if (event.type === "portfolio_updated") {
+    const total = typeof event.total_asset === "number" ? formatMoney(event.total_asset) : "--";
+    const symbols = event.symbols?.length ? event.symbols.join(", ") : event.source ?? "valuation";
+    return `${total} / ${symbols}`;
+  }
+  return event.tool_name ?? event.status ?? event.error ?? event.run_id ?? "--";
 }
 
 function AssetSparkline({ points }: { points: AssetPoint[] }) {
