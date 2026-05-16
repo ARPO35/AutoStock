@@ -538,10 +538,51 @@ def _asset_points(
             }
         )
 
+    points.extend(_valuation_points(store, account_id, start, end, symbol))
+    points.sort(key=lambda point: str(point["time"]))
     start_value = _start_value(start)
     if start_value:
         points = [point for point in points if str(point["time"]) >= start_value]
     return points[-240:]
+
+
+def _valuation_points(
+    store: SQLiteStore,
+    account_id: str,
+    start: str | None,
+    end: str | None,
+    symbol: str | None,
+) -> list[dict[str, Any]]:
+    clauses = ["simulator_account_id = ?"]
+    params: list[Any] = [account_id]
+    _append_time_filter(clauses, params, "time", start, end)
+    if symbol:
+        clauses.append("symbols_json LIKE ?")
+        params.append(f"%{symbol}%")
+    rows = store.fetch_all(
+        f"""
+        SELECT *
+        FROM account_valuation_points
+        WHERE {' AND '.join(clauses)}
+        ORDER BY time ASC
+        LIMIT 1000
+        """,
+        params,
+    )
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        points.append(
+            {
+                "time": row["time"],
+                "cash": round(float(row["cash"]), 2),
+                "market_value": round(float(row["market_value"]), 2),
+                "unrealized_pnl": round(float(row["unrealized_pnl"]), 2),
+                "total_asset": round(float(row["total_asset"]), 2),
+                "source": row["source"],
+                "symbols": _json_list(str(row.get("symbols_json") or "[]")),
+            }
+        )
+    return points
 
 
 def _totals(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1089,6 +1130,14 @@ def _json_object(value: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: str) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _extract_symbol(row: dict[str, Any]) -> str | None:

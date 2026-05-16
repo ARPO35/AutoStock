@@ -9,6 +9,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.market.normalizer import normalize_symbol
+from app.simulator.valuation import PortfolioValuationService
 from app.storage.sqlite import SQLiteStore
 
 SyncScope = Literal["positions", "watchlist", "all"]
@@ -169,12 +170,19 @@ class MarketSyncService:
         market_provider: Any,
         quote_coordinator: QuoteSyncCoordinator | None = None,
         trading_calendar: TradingCalendar | None = None,
+        valuation_service: PortfolioValuationService | None = None,
     ) -> None:
         self.store = store
         self.market_store = market_store
         self.market_provider = market_provider
         self.quote_coordinator = quote_coordinator or QuoteSyncCoordinator()
         self.trading_calendar = trading_calendar or TradingCalendar(market_provider)
+        self.valuation_service = valuation_service or PortfolioValuationService(
+            store=store,
+            market_store=market_store,
+            market_provider=market_provider,
+            quote_coordinator=self.quote_coordinator,
+        )
 
     def list_watchlist(self) -> list[dict[str, Any]]:
         return self.store.fetch_all(
@@ -358,6 +366,11 @@ class MarketSyncService:
         quotes_map = await self.quote_coordinator.fetch_quotes(symbols, self.market_provider)
         quotes = [quotes_map[symbol] for symbol in symbols if symbol in quotes_map]
         store_stats = await self.market_store.insert_quotes_async(quotes)
+        await self.valuation_service.refresh_accounts_for_symbols(
+            symbols=list(quotes_map),
+            quote_overrides=quotes_map,
+            source="valuation",
+        )
         stats.add_store_stats(store_stats, fetched=len(quotes))
         return stats
 

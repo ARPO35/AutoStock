@@ -321,6 +321,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_account_symbol
 CREATE INDEX IF NOT EXISTS idx_positions_symbol
     ON positions(symbol);
 
+CREATE TABLE IF NOT EXISTS account_valuation_points (
+    id TEXT PRIMARY KEY,
+    simulator_account_id TEXT NOT NULL REFERENCES simulator_accounts(id) ON DELETE CASCADE,
+    time TEXT NOT NULL,
+    cash REAL NOT NULL,
+    market_value REAL NOT NULL,
+    unrealized_pnl REAL NOT NULL,
+    total_asset REAL NOT NULL,
+    source TEXT NOT NULL,
+    symbols_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_valuation_points_account_time
+    ON account_valuation_points(simulator_account_id, time);
+
+CREATE INDEX IF NOT EXISTS idx_account_valuation_points_source
+    ON account_valuation_points(source, time);
+
 CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,

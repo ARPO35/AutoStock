@@ -158,6 +158,33 @@ def test_view_account_snapshot_uses_simulator_account口径(monkeypatch) -> None
     assert body["asset_points"][-1]["source"] == "current"
 
 
+def test_view_assets_include_persisted_valuation_points(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    account, _ = _seed_trade(client)
+    store = client.app.state.store
+    valuation_time = "2026-05-16T10:00:00+08:00"
+    store.execute(
+        """
+        INSERT INTO account_valuation_points (
+            id, simulator_account_id, time, cash, market_value,
+            unrealized_pnl, total_asset, source, symbols_json
+        )
+        VALUES (?, ?, ?, 89995, 11200, 1200, 101195, 'valuation', ?)
+        """,
+        (uuid4().hex, account["id"], valuation_time, json.dumps(["000001"])),
+    )
+
+    snapshot = client.get(f"/api/view/accounts/{account['id']}/snapshot").json()
+    assets = client.get("/api/view/assets", params={"account_id": account["id"]}).json()
+
+    assert "valuation" in [point["source"] for point in snapshot["asset_points"]]
+    series_points = assets["series"][0]["points"]
+    valuation = [point for point in series_points if point["source"] == "valuation"][0]
+    assert valuation["time"] == valuation_time
+    assert valuation["total_asset"] == 101195
+    assert valuation["symbols"] == ["000001"]
+
+
 def test_view_trades_filters_by_account_and_symbol(monkeypatch) -> None:
     client = make_client(monkeypatch)
     account, _ = _seed_trade(client)

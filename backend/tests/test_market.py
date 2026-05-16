@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from datetime import datetime
@@ -933,6 +934,58 @@ def test_watchlist_and_manual_quote_sync(monkeypatch) -> None:
 
     deleted = client.delete(f"/api/data/watchlist/{item['id']}")
     assert deleted.status_code == 204
+
+
+def test_position_quote_sync_refreshes_account_valuation(monkeypatch) -> None:
+    client, provider = make_client(monkeypatch)
+    account = client.post(
+        "/api/simulator/accounts",
+        json={"name": "Valuation Account", "initial_cash": 100000},
+    ).json()
+    now = "2026-04-27T09:30:00+08:00"
+    store = client.app.state.store
+    store.execute(
+        """
+        INSERT INTO positions (
+            id, simulator_account_id, symbol, name, quantity,
+            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
+        )
+        VALUES (?, ?, '600000', '浦发银行', 1000, 1000, 10, 10000, 0, ?)
+        """,
+        (uuid4().hex, account["id"], now),
+    )
+    store.execute(
+        """
+        UPDATE simulator_accounts
+        SET cash = 90000, total_asset = 100000, updated_at = ?
+        WHERE id = ?
+        """,
+        (now, account["id"]),
+    )
+
+    run = client.post(
+        "/api/data/sync/run",
+        json={"job_type": "quote", "scope": "positions"},
+    )
+
+    assert run.status_code == 200
+    assert provider.quote_calls == 1
+    account_row = store.fetch_one("SELECT total_asset FROM simulator_accounts WHERE id = ?", (account["id"],))
+    position_row = store.fetch_one(
+        "SELECT market_value, unrealized_pnl FROM positions WHERE simulator_account_id = ?",
+        (account["id"],),
+    )
+    point = store.fetch_one(
+        "SELECT source, market_value, total_asset, symbols_json FROM account_valuation_points WHERE simulator_account_id = ?",
+        (account["id"],),
+    )
+    assert account_row["total_asset"] == 100800
+    assert position_row["market_value"] == 10800
+    assert position_row["unrealized_pnl"] == 800
+    assert point["source"] == "valuation"
+    assert point["market_value"] == 10800
+    assert point["total_asset"] == 100800
+    assert json.loads(point["symbols_json"]) == ["600000"]
 
 
 def test_manual_all_a_quote_snapshot_sync(monkeypatch) -> None:

@@ -16,6 +16,7 @@ from app.main import create_app
 from app.simulator.engine import SimulatorEngine
 from app.simulator.replay_clock import ReplayClockService
 from app.simulator.rules import TradingRuleError
+from app.simulator.valuation import PortfolioValuationService
 from app.storage.duckdb import MarketDuckDBStore
 from app.storage.sqlite import SQLiteStore
 from app.tools.executor import ToolExecutor
@@ -317,6 +318,77 @@ def test_replay_market_quote_falls_back_to_daily_when_minute_fetch_fails() -> No
         "interval": "daily",
         "adjust": "",
     }
+
+
+def test_replay_account_valuation_fetches_missing_bars_to_effective_time() -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Replay Valuation", initial_cash=100000)
+    account_id = str(account["id"])
+    store.execute(
+        """
+        INSERT INTO positions (
+            id, simulator_account_id, symbol, name, quantity,
+            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
+        )
+        VALUES (?, ?, '600703', '三安光电', 1000, 1000, 13, 13000, 0, ?)
+        """,
+        (uuid4().hex, account_id, "2026-05-15T15:00:00+08:00"),
+    )
+    store.execute(
+        """
+        UPDATE simulator_accounts
+        SET cash = 90000, total_asset = 103000
+        WHERE id = ?
+        """,
+        (account_id,),
+    )
+    ReplayClockService(store).set_replay(account_id, "2026-05-16T01:52:21+08:00", speed=0)
+    market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
+    market_store.initialize()
+    provider = MagicMock()
+    provider.quote = AsyncMock()
+    provider.history = AsyncMock()
+    provider.minute = AsyncMock(
+        return_value=[
+            {
+                "symbol": "600703",
+                "name": "三安光电",
+                "interval": "1m",
+                "datetime": "2026-05-15 15:00:00",
+                "open": 13.48,
+                "high": 13.5,
+                "low": 13.45,
+                "close": 13.49,
+                "volume": 2000,
+                "amount": 26980,
+                "adjust": "",
+                "source": "test",
+                "fetch_time": "2026-05-15T07:00:00+00:00",
+                "raw_hash": "minute-600703",
+            }
+        ]
+    )
+
+    result = asyncio.run(
+        PortfolioValuationService(store, market_store, provider).refresh_account(account_id)
+    )
+
+    assert result["total_asset"] == 103490
+    assert provider.quote.await_count == 0
+    assert provider.minute.await_args.kwargs == {
+        "symbol": "600703",
+        "start": "2026-05-09 09:30:00",
+        "end": "2026-05-16 01:52:21",
+        "period": "1",
+    }
+    position = store.fetch_one("SELECT market_value, unrealized_pnl FROM positions WHERE simulator_account_id = ?", (account_id,))
+    point = store.fetch_one("SELECT time, total_asset, symbols_json FROM account_valuation_points WHERE simulator_account_id = ?", (account_id,))
+    assert position["market_value"] == 13490
+    assert position["unrealized_pnl"] == 490
+    assert point["time"].startswith("2026-05-16T01:52:21")
+    assert point["total_asset"] == 103490
+    assert point["symbols_json"] == '["600703"]'
 
 
 def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:
