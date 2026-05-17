@@ -60,6 +60,7 @@ export function ViewPage() {
     filters.symbol,
     filters.side,
     filters.status,
+    filters.time_scope,
     loadOverview,
     loadAccounts,
     loadTrades,
@@ -285,6 +286,8 @@ function TradesPanel() {
 
 function AssetsPanel() {
   const data = useViewStore((s) => s.assets);
+  const timeScope = useViewStore((s) => s.filters.time_scope ?? "current_clock");
+  const patchFilters = useViewStore((s) => s.patchFilters);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   if (!data) return <EmptyState title="暂无资产曲线" description="账户创建、成交或估值更新后会生成资产点。" />;
   const visibleSeries = data.series.filter((series) => !hidden[series.account_id]);
@@ -297,17 +300,38 @@ function AssetsPanel() {
       <section className="border border-hairline rounded-xl bg-surface-card p-4">
         <div className="flex items-start justify-between gap-3">
           <PanelHeader icon={<LineChart size={16} />} title="多账户资产对比" />
-          <div className="flex flex-wrap justify-end gap-2">
-            {data.series.map((series) => (
-              <button
-                key={series.account_id}
-                type="button"
-                onClick={() => setHidden((state) => ({ ...state, [series.account_id]: !state[series.account_id] }))}
-                className={`rounded-md border px-2 py-1 text-xs ${hidden[series.account_id] ? "border-hairline text-text-muted" : "border-brand-primary/50 text-text-on-dark bg-brand-primary/10"}`}
-              >
-                {series.account_name}
-              </button>
-            ))}
+          <div className="grid gap-2 justify-items-end">
+            <div className="inline-flex rounded-lg border border-hairline bg-surface-canvas p-0.5">
+              {[
+                ["current_clock", "当前时钟"],
+                ["all", "全量历史"]
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => patchFilters({ time_scope: value as "current_clock" | "all" })}
+                  className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    timeScope === value
+                      ? "bg-brand-primary text-white"
+                      : "text-text-muted hover:text-text-on-dark"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              {data.series.map((series) => (
+                <button
+                  key={series.account_id}
+                  type="button"
+                  onClick={() => setHidden((state) => ({ ...state, [series.account_id]: !state[series.account_id] }))}
+                  className={`rounded-md border px-2 py-1 text-xs ${hidden[series.account_id] ? "border-hairline text-text-muted" : "border-brand-primary/50 text-text-on-dark bg-brand-primary/10"}`}
+                >
+                  {series.account_name}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <MultiAssetChart series={visibleSeries} />
