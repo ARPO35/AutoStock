@@ -447,6 +447,34 @@ export interface TradeRow {
   traded_at: string;
 }
 
+export interface AssetPointTrade {
+  id: string;
+  side: "buy" | "sell" | string;
+  symbol: string;
+  name?: string | null;
+  price: number;
+  quantity: number;
+  turnover: number;
+  fee: number;
+  session_id?: string | null;
+  session_name?: string | null;
+  model?: string | null;
+  provider_name?: string | null;
+  run_id?: string | null;
+  tool_call_id?: string | null;
+}
+
+export interface AssetPointPosition {
+  symbol: string;
+  name?: string | null;
+  quantity: number;
+  avg_cost: number;
+  price?: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+}
+
 export interface SessionContributionRow {
   session_id: string;
   session_name: string;
@@ -468,10 +496,15 @@ export interface AssetPoint {
   cash: number;
   market_value: number;
   total_asset: number;
+  pnl?: number;
+  pnl_pct?: number;
   source: "initial" | "trade" | "current" | "valuation" | string;
   trade_id?: string;
+  trade?: AssetPointTrade | null;
   unrealized_pnl?: number;
   symbols?: string[];
+  positions?: AssetPointPosition[] | null;
+  positions_recorded?: boolean;
 }
 
 export interface AccountSnapshot {
