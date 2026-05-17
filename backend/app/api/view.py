@@ -136,6 +136,7 @@ async def refresh_account_valuation(
         "valuation_point": result.get("valuation_point"),
         "clock": result["clock"],
         "symbols": result.get("symbols", []),
+        "missing_symbols": result.get("missing_symbols", []),
         "source": result["source"],
     }
 
@@ -723,6 +724,7 @@ def _valuation_points(
                     "total_asset": round(float(row["total_asset"]), 2),
                     "source": row["source"],
                     "symbols": _json_list(str(row.get("symbols_json") or "[]")),
+                    "missing_symbols": _json_list(str(row.get("missing_symbols_json") or "[]")),
                     "positions": position_snapshots,
                     "positions_recorded": position_snapshots is not None,
                 },

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.market.normalizer import normalize_symbol
 from app.market.replay import is_replay_context, replay_quote_from_cache
+from app.market.stock_data_logger import write_stock_data_api_log
 from app.simulator.replay_clock import ReplayClockService, iso_seconds, parse_clock_time
 from app.storage.sqlite import SQLiteStore
 
@@ -84,14 +85,19 @@ class PortfolioValuationService:
         )
         valuation_time_text = self._valuation_time(account_id, valuation_time=valuation_time)
 
+        priced_symbols: list[str] = []
+        missing_symbols: list[str] = []
         for pos in positions:
             symbol = normalize_symbol(str(pos["symbol"]))
             quote = quotes.get(symbol)
             if quote is None:
+                missing_symbols.append(symbol)
                 continue
             price = _float(quote.get("price"))
             if price is None:
+                missing_symbols.append(symbol)
                 continue
+            priced_symbols.append(symbol)
             quantity = int(pos["quantity"])
             market_value = round(price * quantity, 2)
             unrealized_pnl = round((price - float(pos["avg_cost"])) * quantity, 2)
@@ -111,6 +117,18 @@ class PortfolioValuationService:
             )
 
         positions = self._positions(account_id)
+        missing_symbols = sorted(dict.fromkeys(missing_symbols))
+        if missing_symbols:
+            write_stock_data_api_log(
+                "account_valuation.missing_quotes",
+                {
+                    "account_id": account_id,
+                    "valuation_time": valuation_time_text,
+                    "missing_symbols": missing_symbols,
+                    "reason": "quote missing or price unavailable; carried previous position valuation",
+                },
+                ok=False,
+            )
         market_value = round(sum(float(pos.get("market_value") or 0) for pos in positions), 2)
         unrealized_pnl = round(sum(float(pos.get("unrealized_pnl") or 0) for pos in positions), 2)
         total_asset = round(float(account["cash"]) + market_value, 2)
@@ -133,16 +151,17 @@ class PortfolioValuationService:
             "unrealized_pnl": unrealized_pnl,
             "total_asset": total_asset,
             "source": source,
-            "symbols": sorted(quotes),
+            "symbols": sorted(dict.fromkeys(priced_symbols)),
+            "missing_symbols": missing_symbols,
             "positions": position_snapshots,
         }
         self.store.execute(
             """
             INSERT INTO account_valuation_points (
                 id, simulator_account_id, time, cash, market_value,
-                unrealized_pnl, total_asset, source, symbols_json, positions_json
+                unrealized_pnl, total_asset, source, symbols_json, positions_json, missing_symbols_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 valuation_point_id,
@@ -153,8 +172,9 @@ class PortfolioValuationService:
                 unrealized_pnl,
                 total_asset,
                 source,
-                json.dumps(sorted(quotes), ensure_ascii=False),
+                json.dumps(sorted(dict.fromkeys(priced_symbols)), ensure_ascii=False),
                 json.dumps(position_snapshots, ensure_ascii=False),
+                json.dumps(missing_symbols, ensure_ascii=False),
             ),
         )
         refreshed_account = self._account_or_raise(account_id)
@@ -163,7 +183,8 @@ class PortfolioValuationService:
             "market_value": market_value,
             "unrealized_pnl": unrealized_pnl,
             "total_asset": total_asset,
-            "symbols": sorted(quotes),
+            "symbols": sorted(dict.fromkeys(priced_symbols)),
+            "missing_symbols": missing_symbols,
             "valuation_point": valuation_point,
         }
 

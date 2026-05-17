@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -210,6 +211,56 @@ def test_manual_account_valuation_refresh_updates_metrics_and_writes_point(monke
     )
     assert json.loads(stored_point["positions_json"])[0]["symbol"] == "000001"
     assert provider.quotes_batch.await_count == 1
+
+
+def test_account_valuation_refresh_carries_missing_quote_positions(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AUTOSTOCK_STOCK_DATA_API_LOG_ROOT", str(tmp_path / "logs"))
+    client = make_client(monkeypatch)
+    account, _ = _seed_trade(client)
+    store = client.app.state.store
+    store.execute(
+        """
+        INSERT INTO positions (
+            id, simulator_account_id, symbol, name, quantity,
+            available_quantity, avg_cost, market_value, unrealized_pnl, updated_at
+        )
+        VALUES (?, ?, '600000', 'SPDB', 500, 500, 9.6, 5000, 200, ?)
+        """,
+        (uuid4().hex, account["id"], _now()),
+    )
+    provider = MagicMock()
+    provider.quotes_batch = AsyncMock(
+        return_value={"000001": {"symbol": "000001", "name": "Ping An Bank", "price": 12.3}}
+    )
+    client.app.state.market_provider = provider
+
+    response = client.post(f"/api/view/accounts/{account['id']}/valuation/refresh")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["metrics"]["market_value"] == 17300
+    assert body["metrics"]["floating_pnl"] == 2500
+    assert body["valuation_point"]["missing_symbols"] == ["600000"]
+    assert body["valuation_point"]["positions"][1]["symbol"] == "600000"
+    assert body["valuation_point"]["positions"][1]["market_value"] == 5000
+    stored_point = store.fetch_one(
+        """
+        SELECT missing_symbols_json
+        FROM account_valuation_points
+        WHERE id = ?
+        """,
+        (body["valuation_point"]["id"],),
+    )
+    assert json.loads(stored_point["missing_symbols_json"]) == ["600000"]
+    assets = client.get("/api/view/assets", params={"account_id": account["id"]}).json()
+    valuation = [point for point in assets["series"][0]["points"] if point["source"] == "valuation"][0]
+    assert valuation["missing_symbols"] == ["600000"]
+
+    log_files = sorted((Path(tmp_path) / "logs" / "stock_data_api").glob("*.log"))
+    assert log_files
+    log_text = "\n".join(path.read_text(encoding="utf-8") for path in log_files)
+    assert "account_valuation.missing_quotes" in log_text
+    assert "600000" in log_text
 
 
 def test_view_assets_include_persisted_valuation_points(monkeypatch) -> None:

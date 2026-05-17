@@ -226,6 +226,7 @@ class AccountValuationRefreshService:
             "account_id": account_id,
             "source": source,
             "symbols": result.get("symbols", []),
+            "missing_symbols": result.get("missing_symbols", []),
             "total_asset": result.get("total_asset"),
             "market_value": result.get("market_value"),
             "unrealized_pnl": result.get("unrealized_pnl"),

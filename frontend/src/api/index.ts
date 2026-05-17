@@ -506,6 +506,7 @@ export interface AssetPoint {
   trade?: AssetPointTrade | null;
   unrealized_pnl?: number;
   symbols?: string[];
+  missing_symbols?: string[];
   positions?: AssetPointPosition[] | null;
   positions_recorded?: boolean;
 }
@@ -528,6 +529,7 @@ export interface AccountValuationRefreshResponse {
   valuation_point: (AssetPoint & { id?: string; simulator_account_id?: string }) | null;
   clock: ReplayClockState;
   symbols: string[];
+  missing_symbols?: string[];
   source: string;
 }
 
