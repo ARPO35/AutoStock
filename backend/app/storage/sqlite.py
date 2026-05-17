@@ -86,6 +86,12 @@ class SQLiteStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            try:
+                self.connection.execute(
+                    "ALTER TABLE account_valuation_points ADD COLUMN positions_json TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
             self._drop_chat_runs_max_tool_rounds()
             self._seed_default_prompt_role()
             self.connection.commit()
@@ -330,7 +336,8 @@ CREATE TABLE IF NOT EXISTS account_valuation_points (
     unrealized_pnl REAL NOT NULL,
     total_asset REAL NOT NULL,
     source TEXT NOT NULL,
-    symbols_json TEXT NOT NULL DEFAULT '[]'
+    symbols_json TEXT NOT NULL DEFAULT '[]',
+    positions_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_account_valuation_points_account_time

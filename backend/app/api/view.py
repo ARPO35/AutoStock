@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -525,16 +524,21 @@ def _asset_points(
     account_id = str(account["id"])
     trades = list(reversed(_trades(store, account_id, None, end, symbol, limit=1000, session_id=session_id, model=model, side=side)))
     cash = float(account["initial_cash"])
-    quantities: defaultdict[str, int] = defaultdict(int)
-    last_prices: dict[str, float] = {}
+    positions: dict[str, dict[str, Any]] = {}
     points = [
-        {
-            "time": account["created_at"],
-            "cash": round(cash, 2),
-            "market_value": 0.0,
-            "total_asset": round(cash, 2),
-            "source": "initial",
-        }
+        _asset_point(
+            account,
+            {
+                "time": account["created_at"],
+                "cash": round(cash, 2),
+                "market_value": 0.0,
+                "unrealized_pnl": 0.0,
+                "total_asset": round(cash, 2),
+                "source": "initial",
+                "positions": [],
+                "positions_recorded": True,
+            },
+        )
     ]
 
     for trade in trades:
@@ -544,36 +548,74 @@ def _asset_points(
         trade_symbol = str(trade["symbol"])
         if trade["side"] == "buy":
             cash -= price * quantity + fee
-            quantities[trade_symbol] += quantity
+            existing = positions.get(trade_symbol)
+            old_quantity = int(existing["quantity"]) if existing else 0
+            old_avg_cost = float(existing["avg_cost"]) if existing else 0.0
+            new_quantity = old_quantity + quantity
+            avg_cost = ((old_quantity * old_avg_cost) + (price * quantity) + fee) / new_quantity if new_quantity > 0 else price
+            positions[trade_symbol] = {
+                "symbol": trade_symbol,
+                "name": _clean_stock_name(trade.get("name")),
+                "quantity": new_quantity,
+                "avg_cost": round(avg_cost, 4),
+                "last_price": price,
+            }
         else:
             cash += price * quantity - fee
-            quantities[trade_symbol] -= quantity
-        last_prices[trade_symbol] = price
-        market_value = sum(max(qty, 0) * last_prices.get(sym, 0.0) for sym, qty in quantities.items())
+            existing = positions.get(trade_symbol)
+            if existing is not None:
+                new_quantity = int(existing["quantity"]) - quantity
+                if new_quantity <= 0:
+                    positions.pop(trade_symbol, None)
+                else:
+                    existing["quantity"] = new_quantity
+                    existing["last_price"] = price
+                    if trade.get("name"):
+                        existing["name"] = _clean_stock_name(trade.get("name"))
+        if trade_symbol in positions:
+            positions[trade_symbol]["last_price"] = price
+        position_snapshots = _asset_position_snapshots(positions)
+        market_value = sum(float(pos["market_value"]) for pos in position_snapshots)
+        unrealized_pnl = sum(float(pos["unrealized_pnl"]) for pos in position_snapshots)
         points.append(
-            {
-                "time": trade["traded_at"],
-                "cash": round(cash, 2),
-                "market_value": round(market_value, 2),
-                "total_asset": round(cash + market_value, 2),
-                "source": "trade",
-                "trade_id": trade["id"],
-            }
+            _asset_point(
+                account,
+                {
+                    "time": trade["traded_at"],
+                    "cash": round(cash, 2),
+                    "market_value": round(market_value, 2),
+                    "unrealized_pnl": round(unrealized_pnl, 2),
+                    "total_asset": round(cash + market_value, 2),
+                    "source": "trade",
+                    "trade_id": trade["id"],
+                    "trade": _asset_trade_summary(trade),
+                    "positions": position_snapshots,
+                    "positions_recorded": True,
+                },
+            )
         )
 
     if not symbol:
-        current_market_value = sum(float(pos.get("market_value") or 0) for pos in _positions(store, account_id))
+        current_positions = _current_position_snapshots(store, account_id)
+        current_market_value = sum(float(pos.get("market_value") or 0) for pos in current_positions)
+        current_unrealized_pnl = sum(float(pos.get("unrealized_pnl") or 0) for pos in current_positions)
         points.append(
-            {
-                "time": account["updated_at"],
-                "cash": round(float(account["cash"]), 2),
-                "market_value": round(current_market_value, 2),
-                "total_asset": round(float(account["total_asset"]), 2),
-                "source": "current",
-            }
+            _asset_point(
+                account,
+                {
+                    "time": account["updated_at"],
+                    "cash": round(float(account["cash"]), 2),
+                    "market_value": round(current_market_value, 2),
+                    "unrealized_pnl": round(current_unrealized_pnl, 2),
+                    "total_asset": round(float(account["total_asset"]), 2),
+                    "source": "current",
+                    "positions": current_positions,
+                    "positions_recorded": True,
+                },
+            )
         )
 
-    points.extend(_valuation_points(store, account_id, start, end, symbol))
+    points.extend(_valuation_points(store, account, start, end, symbol))
     points.sort(key=lambda point: str(point["time"]))
     start_value = _start_value(start)
     if start_value:
@@ -583,11 +625,12 @@ def _asset_points(
 
 def _valuation_points(
     store: SQLiteStore,
-    account_id: str,
+    account: dict[str, Any],
     start: str | None,
     end: str | None,
     symbol: str | None,
 ) -> list[dict[str, Any]]:
+    account_id = str(account["id"])
     clauses = ["simulator_account_id = ?"]
     params: list[Any] = [account_id]
     _append_time_filter(clauses, params, "time", start, end)
@@ -606,18 +649,133 @@ def _valuation_points(
     )
     points: list[dict[str, Any]] = []
     for row in rows:
+        positions_json = row.get("positions_json")
+        position_snapshots = _valuation_position_snapshots(str(positions_json)) if positions_json else None
         points.append(
-            {
-                "time": row["time"],
-                "cash": round(float(row["cash"]), 2),
-                "market_value": round(float(row["market_value"]), 2),
-                "unrealized_pnl": round(float(row["unrealized_pnl"]), 2),
-                "total_asset": round(float(row["total_asset"]), 2),
-                "source": row["source"],
-                "symbols": _json_list(str(row.get("symbols_json") or "[]")),
-            }
+            _asset_point(
+                account,
+                {
+                    "time": row["time"],
+                    "cash": round(float(row["cash"]), 2),
+                    "market_value": round(float(row["market_value"]), 2),
+                    "unrealized_pnl": round(float(row["unrealized_pnl"]), 2),
+                    "total_asset": round(float(row["total_asset"]), 2),
+                    "source": row["source"],
+                    "symbols": _json_list(str(row.get("symbols_json") or "[]")),
+                    "positions": position_snapshots,
+                    "positions_recorded": position_snapshots is not None,
+                },
+            )
         )
     return points
+
+
+def _asset_point(account: dict[str, Any], point: dict[str, Any]) -> dict[str, Any]:
+    initial_cash = float(account["initial_cash"])
+    total_asset = float(point["total_asset"])
+    pnl = round(total_asset - initial_cash, 2)
+    point["pnl"] = pnl
+    point["pnl_pct"] = round((pnl / initial_cash * 100), 4) if initial_cash > 0 else 0
+    return point
+
+
+def _asset_trade_summary(trade: dict[str, Any]) -> dict[str, Any]:
+    fee = round(float(trade.get("fee") or 0) + float(trade.get("tax") or 0), 2)
+    price = float(trade["price"])
+    quantity = int(trade["quantity"])
+    return {
+        "id": trade["id"],
+        "side": trade["side"],
+        "symbol": trade["symbol"],
+        "name": _clean_stock_name(trade.get("name")),
+        "price": round(price, 4),
+        "quantity": quantity,
+        "turnover": round(price * quantity, 2),
+        "fee": fee,
+        "session_id": trade.get("session_id"),
+        "session_name": trade.get("session_name"),
+        "model": trade.get("model"),
+        "provider_name": trade.get("provider_name"),
+        "run_id": trade.get("run_id"),
+        "tool_call_id": trade.get("tool_call_id"),
+    }
+
+
+def _asset_position_snapshots(positions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    snapshots: list[dict[str, Any]] = []
+    for symbol, pos in sorted(positions.items()):
+        quantity = int(pos.get("quantity") or 0)
+        if quantity <= 0:
+            continue
+        avg_cost = float(pos.get("avg_cost") or 0)
+        last_price = float(pos.get("last_price") or 0)
+        market_value = round(last_price * quantity, 2)
+        unrealized_pnl = round(market_value - avg_cost * quantity, 2)
+        snapshots.append(
+            {
+                "symbol": symbol,
+                "name": _clean_stock_name(pos.get("name")),
+                "quantity": quantity,
+                "avg_cost": round(avg_cost, 4),
+                "price": round(last_price, 4),
+                "market_value": market_value,
+                "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": _pct(unrealized_pnl, avg_cost * quantity),
+            }
+        )
+    return snapshots
+
+
+def _current_position_snapshots(store: SQLiteStore, account_id: str) -> list[dict[str, Any]]:
+    snapshots: list[dict[str, Any]] = []
+    for pos in _positions(store, account_id):
+        quantity = int(pos.get("quantity") or 0)
+        avg_cost = float(pos.get("avg_cost") or 0)
+        market_value = round(float(pos.get("market_value") or 0), 2)
+        unrealized_pnl = round(float(pos.get("unrealized_pnl") or 0), 2)
+        snapshots.append(
+            {
+                "symbol": str(pos.get("symbol") or ""),
+                "name": _clean_stock_name(pos.get("name")),
+                "quantity": quantity,
+                "avg_cost": round(avg_cost, 4),
+                "price": round((market_value / quantity), 4) if quantity > 0 else 0,
+                "market_value": market_value,
+                "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": _pct(unrealized_pnl, avg_cost * quantity),
+            }
+        )
+    return snapshots
+
+
+def _valuation_position_snapshots(value: str) -> list[dict[str, Any]]:
+    snapshots: list[dict[str, Any]] = []
+    for item in _json_list(value):
+        if not isinstance(item, dict):
+            continue
+        quantity = int(item.get("quantity") or 0)
+        avg_cost = float(item.get("avg_cost") or 0)
+        market_value = round(float(item.get("market_value") or 0), 2)
+        unrealized_pnl = round(float(item.get("unrealized_pnl") or 0), 2)
+        snapshots.append(
+            {
+                "symbol": str(item.get("symbol") or ""),
+                "name": _clean_stock_name(item.get("name")),
+                "quantity": quantity,
+                "avg_cost": round(avg_cost, 4),
+                "price": round((market_value / quantity), 4) if quantity > 0 else 0,
+                "market_value": market_value,
+                "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": round(float(item.get("unrealized_pnl_pct")), 4)
+                if item.get("unrealized_pnl_pct") is not None
+                else _pct(unrealized_pnl, avg_cost * quantity),
+            }
+        )
+    return snapshots
+
+
+def _pct(value: float, base: float) -> float:
+    return round((value / base * 100), 4) if base > 0 else 0
 
 
 def _totals(snapshots: list[dict[str, Any]]) -> dict[str, Any]:

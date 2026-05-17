@@ -160,6 +160,19 @@ def test_view_account_snapshot_uses_simulator_account口径(monkeypatch) -> None
     assert body["recent_trades"][0]["name"] == "Ping An Bank"
     assert body["recent_trades"][0]["turnover"] == 10000
     assert body["asset_points"][-1]["source"] == "current"
+    trade_point = next(point for point in body["asset_points"] if point["source"] == "trade")
+    assert trade_point["pnl"] == -5
+    assert trade_point["pnl_pct"] == -0.005
+    assert trade_point["trade"]["side"] == "buy"
+    assert trade_point["trade"]["symbol"] == "000001"
+    assert trade_point["trade"]["turnover"] == 10000
+    assert trade_point["trade"]["fee"] == 5
+    assert trade_point["trade"]["session_name"] == "View Session"
+    assert trade_point["trade"]["model"] == "deepseek-v4-pro"
+    assert trade_point["positions_recorded"] is True
+    assert trade_point["positions"][0]["symbol"] == "000001"
+    assert trade_point["positions"][0]["quantity"] == 1000
+    assert trade_point["positions"][0]["unrealized_pnl_pct"] == -0.05
     assert provider.quotes_batch.await_count == 0
     points = client.app.state.store.fetch_all(
         "SELECT * FROM account_valuation_points WHERE simulator_account_id = ?",
@@ -188,6 +201,14 @@ def test_manual_account_valuation_refresh_updates_metrics_and_writes_point(monke
     assert body["clock"]["mode"] == "live"
     assert body["valuation_point"]["total_asset"] == 102295
     assert body["valuation_point"]["symbols"] == ["000001"]
+    assert body["valuation_point"]["positions"][0]["symbol"] == "000001"
+    assert body["valuation_point"]["positions"][0]["market_value"] == 12300
+    assert body["valuation_point"]["positions"][0]["unrealized_pnl_pct"] == 23
+    stored_point = client.app.state.store.fetch_one(
+        "SELECT positions_json FROM account_valuation_points WHERE id = ?",
+        (body["valuation_point"]["id"],),
+    )
+    assert json.loads(stored_point["positions_json"])[0]["symbol"] == "000001"
     assert provider.quotes_batch.await_count == 1
 
 
@@ -216,6 +237,46 @@ def test_view_assets_include_persisted_valuation_points(monkeypatch) -> None:
     assert valuation["time"] == valuation_time
     assert valuation["total_asset"] == 101195
     assert valuation["symbols"] == ["000001"]
+    assert valuation["pnl"] == 1195
+    assert valuation["pnl_pct"] == 1.195
+    assert valuation["positions"] is None
+    assert valuation["positions_recorded"] is False
+
+
+def test_view_assets_include_persisted_valuation_position_snapshots(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    account, _ = _seed_trade(client)
+    store = client.app.state.store
+    valuation_time = "2026-05-16T10:00:00+08:00"
+    positions = [
+        {
+            "symbol": "000001",
+            "name": "Ping An Bank",
+            "quantity": 1000,
+            "avg_cost": 10,
+            "market_value": 11200,
+            "unrealized_pnl": 1200,
+            "unrealized_pnl_pct": 12,
+        }
+    ]
+    store.execute(
+        """
+        INSERT INTO account_valuation_points (
+            id, simulator_account_id, time, cash, market_value,
+            unrealized_pnl, total_asset, source, symbols_json, positions_json
+        )
+        VALUES (?, ?, ?, 89995, 11200, 1200, 101195, 'valuation', ?, ?)
+        """,
+        (uuid4().hex, account["id"], valuation_time, json.dumps(["000001"]), json.dumps(positions)),
+    )
+
+    assets = client.get("/api/view/assets", params={"account_id": account["id"]}).json()
+    valuation = [point for point in assets["series"][0]["points"] if point["source"] == "valuation"][0]
+
+    assert valuation["positions_recorded"] is True
+    assert valuation["positions"][0]["symbol"] == "000001"
+    assert valuation["positions"][0]["market_value"] == 11200
+    assert valuation["positions"][0]["unrealized_pnl_pct"] == 12
 
 
 def test_view_trades_filters_by_account_and_symbol(monkeypatch) -> None:

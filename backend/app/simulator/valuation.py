@@ -114,6 +114,7 @@ class PortfolioValuationService:
         market_value = round(sum(float(pos.get("market_value") or 0) for pos in positions), 2)
         unrealized_pnl = round(sum(float(pos.get("unrealized_pnl") or 0) for pos in positions), 2)
         total_asset = round(float(account["cash"]) + market_value, 2)
+        position_snapshots = [_position_snapshot(pos) for pos in positions]
         self.store.execute(
             """
             UPDATE simulator_accounts
@@ -133,14 +134,15 @@ class PortfolioValuationService:
             "total_asset": total_asset,
             "source": source,
             "symbols": sorted(quotes),
+            "positions": position_snapshots,
         }
         self.store.execute(
             """
             INSERT INTO account_valuation_points (
                 id, simulator_account_id, time, cash, market_value,
-                unrealized_pnl, total_asset, source, symbols_json
+                unrealized_pnl, total_asset, source, symbols_json, positions_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 valuation_point_id,
@@ -152,6 +154,7 @@ class PortfolioValuationService:
                 total_asset,
                 source,
                 json.dumps(sorted(quotes), ensure_ascii=False),
+                json.dumps(position_snapshots, ensure_ascii=False),
             ),
         )
         refreshed_account = self._account_or_raise(account_id)
@@ -261,3 +264,20 @@ def _best_stock_name(*values: object) -> str:
         if name:
             return name
     return ""
+
+
+def _position_snapshot(pos: dict[str, Any]) -> dict[str, Any]:
+    quantity = int(pos.get("quantity") or 0)
+    avg_cost = float(pos.get("avg_cost") or 0)
+    market_value = round(float(pos.get("market_value") or 0), 2)
+    unrealized_pnl = round(float(pos.get("unrealized_pnl") or 0), 2)
+    cost_basis = avg_cost * quantity
+    return {
+        "symbol": str(pos.get("symbol") or ""),
+        "name": _clean_stock_name(pos.get("name")),
+        "quantity": quantity,
+        "avg_cost": round(avg_cost, 4),
+        "market_value": market_value,
+        "unrealized_pnl": unrealized_pnl,
+        "unrealized_pnl_pct": round((unrealized_pnl / cost_basis * 100), 4) if cost_basis > 0 else 0,
+    }
