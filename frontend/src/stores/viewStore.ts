@@ -78,6 +78,7 @@ export const useViewStore = create<ViewState>((set, get) => ({
         symbol: patch.symbol === "" ? undefined : patch.symbol ?? state.filters.symbol,
         side: patch.side === "" ? undefined : patch.side ?? state.filters.side,
         status: patch.status === "" ? undefined : patch.status ?? state.filters.status,
+        time_scope: patch.time_scope ?? state.filters.time_scope,
         start: patch.start === "" ? undefined : patch.start ?? state.filters.start,
         end: patch.end === "" ? undefined : patch.end ?? state.filters.end,
       }

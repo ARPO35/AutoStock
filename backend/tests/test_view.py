@@ -279,6 +279,42 @@ def test_view_assets_include_persisted_valuation_position_snapshots(monkeypatch)
     assert valuation["positions"][0]["unrealized_pnl_pct"] == 12
 
 
+def test_view_assets_default_scope_hides_replay_future_valuation_points(monkeypatch) -> None:
+    client = make_client(monkeypatch)
+    account, _ = _seed_trade(client)
+    store = client.app.state.store
+    from app.simulator.replay_clock import ReplayClockService
+
+    ReplayClockService(store).set_replay(account["id"], "2026-05-16T10:00:00+08:00", speed=0)
+    for valuation_time, total_asset in [
+        ("2026-05-16T09:59:00+08:00", 101000),
+        ("2026-05-16T10:01:00+08:00", 102000),
+    ]:
+        store.execute(
+            """
+            INSERT INTO account_valuation_points (
+                id, simulator_account_id, time, cash, market_value,
+                unrealized_pnl, total_asset, source, symbols_json
+            )
+            VALUES (?, ?, ?, 90000, ?, 0, ?, 'valuation', ?)
+            """,
+            (uuid4().hex, account["id"], valuation_time, total_asset - 90000, total_asset, json.dumps(["000001"])),
+        )
+
+    current = client.get("/api/view/assets", params={"account_id": account["id"]}).json()
+    all_history = client.get(
+        "/api/view/assets",
+        params={"account_id": account["id"], "time_scope": "all"},
+    ).json()
+
+    current_times = [point["time"] for point in current["series"][0]["points"] if point["source"] == "valuation"]
+    all_times = [point["time"] for point in all_history["series"][0]["points"] if point["source"] == "valuation"]
+    assert current["filters"]["time_scope"] == "current_clock"
+    assert current_times == ["2026-05-16T09:59:00+08:00"]
+    assert all_history["filters"]["time_scope"] == "all"
+    assert all_times == ["2026-05-16T09:59:00+08:00", "2026-05-16T10:01:00+08:00"]
+
+
 def test_view_trades_filters_by_account_and_symbol(monkeypatch) -> None:
     client = make_client(monkeypatch)
     account, _ = _seed_trade(client)

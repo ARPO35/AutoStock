@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.dependencies import get_store
 from app.scheduler.account_valuation import AccountValuationRefreshService
+from app.simulator.replay_clock import ReplayClockService, parse_clock_time
 from app.storage.sqlite import SQLiteStore
 
 router = APIRouter(prefix="/api/view", tags=["view"])
@@ -175,6 +176,7 @@ async def view_assets(
     end: str | None = None,
     symbol: str | None = None,
     side: str | None = None,
+    time_scope: str = Query(default="current_clock", pattern="^(current_clock|all)$"),
     store: SQLiteStore = Depends(get_store),
 ) -> dict[str, Any]:
     accounts = _accounts(store, account_id)
@@ -182,14 +184,24 @@ async def view_assets(
         {
             "account_id": account["id"],
             "account_name": account["name"],
-            "points": _asset_points(store, account, start, end, symbol, session_id=session_id, model=model, side=side),
+            "points": _asset_points(
+                store,
+                account,
+                start,
+                end,
+                symbol,
+                session_id=session_id,
+                model=model,
+                side=side,
+                time_scope=time_scope,
+            ),
         }
         for account in accounts
     ]
     latest_total = sum(float(item["points"][-1]["total_asset"]) for item in series if item["points"])
     return {
         "generated_at": utc_now(),
-        "filters": _filters(account_id, session_id, model, start, end, symbol, side, None),
+        "filters": _filters(account_id, session_id, model, start, end, symbol, side, None, time_scope=time_scope),
         "summary": {
             "account_count": len(series),
             "latest_total_asset": round(latest_total, 2),
@@ -257,6 +269,7 @@ def _filters(
     symbol: str | None,
     side: str | None,
     status_filter: str | None,
+    time_scope: str | None = None,
 ) -> dict[str, str | None]:
     return {
         "account_id": account_id or None,
@@ -267,6 +280,7 @@ def _filters(
         "symbol": symbol or None,
         "side": side or None,
         "status": status_filter or None,
+        "time_scope": time_scope or None,
     }
 
 
@@ -520,9 +534,25 @@ def _asset_points(
     session_id: str | None = None,
     model: str | None = None,
     side: str | None = None,
+    time_scope: str = "current_clock",
 ) -> list[dict[str, Any]]:
     account_id = str(account["id"])
-    trades = list(reversed(_trades(store, account_id, None, end, symbol, limit=1000, session_id=session_id, model=model, side=side)))
+    effective_end = _asset_scope_end(store, account, end, time_scope)
+    trades = list(
+        reversed(
+            _trades(
+                store,
+                account_id,
+                None,
+                effective_end,
+                symbol,
+                limit=1000,
+                session_id=session_id,
+                model=model,
+                side=side,
+            )
+        )
+    )
     cash = float(account["initial_cash"])
     positions: dict[str, dict[str, Any]] = {}
     points = [
@@ -615,12 +645,43 @@ def _asset_points(
             )
         )
 
-    points.extend(_valuation_points(store, account, start, end, symbol))
+    points.extend(_valuation_points(store, account, start, effective_end, symbol))
     points.sort(key=lambda point: str(point["time"]))
     start_value = _start_value(start)
     if start_value:
         points = [point for point in points if str(point["time"]) >= start_value]
+    if effective_end:
+        points = [point for point in points if _time_lte(str(point["time"]), effective_end)]
     return points[-240:]
+
+
+def _asset_scope_end(
+    store: SQLiteStore,
+    account: dict[str, Any],
+    end: str | None,
+    time_scope: str,
+) -> str | None:
+    if time_scope == "all":
+        return end
+    clock_end = _end_of_second(ReplayClockService(store).get_clock(str(account["id"])).effective_time)
+    return _earlier_time(end, clock_end)
+
+
+def _earlier_time(left: str | None, right: str | None) -> str | None:
+    if not left:
+        return right
+    if not right:
+        return left
+    return left if parse_clock_time(_end_value(left) or left) <= parse_clock_time(_end_value(right) or right) else right
+
+
+def _time_lte(value: str, end: str) -> bool:
+    return parse_clock_time(value) <= parse_clock_time(_end_value(end) or end)
+
+
+def _end_of_second(value: str) -> str:
+    dt = parse_clock_time(value).replace(microsecond=999999)
+    return dt.isoformat(timespec="microseconds")
 
 
 def _valuation_points(

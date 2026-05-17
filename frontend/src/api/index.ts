@@ -356,6 +356,8 @@ export interface PromptRole {
   entries: PromptEntry[];
 }
 
+export type ViewTimeScope = "current_clock" | "all";
+
 export interface ViewFilters {
   account_id?: string;
   session_id?: string;
@@ -365,6 +367,7 @@ export interface ViewFilters {
   symbol?: string;
   side?: string;
   status?: string;
+  time_scope?: ViewTimeScope;
 }
 
 export interface AccountMetrics {
@@ -649,6 +652,7 @@ function viewQuery(filters?: ViewFilters & { limit?: number }): string {
   if (filters?.symbol) query.set("symbol", filters.symbol);
   if (filters?.side) query.set("side", filters.side);
   if (filters?.status) query.set("status", filters.status);
+  if (filters?.time_scope) query.set("time_scope", filters.time_scope);
   if (filters?.limit) query.set("limit", String(filters.limit));
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
