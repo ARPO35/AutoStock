@@ -200,7 +200,13 @@ export function LLMLinearTimeline({ bottomInsetPx }: LLMLinearTimelineProps) {
 
   return (
     <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ bottom: `${bottomInset}px` }}>
-      <div className="h-full overflow-y-auto" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
+      <div
+        className="h-full overflow-y-auto"
+        data-testid="linear-flow-scroller"
+        ref={scrollRef}
+        onScroll={handleScroll}
+        onWheel={handleWheel}
+      >
         <div className="flex min-h-full flex-col gap-3 p-4 pb-4">
           {timeline.map((item) => {
             const highlighted = Boolean(item.toolCallId && item.toolCallId === focusedToolCallId);

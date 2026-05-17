@@ -13,6 +13,12 @@ export function TradePage() {
   const dragging = useRef(false);
   const [draggingInspector, setDraggingInspector] = useState(false);
   const [timelineBottomInset, setTimelineBottomInset] = useState(96);
+  const [bottomFadeInset, setBottomFadeInset] = useState<number | null>(null);
+
+  const handleInputSafeAreaChange = useCallback((safeAreaPx: number) => {
+    setTimelineBottomInset(safeAreaPx);
+    setBottomFadeInset((current) => current ?? safeAreaPx);
+  }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -47,10 +53,14 @@ export function TradePage() {
 
       <div className="flex-1 min-w-[520px] flex flex-col min-h-0">
         <SessionHeader />
-        <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 min-h-0 relative" data-testid="linear-flow-shell">
           <LLMLinearTimeline bottomInsetPx={timelineBottomInset} />
-          <div className="pointer-events-none absolute bottom-0 left-0 right-3 z-10 h-12 bg-gradient-to-t from-surface-canvas via-surface-canvas/60 to-transparent" />
-          <ChatInputBox onSafeAreaChange={setTimelineBottomInset} />
+          <div
+            data-testid="linear-flow-bottom-fade"
+            className="pointer-events-none absolute bottom-0 left-0 right-3 z-10 bg-gradient-to-t from-surface-canvas via-surface-canvas/60 to-transparent"
+            style={{ height: `${bottomFadeInset ?? timelineBottomInset}px` }}
+          />
+          <ChatInputBox onSafeAreaChange={handleInputSafeAreaChange} />
         </div>
       </div>
 

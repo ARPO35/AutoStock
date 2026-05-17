@@ -91,6 +91,7 @@ export function ChatInputBox({ onSafeAreaChange }: ChatInputBoxProps) {
       <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-[860px] sm:w-[72%] sm:min-w-[360px]">
         <div
           ref={inputSurfaceRef}
+          data-testid="chat-input-surface"
           className={`relative border bg-surface-card/95 p-1.5 shadow-2xl transition-all duration-300 ease-out ${
             focused
               ? "rounded-xl border-brand-primary/60"
