@@ -91,6 +91,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--color-text-muted) transparent;
+  scrollbar-width: thin;
 }
 
 body {
@@ -125,6 +127,38 @@ button:disabled {
 input, select, textarea {
   font: inherit;
   outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-muted);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--color-brand-primary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 :focus-visible {
