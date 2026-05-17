@@ -4,7 +4,11 @@ import { useUIStore } from "@/stores/uiStore";
 import { EmptyState, LoadingDots, Spinner } from "@/components/ui/Shared";
 import { MessageBubble } from "@/features/trade/MessageBubble";
 
-export function LLMLinearTimeline() {
+type LLMLinearTimelineProps = {
+  bottomInsetPx: number;
+};
+
+export function LLMLinearTimeline({ bottomInsetPx }: LLMLinearTimelineProps) {
   const selectedSessionId = useTradeStore((s) => s.selectedSessionId);
   const loadTimeline = useTradeStore((s) => s.loadTimeline);
   const busy = useTradeStore((s) => s.busy);
@@ -42,6 +46,7 @@ export function LLMLinearTimeline() {
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(restoreScrollTop.current === null);
 
   const RELOCK_THRESHOLD_PX = 48;
+  const bottomInset = Math.max(0, bottomInsetPx);
 
   const getDistanceToBottom = (el: HTMLDivElement) => (
     el.scrollHeight - el.scrollTop - el.clientHeight
@@ -194,9 +199,9 @@ export function LLMLinearTimeline() {
   }
 
   return (
-    <div className="h-full relative">
+    <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ bottom: `${bottomInset}px` }}>
       <div className="h-full overflow-y-auto" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
-        <div className="flex flex-col gap-3 p-4 pb-28 min-h-full">
+        <div className="flex min-h-full flex-col gap-3 p-4 pb-4">
           {timeline.map((item) => {
             const highlighted = Boolean(item.toolCallId && item.toolCallId === focusedToolCallId);
             return (
@@ -213,6 +218,7 @@ export function LLMLinearTimeline() {
           <div ref={bottomRef} />
         </div>
       </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-12 bg-gradient-to-t from-surface-canvas via-surface-canvas/70 to-transparent" />
       {!autoScrollEnabled && (
         <button
           type="button"

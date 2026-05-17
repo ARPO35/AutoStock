@@ -1,11 +1,15 @@
-import { type KeyboardEvent, useCallback, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pause, Play, Settings } from "lucide-react";
 import { useTradeStore } from "@/stores/tradeStore";
 import { useDataStore } from "@/stores/dataStore";
 import { TradeConfigPopover } from "@/features/trade/TradeConfigPopover";
 import { resolveModelSelection } from "@/lib/providerModels";
 
-export function ChatInputBox() {
+type ChatInputBoxProps = {
+  onSafeAreaChange?: (safeAreaPx: number) => void;
+};
+
+export function ChatInputBox({ onSafeAreaChange }: ChatInputBoxProps) {
   const draft = useTradeStore((s) => s.draft);
   const setDraft = useTradeStore((s) => s.setDraft);
   const busy = useTradeStore((s) => s.busy);
@@ -16,6 +20,8 @@ export function ChatInputBox() {
   const runNotice = useTradeStore((s) => s.runNotice);
   const [focused, setFocused] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const footerRef = useRef<HTMLElement>(null);
+  const inputSurfaceRef = useRef<HTMLDivElement>(null);
 
   const sessions = useDataStore((s) => s.sessions);
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
@@ -47,10 +53,44 @@ export function ChatInputBox() {
     [sendRun]
   );
 
+  const reportSafeArea = useCallback(() => {
+    const footer = footerRef.current;
+    const inputSurface = inputSurfaceRef.current;
+    const host = footer?.offsetParent;
+    if (!footer || !inputSurface || !(host instanceof HTMLElement)) return;
+
+    const hostRect = host.getBoundingClientRect();
+    const inputRect = inputSurface.getBoundingClientRect();
+    const safeAreaPx = Math.max(0, Math.ceil(hostRect.bottom - inputRect.top));
+    onSafeAreaChange?.(safeAreaPx);
+  }, [onSafeAreaChange]);
+
+  useLayoutEffect(() => {
+    reportSafeArea();
+  }, [focused, runError, runNotice, reportSafeArea]);
+
+  useEffect(() => {
+    const footer = footerRef.current;
+    const inputSurface = inputSurfaceRef.current;
+    if (!footer || !inputSurface) return;
+
+    const observer = new ResizeObserver(reportSafeArea);
+    observer.observe(footer);
+    observer.observe(inputSurface);
+    window.addEventListener("resize", reportSafeArea);
+    reportSafeArea();
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", reportSafeArea);
+    };
+  }, [reportSafeArea]);
+
   return (
-    <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-surface-canvas via-surface-canvas/50 via-40% to-transparent px-4 pb-4 pt-5">
+    <footer ref={footerRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-surface-canvas via-surface-canvas/50 via-40% to-transparent px-4 pb-4 pt-5">
       <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-[860px] sm:w-[72%] sm:min-w-[360px]">
         <div
+          ref={inputSurfaceRef}
           className={`relative border bg-surface-card/95 p-1.5 shadow-2xl transition-all duration-300 ease-out ${
             focused
               ? "rounded-xl border-brand-primary/60"

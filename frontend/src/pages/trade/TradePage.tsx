@@ -12,6 +12,7 @@ export function TradePage() {
   const setInspectorWidth = useUIStore((s) => s.setInspectorWidth);
   const dragging = useRef(false);
   const [draggingInspector, setDraggingInspector] = useState(false);
+  const [timelineBottomInset, setTimelineBottomInset] = useState(96);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -47,8 +48,8 @@ export function TradePage() {
       <div className="flex-1 min-w-[520px] flex flex-col min-h-0">
         <SessionHeader />
         <div className="flex-1 min-h-0 relative">
-          <LLMLinearTimeline />
-          <ChatInputBox />
+          <LLMLinearTimeline bottomInsetPx={timelineBottomInset} />
+          <ChatInputBox onSafeAreaChange={setTimelineBottomInset} />
         </div>
       </div>
 
