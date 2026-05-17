@@ -218,7 +218,6 @@ export function LLMLinearTimeline({ bottomInsetPx }: LLMLinearTimelineProps) {
           <div ref={bottomRef} />
         </div>
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-12 bg-gradient-to-t from-surface-canvas via-surface-canvas/70 to-transparent" />
       {!autoScrollEnabled && (
         <button
           type="button"

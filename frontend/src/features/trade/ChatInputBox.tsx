@@ -87,7 +87,7 @@ export function ChatInputBox({ onSafeAreaChange }: ChatInputBoxProps) {
   }, [reportSafeArea]);
 
   return (
-    <footer ref={footerRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-surface-canvas via-surface-canvas/50 via-40% to-transparent px-4 pb-4 pt-5">
+    <footer ref={footerRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-4 pb-4 pt-5">
       <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-[860px] sm:w-[72%] sm:min-w-[360px]">
         <div
           ref={inputSurfaceRef}

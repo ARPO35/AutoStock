@@ -49,6 +49,7 @@ export function TradePage() {
         <SessionHeader />
         <div className="flex-1 min-h-0 relative">
           <LLMLinearTimeline bottomInsetPx={timelineBottomInset} />
+          <div className="pointer-events-none absolute bottom-0 left-0 right-3 z-10 h-12 bg-gradient-to-t from-surface-canvas via-surface-canvas/60 to-transparent" />
           <ChatInputBox onSafeAreaChange={setTimelineBottomInset} />
         </div>
       </div>
