@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import re
 import time
 from collections.abc import AsyncGenerator
@@ -17,22 +16,19 @@ from app.llm.raw_logger import RawLogContext, write_raw_llm_log
 from app.llm.registry import provider_from_config
 from app.simulator.replay_clock import ReplayClockService, ReplayClockSnapshot
 from app.storage.sqlite import SQLiteStore
-from app.tools.executor import ToolExecutor, ToolExecutionResult
 from app.tools.registry import ToolRegistry
-from app.usage import aggregate_usage, record_llm_usage
+from app.usage import record_llm_usage
+
+from .ledger import RunLedger
+from .prompt_rendering import PromptRenderer
+from .provider_turn import ProviderTurnAssembler, ProviderTurnCancelled
+from .tool_turn import ToolTurnExecutor
 
 ProviderFactory = Callable[[LLMProviderConfig], ChatProvider]
-PROMPT_REF_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-@dataclass(frozen=True)
-class RenderedPrompts:
-    system_content: str | None
-    user_content: str | None
 
 
 @dataclass
@@ -60,6 +56,9 @@ class SessionRunManager:
         self.tool_registry = tool_registry
         self.websocket_manager = websocket_manager
         self.provider_factory = provider_factory
+        self.prompt_renderer = PromptRenderer(store)
+        self.ledger = RunLedger(store)
+        self.tool_turn_executor = ToolTurnExecutor(tool_registry)
         self._locks: dict[str, asyncio.Lock] = {}
         self._active_runs: dict[str, ActiveRun] = {}
 
@@ -88,13 +87,13 @@ class SessionRunManager:
                 else None
             )
             replay_clock = self._replay_clock_for_account(simulator_account_id)
-            rendered_prompts = self._render_prompts(
+            rendered_prompts = self.prompt_renderer.render(
                 role_id=str(session.get("prompt_role_id") or "default"),
                 user_input=message,
                 render_time=replay_clock.effective_time if replay_clock else None,
             )
             if rendered_prompts.system_content:
-                self._create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
+                self.ledger.create_system_prompt_if_changed(session_id, rendered_prompts.system_content)
 
             provider_id = session.get("provider_id")
             model = session.get("model")
@@ -125,7 +124,7 @@ class SessionRunManager:
                     user_content = message
                 if user_content.strip():
                     should_auto_title = self._should_auto_title(session_id, session)
-                    self._create_message(session_id=session_id, role="user", content=user_content)
+                    self.ledger.create_message(session_id=session_id, role="user", content=user_content)
                     if should_auto_title:
                         await self._auto_title_from_first_message(
                             session_id=session_id,
@@ -141,15 +140,11 @@ class SessionRunManager:
             cancel_event = asyncio.Event()
             active_run = ActiveRun(run_id=run_id, cancel_event=cancel_event)
             self._active_runs[session_id] = active_run
-            started_at = utc_now()
-            self.store.execute(
-                """
-                INSERT INTO chat_runs (
-                    id, session_id, provider_id, model, status, started_at
-                )
-                VALUES (?, ?, ?, ?, 'running', ?)
-                """,
-                (run_id, session_id, provider_id, model, started_at),
+            self.ledger.create_run(
+                run_id=run_id,
+                session_id=session_id,
+                provider_id=str(provider_id) if provider_id else None,
+                model=str(model) if model else None,
             )
             await self._send(
                 session_id,
@@ -174,7 +169,7 @@ class SessionRunManager:
                 raise
             except Exception as exc:
                 error = self._format_run_error(exc)
-                self._finish_run(run_id, status="error", error=error)
+                self.ledger.finish_run(run_id, status="error", error=error)
                 await self._send(session_id, "error", {"run_id": run_id, "error": error})
                 raise SessionRunError(run_id=run_id, error=error) from exc
             finally:
@@ -197,9 +192,8 @@ class SessionRunManager:
         system_prompt: str | None,
         cancel_event: asyncio.Event,
     ) -> dict[str, Any]:
-        messages = self._load_context(session_id, system_prompt=system_prompt)
+        messages = self.ledger.load_context(session_id, system_prompt=system_prompt)
         tools = self._tool_definitions(config, replay_clock=replay_clock)
-        executor = ToolExecutor(self.tool_registry)
         base_runtime_context = {
             "session_id": session_id,
             "run_id": run_id,
@@ -216,18 +210,14 @@ class SessionRunManager:
         while True:
             round_index += 1
             if cancel_event.is_set():
-                self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+                self.ledger.finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
                 await self._send(
                     session_id,
                     "run_finished",
                     {"run_id": run_id, "status": "cancelled", "usage": usage},
                 )
                 return {"run_id": run_id, "status": "cancelled"}
-            content_parts: list[str] = []
-            reasoning_parts: list[str] = []
-            tool_calls_by_index: dict[int, dict[str, str]] = {}
             call_index += 1
-            call_usage: dict[str, Any] | None = None
             call_started = time.perf_counter()
             log_context = self._raw_log_context(
                 session_id=session_id,
@@ -238,90 +228,73 @@ class SessionRunManager:
                 provider_id=provider_id,
                 config=config,
             )
+            assembler = ProviderTurnAssembler()
+
+            async def on_provider_delta(kind: str, token: str) -> None:
+                if kind == "content":
+                    await self._send(
+                        session_id,
+                        "assistant_token",
+                        {"run_id": run_id, "token": token},
+                    )
+                    return
+                await self._send(
+                    session_id,
+                    "assistant_reasoning",
+                    {"run_id": run_id, "token": token},
+                )
 
             try:
-                async for chunk in self._provider_chat_stream(
-                    provider=provider,
-                    config=config,
-                    messages=messages,
-                    tools=tools,
-                    log_context=log_context,
-                ):
-                    if cancel_event.is_set():
-                        final_message = self._create_interrupted_message(
-                            session_id=session_id,
-                            content_parts=content_parts,
-                            reasoning_parts=reasoning_parts,
-                            cause="User interrupt",
-                        )
-                        self._finish_run(
-                            run_id,
-                            status="cancelled",
-                            final_message_id=str(final_message["id"]) if final_message else None,
-                            error="Cancelled by user",
-                            token_usage=usage,
-                        )
-                        if final_message:
-                            await self._send(
-                                session_id,
-                                "assistant_message",
-                                {"run_id": run_id, "message": final_message},
-                            )
-                        await self._send(
-                            session_id,
-                            "run_finished",
-                            {"run_id": run_id, "status": "cancelled", "usage": usage},
-                        )
-                        result: dict[str, Any] = {"run_id": run_id, "status": "cancelled"}
-                        if final_message:
-                            result["final_message"] = final_message
-                        return result
-                    chunk_usage = chunk.get("usage")
-                    if chunk_usage:
-                        call_usage = chunk_usage
-
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-
-                    if delta.get("content"):
-                        content_parts.append(delta["content"])
-                        await self._send(
-                            session_id,
-                            "assistant_token",
-                            {"run_id": run_id, "token": delta["content"]},
-                        )
-
-                    if delta.get("reasoning_content"):
-                        reasoning_parts.append(delta["reasoning_content"])
-                        await self._send(
-                            session_id,
-                            "assistant_reasoning",
-                            {"run_id": run_id, "token": delta["reasoning_content"]},
-                        )
-
-                    for tc_delta in delta.get("tool_calls") or []:
-                        idx = tc_delta.get("index", 0)
-                        if idx not in tool_calls_by_index:
-                            tool_calls_by_index[idx] = {"id": "", "name": "", "arguments": ""}
-                        tc = tool_calls_by_index[idx]
-                        if tc_delta.get("id"):
-                            tc["id"] = tc_delta["id"]
-                        fn = tc_delta.get("function") or {}
-                        if fn.get("name"):
-                            tc["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            tc["arguments"] += fn["arguments"]
+                turn = await assembler.assemble(
+                    self._provider_chat_stream(
+                        provider=provider,
+                        config=config,
+                        messages=messages,
+                        tools=tools,
+                        log_context=log_context,
+                    ),
+                    on_delta=on_provider_delta,
+                    should_cancel=cancel_event.is_set,
+                )
+            except ProviderTurnCancelled as exc:
+                final_message = self.ledger.create_interrupted_message(
+                    session_id=session_id,
+                    content_parts=exc.partial.content_parts,
+                    reasoning_parts=exc.partial.reasoning_parts,
+                    cause="User interrupt",
+                )
+                self.ledger.finish_run(
+                    run_id,
+                    status="cancelled",
+                    final_message_id=str(final_message["id"]) if final_message else None,
+                    error="Cancelled by user",
+                    token_usage=usage,
+                )
+                if final_message:
+                    await self._send(
+                        session_id,
+                        "assistant_message",
+                        {"run_id": run_id, "message": final_message},
+                    )
+                await self._send(
+                    session_id,
+                    "run_finished",
+                    {"run_id": run_id, "status": "cancelled", "usage": usage},
+                )
+                result: dict[str, Any] = {"run_id": run_id, "status": "cancelled"}
+                if final_message:
+                    result["final_message"] = final_message
+                return result
             except Exception as exc:
                 error = self._format_run_error(exc)
-                final_message = self._create_interrupted_message(
+                partial = assembler.snapshot()
+                final_message = self.ledger.create_interrupted_message(
                     session_id=session_id,
-                    content_parts=content_parts,
-                    reasoning_parts=reasoning_parts,
+                    content_parts=partial.content_parts,
+                    reasoning_parts=partial.reasoning_parts,
                     cause=error,
                 )
-                self._finish_run(
+                self.ledger.finish_run(
                     run_id,
                     status="error",
                     final_message_id=str(final_message["id"]) if final_message else None,
@@ -337,42 +310,34 @@ class SessionRunManager:
                 await self._send(session_id, "error", {"run_id": run_id, "error": error})
                 raise SessionRunError(run_id=run_id, error=error) from exc
 
-            usage_records.append(
-                record_llm_usage(
-                    self.store,
-                    session_id=session_id,
-                    run_id=run_id,
-                    provider_id=provider_id,
-                    provider_type=config.provider_type,
-                    provider_name=config.name,
-                    model=config.model,
-                    usage=call_usage,
-                    latency_ms=(time.perf_counter() - call_started) * 1000,
-                    call_index=call_index,
-                    purpose="session_run",
-                    token_cap=config.run_token_limit,
-                )
+            usage = self.ledger.record_provider_usage(
+                usage_records=usage_records,
+                session_id=session_id,
+                run_id=run_id,
+                provider_id=provider_id,
+                provider_type=config.provider_type,
+                provider_name=config.name,
+                model=config.model,
+                usage=turn.usage,
+                latency_ms=(time.perf_counter() - call_started) * 1000,
+                call_index=call_index,
+                token_cap=config.run_token_limit,
             )
-            usage = aggregate_usage(usage_records)
 
-            full_content = "".join(content_parts)
-            full_reasoning = "".join(reasoning_parts) or None
-
-            tool_calls: list[ToolCall] = []
-            for idx in sorted(tool_calls_by_index):
-                tc = tool_calls_by_index[idx]
-                if tc["id"] and tc["name"]:
-                    tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]))
-
-            if not tool_calls:
-                final_message = self._create_message(
+            if not turn.tool_calls:
+                final_message = self.ledger.create_message(
                     session_id=session_id,
                     role="assistant",
-                    content=full_content,
+                    content=turn.content,
                     message_type="assistant",
-                    reasoning_content=full_reasoning,
+                    reasoning_content=turn.reasoning_content,
                 )
-                self._finish_run(run_id, status="finished", final_message_id=str(final_message["id"]), token_usage=usage)
+                self.ledger.finish_run(
+                    run_id,
+                    status="finished",
+                    final_message_id=str(final_message["id"]),
+                    token_usage=usage,
+                )
                 await self._send(
                     session_id,
                     "assistant_message",
@@ -381,51 +346,36 @@ class SessionRunManager:
                 await self._send(session_id, "run_finished", {"run_id": run_id, "status": "finished", "usage": usage})
                 return {"run_id": run_id, "status": "finished", "final_message": final_message, "usage": usage}
 
-            assistant_message = self._create_message(
+            assistant_message = self.ledger.create_message(
                 session_id=session_id,
                 role="assistant",
-                content=full_content,
+                content=turn.content,
                 message_type="tool_call_request",
-                reasoning_content=full_reasoning,
+                reasoning_content=turn.reasoning_content,
             )
             messages.append(
                 ChatMessage(
                     role="assistant",
-                    content=full_content,
-                    reasoning_content=full_reasoning,
-                    tool_calls=[self._tool_call_payload(call) for call in tool_calls],
+                    content=turn.content,
+                    reasoning_content=turn.reasoning_content,
+                    tool_calls=[self._tool_call_payload(call) for call in turn.tool_calls],
                 )
             )
 
-            for call in tool_calls:
+            for call in turn.tool_calls:
                 if cancel_event.is_set():
-                    self._finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
+                    self.ledger.finish_run(run_id, status="cancelled", error="Cancelled by user", token_usage=usage)
                     await self._send(
                         session_id,
                         "run_finished",
                         {"run_id": run_id, "status": "cancelled", "usage": usage},
                     )
                     return {"run_id": run_id, "status": "cancelled"}
-                tool_call_id = uuid4().hex
-                now = utc_now()
-                self.store.execute(
-                    """
-                    INSERT INTO chat_tool_calls (
-                        id, run_id, session_id, message_id, provider_call_id,
-                        tool_name, arguments_json, status, started_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?)
-                    """,
-                    (
-                        tool_call_id,
-                        run_id,
-                        session_id,
-                        assistant_message["id"],
-                        call.id,
-                        call.name,
-                        call.arguments,
-                        now,
-                    ),
+                tool_call_id = self.ledger.create_tool_call(
+                    run_id=run_id,
+                    session_id=session_id,
+                    message_id=str(assistant_message["id"]),
+                    provider_call=call,
                 )
                 await self._send(
                     session_id,
@@ -438,10 +388,12 @@ class SessionRunManager:
                     },
                 )
 
-                tool_result = await executor.execute(
-                    call.name,
-                    call.arguments,
-                    runtime_context={**base_runtime_context, "tool_call_id": tool_call_id},
+                tool_turn = await self.tool_turn_executor.execute(
+                    call=call,
+                    runtime_context=base_runtime_context,
+                    tool_call_id=tool_call_id,
+                    run_id=run_id,
+                    simulator_account_id=simulator_account_id,
                 )
                 write_raw_llm_log(
                     context=log_context,
@@ -450,22 +402,22 @@ class SessionRunManager:
                     payload={
                         "tool_name": call.name,
                         "arguments_json": call.arguments,
-                        "ok": tool_result.ok,
-                        "result": tool_result.result,
-                        "error": tool_result.error,
+                        "ok": tool_turn.execution.ok,
+                        "result": tool_turn.execution.result,
+                        "error": tool_turn.execution.error,
                     },
                 )
-                self._save_tool_result(
+                self.ledger.save_tool_result(
                     run_id=run_id,
                     session_id=session_id,
                     tool_call_id=tool_call_id,
-                    result=tool_result,
+                    result=tool_turn.execution,
                 )
                 messages.append(
                     ChatMessage(
                         role="tool",
                         tool_call_id=call.id,
-                        content=tool_result.content(),
+                        content=tool_turn.execution.content(),
                     )
                 )
                 await self._send(
@@ -474,56 +426,22 @@ class SessionRunManager:
                     {
                         "run_id": run_id,
                         "tool_call_id": tool_call_id,
-                        "ok": tool_result.ok,
-                        "result": tool_result.result,
-                        "error": tool_result.error,
+                        "ok": tool_turn.execution.ok,
+                        "result": tool_turn.execution.result,
+                        "error": tool_turn.execution.error,
                     },
                 )
-                if call.name.startswith("order_") and tool_result.ok and tool_result.result:
-                    if tool_result.result.get("order_id"):
-                        await self._send(
-                            session_id,
-                            "order_created",
-                            {
-                                "run_id": run_id,
-                                "account_id": simulator_account_id,
-                                "tool_call_id": tool_call_id,
-                                "tool_name": call.name,
-                                "order_id": tool_result.result.get("order_id"),
-                                "symbol": tool_result.result.get("symbol"),
-                                "side": tool_result.result.get("side"),
-                            },
-                        )
-                    if tool_result.result.get("trade_id"):
-                        await self._send(
-                            session_id,
-                            "trade_created",
-                            {
-                                "run_id": run_id,
-                                "account_id": simulator_account_id,
-                                "tool_call_id": tool_call_id,
-                                "tool_name": call.name,
-                                "trade_id": tool_result.result.get("trade_id"),
-                                "symbol": tool_result.result.get("symbol"),
-                                "side": tool_result.result.get("side"),
-                            },
-                        )
-                if call.name.startswith(("order_", "portfolio_")) and simulator_account_id:
-                    portfolio_payload = {
-                        "run_id": run_id,
-                        "account_id": simulator_account_id,
-                        "tool_call_id": tool_call_id,
-                        "tool_name": call.name,
-                    }
+                for intent in tool_turn.event_intents:
                     await self._send(
                         session_id,
-                        "portfolio_updated",
-                        portfolio_payload,
+                        intent.event_type,
+                        intent.payload,
                     )
-                    await self.websocket_manager.send_account_event(
-                        simulator_account_id,
-                        {"type": "portfolio_updated", "session_id": session_id, **portfolio_payload},
-                    )
+                    if intent.send_account_event and simulator_account_id:
+                        await self.websocket_manager.send_account_event(
+                            simulator_account_id,
+                            {"type": intent.event_type, "session_id": session_id, **intent.payload},
+                        )
 
     async def _provider_chat(
         self,
@@ -598,170 +516,6 @@ class SessionRunManager:
             replace(definition, strict=definition.strict and strict_allowed)
             for definition in definitions
         ]
-
-    def _load_context(self, session_id: str, system_prompt: str | None = None) -> list[ChatMessage]:
-        rows = self.store.fetch_all(
-            """
-            SELECT role, content, reasoning_content
-            FROM chat_messages
-            WHERE session_id = ?
-              AND role IN ('user', 'assistant')
-              AND message_type != 'tool_call_request'
-            ORDER BY created_at ASC
-            """,
-            (session_id,),
-        )
-        messages = [
-            ChatMessage(
-                role=str(row["role"]),
-                content=str(row["content"]),
-                reasoning_content=str(row["reasoning_content"]) if row["reasoning_content"] else None,
-            )
-            for row in rows
-        ]
-        if system_prompt:
-            messages.insert(0, ChatMessage(role="system", content=system_prompt))
-        return messages
-
-    def _render_prompts(
-        self,
-        role_id: str,
-        user_input: str | None,
-        render_time: str | None = None,
-    ) -> RenderedPrompts:
-        entries = self.store.fetch_all(
-            """
-            SELECT ref_name, content, enabled
-            FROM prompt_entries
-            WHERE role_id = ?
-            ORDER BY sort_order ASC
-            """,
-            (role_id,),
-        )
-        if not entries and role_id != "default":
-            entries = self.store.fetch_all(
-                """
-                SELECT ref_name, content, enabled
-                FROM prompt_entries
-                WHERE role_id = 'default'
-                ORDER BY sort_order ASC
-                """
-            )
-        by_ref = {str(row["ref_name"]): row for row in entries}
-        resolved_render_time = render_time or datetime.now().astimezone().isoformat(timespec="seconds")
-
-        def render_ref(ref_name: str, stack: set[str]) -> str:
-            if ref_name == "UserInput":
-                return user_input or ""
-            if ref_name == "time":
-                return resolved_render_time
-            entry = by_ref.get(ref_name)
-            if entry is None:
-                return "{" + ref_name + "}"
-            if not entry["enabled"]:
-                return ""
-            if ref_name in stack:
-                return ""
-            return PROMPT_REF_RE.sub(
-                lambda match: render_ref(match.group(1), {*stack, ref_name}),
-                str(entry["content"]),
-            )
-
-        def render_entry(ref_name: str) -> str | None:
-            entry = by_ref.get(ref_name)
-            if entry is None or not entry["enabled"]:
-                return None
-            return PROMPT_REF_RE.sub(
-                lambda match: render_ref(match.group(1), {ref_name}),
-                str(entry["content"]),
-            )
-
-        system_content = render_entry("system")
-        user_content = render_entry("UserInput") if user_input is not None else None
-        return RenderedPrompts(
-            system_content=system_content if system_content and system_content.strip() else None,
-            user_content=user_content,
-        )
-
-    def _create_system_prompt_if_changed(self, session_id: str, content: str) -> None:
-        last = self.store.fetch_one(
-            """
-            SELECT content
-            FROM chat_messages
-            WHERE session_id = ?
-              AND role = 'system'
-              AND message_type = 'system_prompt'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (session_id,),
-        )
-        if last and last["content"] == content:
-            return
-        self._create_message(
-            session_id=session_id,
-            role="system",
-            content=content,
-            message_type="system_prompt",
-        )
-
-    def _create_interrupted_message(
-        self,
-        session_id: str,
-        content_parts: list[str],
-        reasoning_parts: list[str],
-        cause: str,
-    ) -> dict[str, Any] | None:
-        content = "".join(content_parts)
-        reasoning = "".join(reasoning_parts) or None
-        if not content and not reasoning:
-            return None
-        return self._create_message(
-            session_id=session_id,
-            role="assistant",
-            content=self._append_interrupt_marker(content, cause),
-            message_type="assistant",
-            reasoning_content=reasoning,
-        )
-
-    def _append_interrupt_marker(self, content: str, cause: str) -> str:
-        marker = f"[Interrupted: {self._single_line(cause)}]"
-        if not content.strip():
-            return marker
-        return f"{content.rstrip()}\n\n{marker}"
-
-    def _single_line(self, value: str) -> str:
-        return re.sub(r"\s+", " ", value).strip()
-
-    def _create_message(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-        message_type: str = "user",
-        reasoning_content: str | None = None,
-    ) -> dict[str, Any]:
-        self._get_session(session_id)
-        message_id = uuid4().hex
-        now = utc_now()
-        self.store.execute(
-            """
-            INSERT INTO chat_messages (id, session_id, role, content, message_type, created_at, reasoning_content)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (message_id, session_id, role, content, message_type, now, reasoning_content),
-        )
-        self.store.execute(
-            """
-            UPDATE chat_sessions
-            SET updated_at = ?
-            WHERE id = ?
-            """,
-            (now, session_id),
-        )
-        message = self.store.fetch_one("SELECT * FROM chat_messages WHERE id = ?", (message_id,))
-        assert message is not None
-        return message
 
     def _should_auto_title(self, session_id: str, session: dict[str, Any]) -> bool:
         name = str(session.get("name") or "").strip()
@@ -862,49 +616,6 @@ class SessionRunManager:
 
     def _fallback_title(self) -> str:
         return f"新会话 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-
-    def _save_tool_result(
-        self,
-        run_id: str,
-        session_id: str,
-        tool_call_id: str,
-        result: ToolExecutionResult,
-    ) -> None:
-        now = utc_now()
-        self.store.execute(
-            """
-            UPDATE chat_tool_calls
-            SET status = ?, finished_at = ?, error = ?
-            WHERE id = ?
-            """,
-            ("finished" if result.ok else "error", now, result.error, tool_call_id),
-        )
-        self.store.execute(
-            """
-            INSERT INTO chat_tool_results (
-                id, run_id, session_id, tool_call_id, result_json, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (uuid4().hex, run_id, session_id, tool_call_id, result.content(), now),
-        )
-
-    def _finish_run(
-        self,
-        run_id: str,
-        status: str,
-        final_message_id: str | None = None,
-        error: str | None = None,
-        token_usage: dict[str, Any] | None = None,
-    ) -> None:
-        self.store.execute(
-            """
-            UPDATE chat_runs
-            SET status = ?, finished_at = ?, final_message_id = ?, error = ?, token_usage = ?
-            WHERE id = ?
-            """,
-            (status, utc_now(), final_message_id, error, json.dumps(token_usage) if token_usage else None, run_id),
-        )
 
     def _provider_config(self, row: dict[str, Any]) -> LLMProviderConfig:
         return LLMProviderConfig(
