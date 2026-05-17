@@ -175,7 +175,7 @@ class AccountValuationRefreshService:
 
     def _next_replay_due_time(self, account_id: str, effective_time: datetime) -> datetime:
         due_at = self._next_replay_due.get(account_id)
-        latest_valuation_time = self._latest_valuation_time(account_id)
+        latest_valuation_time = self._latest_valuation_time(account_id, effective_time)
         if latest_valuation_time is not None:
             latest_due_at = latest_valuation_time + timedelta(seconds=self.replay_interval_seconds)
             if due_at is None or due_at < latest_due_at:
@@ -184,17 +184,18 @@ class AccountValuationRefreshService:
             due_at = effective_time
         return due_at
 
-    def _latest_valuation_time(self, account_id: str) -> datetime | None:
+    def _latest_valuation_time(self, account_id: str, effective_time: datetime) -> datetime | None:
         row = self.store.fetch_one(
             """
             SELECT time
             FROM account_valuation_points
             WHERE simulator_account_id = ?
               AND source = 'valuation'
+              AND time <= ?
             ORDER BY time DESC
             LIMIT 1
             """,
-            (account_id,),
+            (account_id, iso_seconds(effective_time)),
         )
         if row is None:
             return None
