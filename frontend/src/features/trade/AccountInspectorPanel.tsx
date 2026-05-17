@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, Eye, History, LineChart, RefreshCw, Table2, Wallet } from "lucide-react";
+import { AssetValueChart } from "@/components/charts/AssetValueChart";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
 import { api } from "@/api";
@@ -7,7 +8,7 @@ import { useDataStore } from "@/stores/dataStore";
 import { useTradeStore } from "@/stores/tradeStore";
 import { useViewStore } from "@/stores/viewStore";
 import type { AccountSnapshot, AssetPoint, ReplayClockState, RuntimeEvent } from "@/api";
-import { formatMoney, humanTime, linePoints } from "@/lib/utils";
+import { formatMoney, humanTime } from "@/lib/utils";
 import { resolveModelSelection } from "@/lib/providerModels";
 
 export function AccountInspectorPanel() {
@@ -311,28 +312,14 @@ function eventDetail(event: RuntimeEvent): string {
 }
 
 function AssetSparkline({ points }: { points: AssetPoint[] }) {
-  const values = useMemo(() => points.map((point) => Number(point.total_asset)).filter(Number.isFinite), [points]);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const mid = (min + max) / 2;
-  const scaleTicks = [
-    { value: max, y: 5 },
-    { value: mid, y: 26 },
-    { value: min, y: 47 }
-  ];
-  if (values.length < 2) return <EmptyState title="曲线点不足" description="成交或估值更新后生成更多资产点。" />;
   return (
-    <svg className="h-[120px] w-full" viewBox="0 0 100 52" role="img" aria-label="资产变化折线">
-      {scaleTicks.map((tick) => (
-        <g key={`${tick.value}-${tick.y}`}>
-          <line x1="2" x2="70" y1={tick.y} y2={tick.y} stroke="var(--color-hairline)" strokeOpacity="0.5" strokeWidth="0.5" />
-          <text x="98" y={tick.y + 1.2} textAnchor="end" className="fill-text-muted" fontSize="4">
-            {formatMoney(tick.value)}
-          </text>
-        </g>
-      ))}
-      <polyline points={linePoints(values, 68, 42, 2, 5)} fill="none" stroke="var(--color-brand-primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <AssetValueChart
+      series={[{ account_id: "inspector", account_name: "账户资产", points }]}
+      valueMode="asset"
+      height={260}
+      showLegend={false}
+      emptyDescription="成交或估值更新后生成更多资产点。"
+    />
   );
 }
 

@@ -16,6 +16,7 @@ import {
   Wallet
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { AssetValueChart } from "@/components/charts/AssetValueChart";
 import { Input, Select } from "@/components/ui/Input";
 import { EmptyState, Metric, PanelHeader, Spinner } from "@/components/ui/Shared";
 import { useDataStore } from "@/stores/dataStore";
@@ -316,7 +317,7 @@ function AssetsPanel() {
         {visibleSeries.map((series) => (
           <section key={series.account_id} className="border border-hairline rounded-xl bg-surface-card p-4">
             <PanelHeader icon={<LineChart size={16} />} title={series.account_name} />
-            <AssetChart points={series.points} />
+            <AssetChart points={series.points} accountName={series.account_name} height={300} />
             <AssetPointTable points={series.points} />
           </section>
         ))}
@@ -733,49 +734,13 @@ function CombinedAssetChart({ snapshots }: { snapshots: AccountSnapshot[] }) {
 }
 
 function MultiAssetChart({ series }: { series: Array<{ account_id: string; account_name: string; points: AssetPoint[] }> }) {
-  const visible = series.filter((item) => item.points.length >= 2);
-  if (visible.length === 0) return <EmptyState title="曲线点不足" description="至少需要一个账户有两个资产点。" />;
-  const palette = ["var(--color-brand-primary)", "var(--color-accent-turquoise)", "var(--color-info)", "var(--color-trading-rise)", "var(--color-trading-fall)"];
-  const allValues = visible.flatMap((item) => item.points.map((point) => Number(point.total_asset)).filter(Number.isFinite));
-  const min = Math.min(...allValues);
-  const max = Math.max(...allValues);
-  const span = max - min || 1;
-  const toPoints = (points: AssetPoint[]) =>
-    points
-      .map((point, index) => {
-        const x = 2 + (index / Math.max(points.length - 1, 1)) * 96;
-        const y = 7 + 46 - ((Number(point.total_asset) - min) / span) * 46;
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-      })
-      .join(" ");
-
   return (
-    <div>
-      <svg className="mt-2 h-[180px] w-full" viewBox="0 0 100 60" role="img" aria-label="多账户资产曲线">
-        {[8, 30, 52].map((y) => (
-          <line key={y} x1="2" x2="98" y1={y} y2={y} stroke="var(--color-hairline)" strokeOpacity="0.55" strokeWidth="0.5" />
-        ))}
-        {visible.map((item, index) => (
-          <polyline
-            key={item.account_id}
-            points={toPoints(item.points)}
-            fill="none"
-            stroke={palette[index % palette.length]}
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ))}
-      </svg>
-      <div className="mt-2 flex flex-wrap gap-3 text-xs text-text-muted">
-        {visible.map((item, index) => (
-          <span key={item.account_id} className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full" style={{ background: palette[index % palette.length] }} />
-            {item.account_name}
-          </span>
-        ))}
-      </div>
-    </div>
+    <AssetValueChart
+      series={series}
+      valueMode="pnl_pct"
+      height={380}
+      emptyDescription="至少需要一个账户有两个资产点。"
+    />
   );
 }
 
@@ -811,7 +776,7 @@ function AccountMini({ snapshot }: { snapshot: AccountSnapshot }) {
         <strong className="text-text-on-dark">{snapshot.account.name}</strong>
         <span className="text-xs text-text-muted">{snapshot.metrics.session_count} Session</span>
       </div>
-      <AssetChart points={snapshot.asset_points} compact />
+      <AssetChart points={snapshot.asset_points} accountName={snapshot.account.name} compact />
       <div className="grid grid-cols-3 gap-2 mt-2">
         <Metric label="现金" value={formatMoney(snapshot.metrics.cash)} />
         <Metric label="总资产" value={formatMoney(snapshot.metrics.total_asset)} />
@@ -831,7 +796,7 @@ function AccountDetailCard({ snapshot }: { snapshot: AccountSnapshot }) {
         <Metric label="浮盈亏" value={formatMoney(snapshot.metrics.floating_pnl)} tone={tone(snapshot.metrics.floating_pnl)} />
         <Metric label="仓位" value={`${(snapshot.metrics.position_ratio * 100).toFixed(1)}%`} />
       </div>
-      <AssetChart points={snapshot.asset_points} />
+      <AssetChart points={snapshot.asset_points} accountName={snapshot.account.name} />
       <PositionTable positions={snapshot.positions} />
       <div className="mt-3 border-t border-hairline pt-3">
         <PanelHeader icon={<MessageSquare size={15} />} title="绑定会话" />
@@ -992,19 +957,25 @@ function TradeTable({ trades }: { trades: TradeRow[] }) {
   );
 }
 
-function AssetChart({ points, compact = false }: { points: AssetPoint[]; compact?: boolean }) {
-  if (points.length < 2) return <EmptyState title="曲线点不足" description="至少需要两个资产点。" />;
-  const values = points.map((point) => Number(point.total_asset)).filter(Number.isFinite);
+function AssetChart({
+  points,
+  accountName = "资产",
+  compact = false,
+  height
+}: {
+  points: AssetPoint[];
+  accountName?: string;
+  compact?: boolean;
+  height?: number;
+}) {
   return (
-    <svg className={`w-full ${compact ? "h-[72px]" : "h-[150px]"} mt-2`} viewBox="0 0 100 60" role="img" aria-label="资产曲线">
-      <defs>
-        <linearGradient id="assetLine" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="var(--color-brand-primary)" />
-          <stop offset="100%" stopColor="var(--color-accent-turquoise)" />
-        </linearGradient>
-      </defs>
-      <polyline points={linePoints(values, 96, 46, 2, 7)} fill="none" stroke="url(#assetLine)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <AssetValueChart
+      series={[{ account_id: accountName, account_name: accountName, points }]}
+      valueMode="asset"
+      height={height ?? (compact ? 200 : 280)}
+      compact={compact}
+      showLegend={!compact}
+    />
   );
 }
 
