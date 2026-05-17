@@ -5,6 +5,7 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.market.sync_service import TradingCalendar, is_trading_time
 from app.market.stock_data_logger import write_stock_data_api_log
 from app.simulator.replay_clock import ReplayClockService, ReplayClockSnapshot, iso_seconds, parse_clock_time
 from app.simulator.valuation import PortfolioValuationService
@@ -39,6 +40,7 @@ class AccountValuationRefreshService:
         self.live_interval_seconds = live_interval_seconds
         self.replay_interval_seconds = replay_interval_seconds
         self.loop_sleep_seconds = loop_sleep_seconds
+        self.trading_calendar = TradingCalendar(market_provider)
         self.valuation_service = PortfolioValuationService(
             store=store,
             market_store=market_store,
@@ -166,12 +168,18 @@ class AccountValuationRefreshService:
 
         valuation_times: list[datetime] = []
         next_due = due_at
-        for _ in range(MAX_REPLAY_CATCH_UP_POINTS_PER_ACCOUNT):
-            if effective_time < next_due:
+        scanned = 0
+        while effective_time >= next_due and len(valuation_times) < MAX_REPLAY_CATCH_UP_POINTS_PER_ACCOUNT:
+            scanned += 1
+            if scanned > 10000:
                 break
-            valuation_times.append(next_due)
+            if self._is_replay_valuation_time(next_due):
+                valuation_times.append(next_due)
             next_due = next_due + timedelta(seconds=self.replay_interval_seconds)
         return valuation_times
+
+    def _is_replay_valuation_time(self, value: datetime) -> bool:
+        return is_trading_time(value, calendar=self.trading_calendar)
 
     def _next_replay_due_time(self, account_id: str, effective_time: datetime) -> datetime:
         due_at = self._next_replay_due.get(account_id)

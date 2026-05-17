@@ -725,6 +725,100 @@ def test_replay_auto_valuation_ignores_future_points_after_rewind(monkeypatch) -
     assert valuation_times == ["2026-04-27T10:00:00+08:00"]
 
 
+def test_replay_auto_valuation_skips_lunch_night_weekend_and_holidays(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Replay Closed Session", initial_cash=100000)
+    account_id = str(account["id"])
+    _insert_position(store, account_id)
+    current_now = datetime(2026, 5, 1, 4, 0, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    service = AccountValuationRefreshService(store, MagicMock(), MagicMock())
+    valuation_times: list[str | None] = []
+
+    async def fake_refresh(account_id: str, source: str = "valuation", valuation_time: str | None = None) -> dict:
+        valuation_times.append(valuation_time)
+        return {
+            "symbols": ["000001"],
+            "total_asset": 100000,
+            "market_value": 10000,
+            "unrealized_pnl": 0,
+            "valuation_point": {"time": valuation_time},
+        }
+
+    service.valuation_service.refresh_account = fake_refresh
+
+    for replay_time in [
+        "2026-04-27T12:00:00+08:00",
+        "2026-04-27T19:15:00+08:00",
+        "2026-05-16T10:00:00+08:00",
+        "2026-05-01T10:00:00+08:00",
+    ]:
+        ReplayClockService(store).set_replay(account_id, replay_time, speed=1)
+        service._next_replay_due.pop(account_id, None)
+        assert asyncio.run(service.refresh_due_accounts(now=0)) == []
+    assert valuation_times == []
+
+
+def test_replay_auto_valuation_writes_close_anchor_once_after_crossing_close(monkeypatch) -> None:
+    store = _sqlite_store()
+    engine = _engine(store)
+    account = engine.create_account("Replay Close Anchor", initial_cash=100000)
+    account_id = str(account["id"])
+    _insert_position(store, account_id)
+    current_now = datetime(2026, 4, 27, 7, 5, 0, tzinfo=timezone.utc)
+
+    def fake_utc_now() -> datetime:
+        return current_now
+
+    monkeypatch.setattr(replay_clock_module, "utc_now", fake_utc_now)
+    ReplayClockService(store).set_replay(account_id, "2026-04-27T15:05:00+08:00", speed=1)
+    store.execute(
+        """
+        INSERT INTO account_valuation_points (
+            id, simulator_account_id, time, cash, market_value,
+            unrealized_pnl, total_asset, source, symbols_json
+        )
+        VALUES (?, ?, '2026-04-27T14:59:00+08:00', 90000, 10000, 0, 100000, 'valuation', '["000001"]')
+        """,
+        (uuid4().hex, account_id),
+    )
+    service = AccountValuationRefreshService(store, MagicMock(), MagicMock())
+    valuation_times: list[str | None] = []
+
+    async def fake_refresh(account_id: str, source: str = "valuation", valuation_time: str | None = None) -> dict:
+        valuation_times.append(valuation_time)
+        store.execute(
+            """
+            INSERT INTO account_valuation_points (
+                id, simulator_account_id, time, cash, market_value,
+                unrealized_pnl, total_asset, source, symbols_json
+            )
+            VALUES (?, ?, ?, 90000, 10000, 0, 100000, 'valuation', '["000001"]')
+            """,
+            (uuid4().hex, account_id, valuation_time),
+        )
+        return {
+            "symbols": ["000001"],
+            "total_asset": 100000,
+            "market_value": 10000,
+            "unrealized_pnl": 0,
+            "valuation_point": {"time": valuation_time},
+        }
+
+    service.valuation_service.refresh_account = fake_refresh
+    first = asyncio.run(service.refresh_due_accounts(now=0))
+    second = asyncio.run(service.refresh_due_accounts(now=1))
+
+    assert len(first) == 1
+    assert second == []
+    assert valuation_times == ["2026-04-27T15:00:00+08:00"]
+
+
 def test_replay_market_tools_fetch_missing_only_to_effective_time() -> None:
     market_store = MarketDuckDBStore(str(_test_dir() / "market.duckdb"))
     market_store.initialize()
