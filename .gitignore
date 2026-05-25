@@ -26,5 +26,14 @@ logs/
 *.db
 *.duckdb
 
+# Playwright CLI cache
+.playwright-cli/
+
+# Output directory
+output/
+
+# Root-level npm lock
+/package-lock.json
+
 .DS_Store
 Thumbs.db
